@@ -28,7 +28,12 @@ from the human's explanations over time.
 - **Timing matters:** for **data** changes there is *no* changelog — only **timestamp comparison**
   against `ut_ref` tracking tables. So the tool must capture, precisely, **when each run (and each
   parallel shard) started and finished**, to define the time window in which a data change could
-  have affected the run.
+  have affected the run. **Clock discipline is therefore load-bearing:** Jenkins, the parallel
+  shards, and the Oracle `ut_ref` DB may not share a clock or timezone, and data attribution rests
+  *entirely* on these timestamps. All times are **normalized to UTC on ingest**, the **source clock
+  is recorded** alongside each timestamp, and the data-change window carries a **configurable
+  tolerance margin** to absorb residual skew. Getting this wrong silently corrupts every
+  data-change candidate.
 - **Parallel execution → one merged report:** test execution is split across multiple parallel
   steps for speed, then **all results are collected and merged into a single global UT execution
   report**. The tool consumes the merged report, but retains **per-shard start/finish times** for
@@ -155,15 +160,25 @@ explicitly requested are marked ★; the rest are suggestions to consider.
   alias** which the monitor **confirms with one click** (kept human-confirmed, matching the
   assistive philosophy; a manual "merge identities" action also exists). Until confirmed, the old
   identity is treated as `REMOVED` and the new one as `FAILING`, so nothing is lost either way.
+  **Phasing:** the **manual "merge identities" action ships in v1**; the **automatic alias
+  *suggestion*** is a fuzzy-matching subsystem of its own and is **post-v1** — the
+  `REMOVED`/`FAILING` fallback already loses no history while it is absent, so it can be added later
+  without redesign.
 - **Error type** — assertion/value mismatch vs error/exception vs timeout/infra,
   derived from the result + stack trace.
 
 ### Attribution (gathered by the tool, confirmed by the human)
 - **Predicted cause + confidence** — deterministic classification:
-  `CODE_CHANGE` / `DATA_CHANGE` / `INFRASTRUCTURE` / `UNKNOWN`, with a confidence score and the
-  evidence behind it.
-- **Candidate code changes** — revisions from the **SVN update step** in the run
-  window, with committer(s) and changed paths, ranked by relevance to the test.
+  `CODE_CHANGE` / `DATA_CHANGE` / `INFRASTRUCTURE` / `UNKNOWN`, with the evidence behind it.
+  *v1 commitment:* the **time-window filtering** below — "these changes fall inside this run's
+  window" — which is deterministic and stands on its own; the human attributes the cause from that
+  evidence. A **relevance ranking + confidence score** is an **explicit later enhancement**, fed by
+  the §4 knowledge base once it has confirmed-reason history to rank against (e.g. "this test
+  historically fails on `ut_ref` changes to table X"). Emitting a confidence number against an empty
+  KB on day one would be a fabricated number, so it is deliberately deferred rather than guessed.
+- **Candidate code changes** — revisions from the **SVN update step** that fall inside the run's
+  time window, with committer(s) and changed paths, presented **chronologically** (relevance
+  ranking is the later enhancement noted above).
 - **Candidate data changes** — `ut_ref` tracking-table changes inside the run's
   time window, with the **change author** and change timestamp.
 - **UT ownership** — the test's main developer from SVN history/blame, as a fallback contact.
@@ -227,6 +242,10 @@ Some tests flicker — they fail more often than others. Because the tool keeps 
   - Over the window, count **state transitions** in its pass/fail sequence (`pass→fail→pass→fail…`).
     A clean regression is **one** transition (`pass→fail`, then stays failing); a clean fix is one
     (`fail→pass`, then stays passing). **Many transitions = flaky.**
+  - **Gaps are not transitions.** Incomplete runs (§2) and runs where the test was absent leave
+    *holes* in the sequence; these are treated as **missing data points, not state changes**, so a
+    shard that never reported is never miscounted as a `fail→pass` flip. The sequence is built only
+    from runs in which the test actually produced a result.
   - **Flakiness score = transitions ÷ runs** over the window (equivalently, a fail-rate strictly
     between 0 and 1 *combined with* ≥1 back-and-forth flip). A test that is solidly failing
     (fail-rate ≈ 1, no flips) is a **regression**, not flaky; a test that bounces is **FLAKY**.
@@ -372,13 +391,21 @@ knowledge into a growing, queryable asset:
 - **Reasoning:** deterministic correlation for the facts/scoring; optional LLM (provider chosen
   later, behind a swappable interface) for the readable hypothesis and knowledge-base retrieval.
 
-## Open questions to resolve before building (non-blocking for this output plan)
+## Open questions to resolve before building
+
+> **Blocking vs. non-blocking.** Most of these can be settled while building and don't change the
+> output design. **#3 is the exception — it is a hard prerequisite:** nothing in the tool works
+> until the merged UT report and the SVN-update step output can be parsed, and their formats may
+> constrain the data model. It is the **first execution milestone**, not a parallel open question.
 
 1. Exact `ut_ref` tracking-table schema: change-timestamp column, author column, and how a change
    maps to a table/entity a test depends on.
-2. How to relate a failing test to relevant SVN paths / data tables for ranking candidates
-   (start with the run time-window; refine with path/name heuristics + the knowledge base).
-3. Format/source of the merged UT execution report and the SVN-update step output to parse.
+2. How to relate a failing test to relevant SVN paths / data tables — only needed for the **later
+   relevance-ranking enhancement** (§1), *not* for v1, which presents window-filtered candidates
+   chronologically and lets the human attribute. Refine later with path/name heuristics + the
+   knowledge base.
+3. **(Blocking — first milestone.)** Format/source of the merged UT execution report and the
+   SVN-update step output to parse.
 4. The flaky **transition** threshold (how many flips ÷ runs counts as FLAKY) within the 30-day
    window, and the trigram `similarity()` cutoff for "similar past cases" (§4).
 5. The exact **normalization mask set** for failure signatures (§4) — which patterns to mask and
