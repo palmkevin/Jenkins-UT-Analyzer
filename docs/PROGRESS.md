@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27 (Milestone 4)_
+_Last updated: 2026-06-27 (Milestone 5)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -218,8 +218,40 @@ logic, retrieval, surfaces and delivery that fill them.
       sender wiring), `test_web_m4` (the two new routes + record cards), and pipeline coverage that
       ingest records signatures and emails on regression via a fake sender. ruff lint + format clean.
 
-## Milestone 5 — LLM hypothesis  ·  `[ ]`
-Real provider behind `HypothesisProvider`, RAG over KB top-k.
+## Milestone 5 — LLM hypothesis  ·  `[x]`
+Real provider behind `HypothesisProvider`, retrieval-augmented over the KB's top-k similar cases.
+**No migration** — `Classification.llm_hypothesis` shipped in M1; M5 is the provider, prompt, wiring,
+and tests that fill it. **No vector store** — "RAG" here is the existing `pg_trgm`/difflib
+`similar_cases` rendered into a prompt (`pgvector` stays a later drop-in).
+
+### Done
+- [x] **Provider interface kept, widened** (`llm/__init__.py`): `Hypothesis` + `HypothesisProvider`
+      (now `hypothesize(system, user)`); `NoopHypothesisProvider` is the **default** — with no API
+      key, ingest is byte-for-byte unchanged and `llm_hypothesis` stays `NULL`.
+- [x] **Prompt builder** (`llm/prompt.py`) — **pure, offline-tested**: renders the failing test, the
+      deterministic predicted cause + change-signal counts (the prior), and the retrieved similar
+      past cases (with their **validated** human conclusions) into `(system, user)`. Error/stack are
+      length-capped; only already-redacted fields reach the prompt (no raw `MODDATA`).
+- [x] **Real provider** (`llm/claude.py`): `AnthropicHypothesisProvider` over the official
+      `anthropic` SDK, model `claude-opus-4-8` (configurable). One short non-streaming call; the
+      `anthropic` import is **local** so the offline path never loads the SDK; any API error →
+      `None` (a missing hypothesis never breaks ingest).
+- [x] **Wiring step** (`analyze/hypothesize.py`): `hypothesize_run` runs **after** the pure
+      `classify_run`, fills `Classification.llm_hypothesis` per newly-opened episode from
+      `similar_cases`. No-op under Noop (no retrieval, no call, no write). Pipeline calls it inside
+      the `complete`-run block; **poller passes the real provider, back-fill passes none** — history
+      is never re-hypothesised (the same caller-side idempotency the email side uses).
+- [x] **Config + `.env.example`**: `ANTHROPIC_API_KEY`, `LLM_MODEL`; `anthropic` added to deps.
+      `uta poll` builds the real provider, `uta backfill` does not.
+- [x] **Tests (+10, offline gate green: 129 passed, 3 skipped)**: `test_prompt` (rendering,
+      validated conclusions, truncation, determinism), `test_hypothesize` (Noop no-op, real provider
+      fills the right episode, declining provider leaves `NULL`, retrieved cases reach the prompt),
+      pipeline coverage (provider fills all 7 episodes; default leaves `NULL`), and a `live`-marked
+      real-provider test (skipped in CI). ruff lint + format clean.
+
+### Open / deferred (per design — Post-v1)
+- Confidence/relevance scoring, automatic alias suggestion, structured multi-field output — parked;
+  `confidence` stays `NULL` as in M2.
 
 ---
 
@@ -255,3 +287,11 @@ Real provider behind `HypothesisProvider`, RAG over KB top-k.
 - **Flaky ≠ high fail-rate** (M4, PLAN §3): because every run is commit-triggered, "fails then
   passes" is never "no change"; flakiness is **oscillation** (`transitions ÷ runs`) gated on a
   fail-rate strictly between 0 and 1. Gaps (absent/incomplete) are missing data points, never flips.
+- **LLM hypothesis is enrichment, not analysis** (M5): the model call is a separate, optional,
+  side-effecting step (`hypothesize_run`) *after* the pure `classify_run`, never inside it — so
+  classification stays deterministic/idempotent/offline and the offline gate keeps running with zero
+  network. The deterministic `predicted_cause` is authoritative; the hypothesis is the readable
+  "why". `NoopHypothesisProvider` is the default, so the feature is purely additive (no key ⇒ no
+  behavior change). **No vector DB** — RAG is the existing `pg_trgm`/difflib retrieval pasted into
+  the prompt. The Anthropic API key is a Developer Console (pay-as-you-go) credential, distinct from
+  any Claude subscription, and only the live poller path ever calls the model.

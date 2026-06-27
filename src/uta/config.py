@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
     recently_fixed_days: int = 7
 
+    # ── LLM hypothesis (§4 / Milestone 5) ────────────────────────────────────
+    # Empty key ⇒ NoopHypothesisProvider (no model call; llm_hypothesis stays NULL). The key is a
+    # Developer Console key (pay-as-you-go billing, separate from any Claude subscription).
+    anthropic_api_key: str = ""
+    llm_model: str = "claude-opus-4-8"
+
     # ── Ingest / correlation windows ───────────────────────────────────────────
     # Data changes precede the nightly run (the run's own window had none on #1702), so look back
     # before the run start; the tolerance margin (B1) absorbs residual clock skew between Jenkins

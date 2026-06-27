@@ -119,3 +119,27 @@ def test_ingest_emails_on_regression_only_via_sender(session_factory):
     # Re-ingest with no sender (the back-fill path) sends nothing more.
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     assert len(sender.sent) == 1
+
+
+def test_ingest_fills_llm_hypothesis_with_provider(session_factory):
+    """A real provider fills the hypothesis for every newly-classified episode (§4)."""
+    from tests.fakes.llm import StubHypothesisProvider
+
+    ingest_build(
+        FakeJenkinsClient(),
+        session_factory,
+        1702,
+        hypothesis_provider=StubHypothesisProvider(text="trunk commit r123 broke this"),
+    )
+    with session_scope(session_factory) as s:
+        hyps = s.scalars(select(Classification.llm_hypothesis)).all()
+        assert len(hyps) == 7
+        assert all(h == "trunk commit r123 broke this" for h in hyps)
+
+
+def test_ingest_default_leaves_hypothesis_null(session_factory):
+    """Default (no provider) ⇒ Noop ⇒ the column stays NULL, as before M5."""
+    ingest_build(FakeJenkinsClient(), session_factory, 1702)
+    with session_scope(session_factory) as s:
+        hyps = s.scalars(select(Classification.llm_hypothesis)).all()
+        assert hyps and all(h is None for h in hyps)
