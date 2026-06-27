@@ -18,12 +18,37 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from uta.models import Attribution, Classification, FailureEpisode, TestLifecycle
+from uta.models import (
+    Attribution,
+    Classification,
+    FailureEpisode,
+    Run,
+    TestLifecycle,
+    TestResult,
+)
 from uta.models.enums import Provenance
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _episode_signature_id(session: Session, episode: FailureEpisode) -> int | None:
+    """The failure signature for an episode — the latest failing result of its test that has one.
+
+    Links the human conclusion to the KB signature so confirmed/entered reasons feed recurrence
+    retrieval (§4): a future failure with the same signature surfaces "previous reason was …".
+    """
+    return session.scalar(
+        select(TestResult.signature_id)
+        .join(Run, Run.id == TestResult.run_id)
+        .where(
+            TestResult.test_identity_id == episode.test_identity_id,
+            TestResult.signature_id.isnot(None),
+        )
+        .order_by(Run.started_at.desc(), TestResult.id.desc())
+        .limit(1)
+    )
 
 
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
@@ -72,7 +97,8 @@ def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None
     Accepts the AI's suggested contact + hypothesis as the conclusion, tier ``AI_CONFIRMED``,
     retaining the original AI values for audit. Returns None if the episode doesn't exist.
     """
-    if session.get(FailureEpisode, episode_id) is None:
+    episode = session.get(FailureEpisode, episode_id)
+    if episode is None:
         return None
     classification = _latest_classification(session, episode_id)
     ai_cause = classification.suggested_contact if classification else None
@@ -87,6 +113,7 @@ def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None
     attr.original_ai_reason = ai_reason
     attr.validated_by = actor
     attr.validated_at = _now()
+    attr.signature_id = _episode_signature_id(session, episode)
     return attr
 
 
@@ -139,4 +166,5 @@ def set_attribution(
         attr.entered_by = actor
         attr.validated_by = actor
         attr.validated_at = _now()
+        attr.signature_id = _episode_signature_id(session, episode)
     return attr

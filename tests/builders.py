@@ -35,11 +35,16 @@ def make_run(
     tracks: tuple[str, ...] = ("permanent", "permanent_py39"),
     started_at: datetime | None = None,
     error_type: dict[str, str] | None = None,
+    errors: dict[str, tuple[str | None, str | None]] | None = None,
+    fail_tracks: dict[str, tuple[str, ...]] | None = None,
 ) -> Run:
     """Create a complete (by default) run where each ``name`` has ``status`` in every track.
 
     ``statuses`` maps canonical test name -> JUnit status (PASSED/FAILED/REGRESSION/FIXED/SKIPPED).
     ``error_type`` optionally maps name -> derived error type (to drive INFRA classification).
+    ``errors`` optionally maps name -> (error_details, error_stack_trace) for KB signature tests.
+    ``fail_tracks`` optionally restricts which tracks a failing test fails in (the rest pass) — for
+    shard-correlation tests; default is "fails in all tracks".
     """
     start = started_at or (_EPOCH + timedelta(hours=build))
     run = Run(
@@ -52,15 +57,23 @@ def make_run(
     session.add(run)
     session.flush()
     err = error_type or {}
+    errs = errors or {}
+    only = fail_tracks or {}
     for name, status in statuses.items():
         ident = get_identity(session, name)
+        details, stack = errs.get(name, (None, None))
         for track in tracks:
+            track_status = status
+            if status in ("FAILED", "REGRESSION") and name in only and track not in only[name]:
+                track_status = "PASSED"
             run.results.append(
                 TestResult(
                     identity=ident,
                     track=track,
-                    status=status,
-                    error_type=err.get(name),
+                    status=track_status,
+                    error_type=err.get(name) if track_status == status else None,
+                    error_details=details if track_status == status else None,
+                    error_stack_trace=stack if track_status == status else None,
                 )
             )
     session.flush()

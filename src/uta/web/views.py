@@ -9,16 +9,21 @@ bookkeeping exists to drift.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
+from uta.analyze.flakiness import compute_stats
+from uta.analyze.flakiness import leaderboard as _leaderboard
 from uta.ingest.ut_report import FAILED_STATUSES
+from uta.kb.retrieval import similar_cases
 from uta.models import (
     Classification,
     FailureEpisode,
+    FailureSignature,
     Run,
     TestIdentity,
     TestLifecycle,
@@ -227,7 +232,38 @@ def _candidates_for_run(session: Session, run_id: int | None) -> dict:
     return {"code": code, "data": data}
 
 
-def test_record(session: Session, identity_id: int) -> dict | None:
+def _recurrence(
+    session: Session, latest: TestResult | None, *, k: int, cutoff: float
+) -> dict | None:
+    """KB recurrence for the latest failure (§4): exact occurrence stats + similar past cases."""
+    if latest is None or latest.signature_id is None:
+        return None
+    sig = session.get(FailureSignature, latest.signature_id)
+    if sig is None:
+        return None
+    similar = similar_cases(
+        session, sig.normalized_text, k=k, cutoff=cutoff, exclude_signature_id=sig.id
+    )
+    return {
+        "occurrence_count": sig.occurrence_count,
+        "exception_type": sig.exception_type,
+        "first_seen": _run_ref(session, sig.first_seen_run_id),
+        "first_seen_at": sig.first_seen_at,
+        "last_seen": _run_ref(session, sig.last_seen_run_id),
+        "last_seen_at": sig.last_seen_at,
+        "similar": [asdict(c) for c in similar],
+    }
+
+
+def test_record(
+    session: Session,
+    identity_id: int,
+    *,
+    flaky_window_days: int = 30,
+    flaky_threshold: float = 0.3,
+    kb_top_k: int = 5,
+    kb_cutoff: float = 0.3,
+) -> dict | None:
     """The §1 per-test record: identity, lifecycle, every episode, evidence and context links."""
     ident = session.get(TestIdentity, identity_id)
     if ident is None:
@@ -239,6 +275,12 @@ def test_record(session: Session, identity_id: int) -> dict | None:
     candidates = _candidates_for_run(
         session, current_ep.first_failure_run_id if current_ep is not None else None
     )
+    flakiness = asdict(
+        compute_stats(
+            session, identity_id, window_days=flaky_window_days, threshold=flaky_threshold
+        )
+    )
+    recurrence = _recurrence(session, latest, k=kb_top_k, cutoff=kb_cutoff)
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
@@ -275,7 +317,40 @@ def test_record(session: Session, identity_id: int) -> dict | None:
             "run": _run_ref(session, latest.run_id),
         },
         "candidates": candidates,
+        "flakiness": flakiness,
+        "recurrence": recurrence,
     }
+
+
+def flaky_leaderboard(
+    session: Session,
+    *,
+    window_days: int = 30,
+    threshold: float = 0.3,
+    limit: int = 50,
+) -> dict:
+    """The §3 flaky-leaderboard view: most-unstable tests ranked by oscillation."""
+    rows = _leaderboard(session, window_days=window_days, threshold=threshold, limit=limit)
+    return {"rows": rows, "window_days": window_days}
+
+
+def kb_search(
+    session: Session,
+    query: str,
+    *,
+    k: int = 20,
+    cutoff: float = 0.3,
+) -> dict:
+    """The §4 knowledge-base search: free-text → most-similar past failure signatures.
+
+    Matches against the normalized signature text (the same space the KB keys on), provenance-
+    weighted so confirmed/corrected human knowledge surfaces among near-equal matches.
+    """
+    query = (query or "").strip()
+    if not query:
+        return {"query": "", "results": []}
+    results = [asdict(c) for c in similar_cases(session, query, k=k, cutoff=cutoff)]
+    return {"query": query, "results": results}
 
 
 def run_summary(session: Session, build: int) -> dict | None:

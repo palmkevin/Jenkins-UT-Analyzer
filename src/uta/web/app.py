@@ -68,8 +68,16 @@ def create_app(session_factory=None) -> FastAPI:
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
     def test_record(request: Request, identity_id: int):
+        cfg = get_settings()
         with session_scope(session_factory) as s:
-            record = views.test_record(s, identity_id)
+            record = views.test_record(
+                s,
+                identity_id,
+                flaky_window_days=cfg.flaky_window_days,
+                flaky_threshold=cfg.flaky_transition_threshold,
+                kb_top_k=cfg.kb_top_k,
+                kb_cutoff=cfg.pgtrgm_similarity_cutoff,
+            )
         return render(request, "test_record.html", {"record": record, "identity_id": identity_id})
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
@@ -77,6 +85,24 @@ def create_app(session_factory=None) -> FastAPI:
         with session_scope(session_factory) as s:
             run = views.run_summary(s, build)
         return render(request, "run.html", {"run": run, "build": build})
+
+    @app.get("/flaky", response_class=HTMLResponse)
+    def flaky_view(request: Request):
+        cfg = get_settings()
+        with session_scope(session_factory) as s:
+            board = views.flaky_leaderboard(
+                s,
+                window_days=cfg.flaky_window_days,
+                threshold=cfg.flaky_transition_threshold,
+            )
+        return render(request, "flaky.html", {"board": board})
+
+    @app.get("/kb", response_class=HTMLResponse)
+    def kb_view(request: Request, q: str = ""):
+        cfg = get_settings()
+        with session_scope(session_factory) as s:
+            results = views.kb_search(s, q, cutoff=cfg.pgtrgm_similarity_cutoff)
+        return render(request, "kb.html", {"kb": results})
 
     # ── Actions (Post/Redirect/Get) ──────────────────────────────────────────
     @app.post("/identity")

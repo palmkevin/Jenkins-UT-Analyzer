@@ -41,6 +41,58 @@
   {% endif %}
 </div>
 
+{% set fl = record.flakiness %}
+{% if fl %}
+<div class="card">
+  <h2 style="margin-top:0">Flakiness &amp; history (§3)</h2>
+  <p>
+    {% if fl.flaky %}<span class="badge flaky">flaky</span>{% endif %}
+    {% if fl.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
+    Pattern: {{ fl.pattern }}
+  </p>
+  <p class="meta">
+    Failed before? {{ "yes" if fl.failed_total else "no" }} ·
+    last failed {{ fl.last_failed_at or "—" }}<br>
+    Failures: {{ fl.failed_in_window }} in window / {{ fl.failed_total }} all-time ·
+    runs in window {{ fl.runs_in_window }}<br>
+    Oscillation score {{ "%.2f"|format(fl.score) }}
+    ({{ fl.transitions }} transitions) · fail-rate {{ "%.2f"|format(fl.fail_rate) }}
+  </p>
+</div>
+{% endif %}
+
+{% set rec = record.recurrence %}
+{% if rec %}
+<div class="card">
+  <h2 style="margin-top:0">Knowledge base (§4)</h2>
+  <p class="meta">
+    This exact failure signature has been seen <strong>{{ rec.occurrence_count }}×</strong>
+    {% if rec.exception_type %} ({{ rec.exception_type }}){% endif %};
+    first {{ run_link(rec.first_seen) }} · {{ rec.first_seen_at or "—" }},
+    last {{ run_link(rec.last_seen) }} · {{ rec.last_seen_at or "—" }}.
+  </p>
+  {% if rec.similar %}
+  <h3 style="font-size:0.92rem">Similar past cases</h3>
+  <table>
+    <thead><tr><th>Test</th><th>Similarity</th><th>Reason</th><th>Caused by</th><th>Provenance</th></tr></thead>
+    <tbody>
+      {% for c in rec.similar %}
+      <tr>
+        <td><a href="/tests/{{ c.identity_id }}">{{ c.test_id }}</a></td>
+        <td>{{ "%.2f"|format(c.similarity) }}</td>
+        <td>{{ c.reason_text or "—" }}</td>
+        <td>{{ c.causing_person or "—" }}</td>
+        <td>{% if c.provenance %}<span class="badge">{{ c.provenance }}</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No similar past failures yet.</p>
+  {% endif %}
+</div>
+{% endif %}
+
 {% set lf = record.latest_failure %}
 {% if lf %}
 <div class="card">

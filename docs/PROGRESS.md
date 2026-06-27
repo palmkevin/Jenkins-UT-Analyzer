@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27 (Milestone 3)_
+_Last updated: 2026-06-27 (Milestone 4)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -173,8 +173,50 @@ Triage queue (§0), per-test record (§1) with acknowledge/confirm/edit, run sum
 - **Flaky leaderboard / KB search** surfaces arrive with M4; the `flaky` column shows the M2 flag
   (still unpopulated until M4 computes oscillation).
 
-## Milestone 4 — flakiness, knowledge base, email  ·  `[ ]`
+## Milestone 4 — flakiness, knowledge base, email  ·  `[x]`
 Oscillation flakiness (§3); KB signatures + `pg_trgm` similarity (§4); regression-only email (§5).
+**No migration needed** — the M1 schema already shipped `failure_signatures` (+ trigram GIN),
+`test_results.signature_id` / `attributions.signature_id`, and the lifecycle `flaky` flag; M4 is the
+logic, retrieval, surfaces and delivery that fill them.
+
+### Done
+- [x] **Signature normalization** (`kb/signature.py`) — the **named, test-covered** load-bearing
+      mask set (PLAN §4): keeps exception type + top-N **our-package** frames (track prefix stripped
+      so both tracks collapse to one signature), masks UUID/TS/IP:PORT/HEX/NUM (ordered, specific
+      first) and line numbers; `compute_hash` = sha256 over `identity + normalized text`.
+- [x] **KB store** (`kb/store.py`) — upsert a `FailureSignature` per failing result at ingest and
+      link `result.signature_id`; `occurrence_count` + first/last-seen **recomputed from the live
+      links** so re-ingest never double-counts (idempotent). Wired into the pipeline.
+- [x] **KB retrieval** (`kb/retrieval.py`) — exact recurrence by hash; fuzzy "similar past cases"
+      via `pg_trgm similarity()` on Postgres, **difflib fallback offline** (same ranking contract);
+      **provenance-weighted** (HUMAN_CORRECTED > HUMAN_ENTERED > AI_CONFIRMED > AI_UNCONFIRMED) so
+      validated human knowledge surfaces above unconfirmed AI guesses. Attributions now link to the
+      episode's signature (in `web/actions.py`) so confirmed/entered reasons feed retrieval.
+- [x] **Oscillation flakiness** (`analyze/flakiness.py`, §3) — per-run pass/fail sequence from runs
+      that **produced a result** (gaps/incomplete runs are holes, never flips); `score =
+      transitions ÷ runs`; **FLAKY** only when `0 < fail-rate < 1` **and** `score ≥ threshold` (a
+      solidly-failing test is a regression, not flaky); shard-correlation + pattern
+      (consecutive/intermittent/stable); `recompute_flaky_flags` (run at ingest) + `leaderboard`.
+      Answers the §3 ★ questions (failed before / last failed / counts total + window).
+- [x] **Regression-only email** (`delivery/email.py`, §5) — `EmailSender` interface +
+      `SmtpEmailSender` (stdlib) + recording fake; sends **only** when a processed run introduces
+      ≥1 new failing test (leads with new failures + predicted cause + suggested contact, carries
+      still-failing/newly-fixed/removed counts); optional **recovery notice** (back-to-green) behind
+      a toggle. Wired into the **poller** (live path) with recipients from config; **back-fill passes
+      no sender** so historical regressions are never re-mailed.
+- [x] **Surfaces** — **flaky leaderboard** (`GET /flaky`), **KB search** (`GET /kb?q=`), and the
+      per-test record (§1) now carries a **Flakiness & history** card and a **Knowledge base** card
+      (exact recurrence count + similar past cases). Nav links added to `base.html`.
+- [x] **Config + `.env.example`** — `FLAKY_WINDOW_DAYS`, `KB_TOP_K`, SMTP keys surfaced in the typed
+      settings (`email_recipients` parsed from `SMTP_RECIPIENTS`); CLI `poll` builds the SMTP sender,
+      `backfill` does not.
+- [x] **Tests (+31, offline gate green: 119 passed, 3 skipped)**: `test_signature` (mask table,
+      same-bug/cross-track collapse, distinct-bug separation, hash scoping, frame selection),
+      `test_flakiness` (regression vs oscillation, gaps/incomplete excluded, shard correlation,
+      counts, recompute + leaderboard), `test_kb` (upsert/idempotent occurrence, exact recurrence,
+      difflib similar-cases, provenance weighting), `test_email` (silence vs regression vs recovery,
+      sender wiring), `test_web_m4` (the two new routes + record cards), and pipeline coverage that
+      ingest records signatures and emails on regression via a fake sender. ruff lint + format clean.
 
 ## Milestone 5 — LLM hypothesis  ·  `[ ]`
 Real provider behind `HypothesisProvider`, RAG over KB top-k.
@@ -197,3 +239,19 @@ Real provider behind `HypothesisProvider`, RAG over KB top-k.
 - **Both-signal classification is `UNKNOWN`, not a guess** (M2). Most runs carry a commit, so when a
   `ut_ref` change *also* falls in the window the cause is genuinely ambiguous; with no KB to rank yet
   (confidence deferred), we attach both candidate sets as evidence and let the human attribute.
+- **M4 needed no migration** — the full KB/flaky schema landed in M1 (signatures + trigram GIN,
+  `signature_id` FKs, lifecycle `flaky`), so the milestone is pure logic/surfaces/delivery.
+- **Signature collapses tracks** (M4): the normalizer strips the `…/release/<track>/` path prefix so
+  the same failure in `permanent` and `permanent_py39` hashes to **one** signature — consistent with
+  test-level identity (track is an attribute). Occurrence/first-last-seen are **recomputed from live
+  result links**, not incremented, so re-ingest stays idempotent.
+- **KB similarity has a dialect fallback** (M4): `pg_trgm similarity()` on Postgres, a `difflib`
+  ratio offline — same top-k/cutoff/ranking contract, so the offline gate exercises retrieval logic
+  without `pg_trgm`. `pgvector` remains a later drop-in behind the same interface.
+- **Email idempotency is by caller, not a DB flag** (M4): only the **poller** passes an
+  `EmailSender` and it ingests each build at most once (high-water mark), so a regression alert is
+  never re-sent; **back-fill passes no sender**, so re-processing history never emails. This avoided
+  a `runs.notified_at` column and the migration it would need.
+- **Flaky ≠ high fail-rate** (M4, PLAN §3): because every run is commit-triggered, "fails then
+  passes" is never "no change"; flakiness is **oscillation** (`transitions ÷ runs`) gated on a
+  fail-rate strictly between 0 and 1. Gaps (absent/incomplete) are missing data points, never flips.
