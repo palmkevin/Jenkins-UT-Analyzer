@@ -1,0 +1,118 @@
+"""HTTP-level tests of the dashboard routes (FastAPI TestClient, injected SQLite session factory).
+
+Covers the §0/§1/§2 pages, the Phase-1 identity cookie, and the Post/Redirect/Get actions actually
+mutating state through the app (not just the service functions).
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
+
+from tests.builders import get_identity, make_run
+from uta.analyze.lifecycle import apply_run
+from uta.db import Base, make_session_factory, session_scope
+from uta.models import TestLifecycle
+from uta.web.app import create_app
+
+
+@pytest.fixture
+def session_factory():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    return make_session_factory(engine)
+
+
+@pytest.fixture
+def seeded(session_factory):
+    """One failing test ("alpha") with an open episode, plus a passing one ("beta")."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_run(s, r1, baseline=None)
+    return session_factory
+
+
+@pytest.fixture
+def client(seeded):
+    return TestClient(create_app(session_factory=seeded), follow_redirects=False)
+
+
+def _identity_id(session_factory, name) -> int:
+    with session_scope(session_factory) as s:
+        return get_identity(s, name).id
+
+
+def test_triage_landing_lists_new_failure(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "Daily triage queue" in resp.text
+    assert "alpha" in resp.text
+    assert "test-user" in resp.text  # default actor in the header
+
+
+def test_identity_cookie_sets_actor(client):
+    resp = client.post("/identity", data={"actor": "morgan"}, headers={"referer": "/"})
+    assert resp.status_code == 303
+    assert client.cookies.get("uta_actor") == "morgan"
+    # The new actor is reflected in the header.
+    assert "morgan" in client.get("/").text
+
+
+def test_acknowledge_moves_test_out_of_new_bucket(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    client.cookies.set("uta_actor", "dana")
+    resp = client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        assert lc.acknowledged is True
+        assert lc.acknowledged_by == "dana"
+
+
+def test_test_record_page_renders(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    resp = client.get(f"/tests/{ident_id}")
+    assert resp.status_code == 200
+    assert "alpha" in resp.text
+    assert "Failure episodes" in resp.text
+
+
+def test_attribute_form_persists_reason(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        ep_id = lc.current_episode_id
+    client.cookies.set("uta_actor", "erin")
+    resp = client.post(
+        f"/episodes/{ep_id}/attribute",
+        data={
+            "causing_person": "frank",
+            "reason_text": "flaky fixture",
+            "triage_status": "INVESTIGATING",
+        },
+        headers={"referer": f"/tests/{ident_id}"},
+    )
+    assert resp.status_code == 303
+    page = client.get(f"/tests/{ident_id}").text
+    assert "frank" in page and "flaky fixture" in page
+
+
+def test_run_summary_page_shows_diff_and_results(client):
+    resp = client.get("/runs/1")
+    assert resp.status_code == 200
+    assert "Run #1" in resp.text
+    assert "Diff vs baseline" in resp.text
+    assert "alpha" in resp.text
+
+
+def test_unknown_test_record_is_graceful(client):
+    resp = client.get("/tests/99999")
+    assert resp.status_code == 200
+    assert "No record" in resp.text

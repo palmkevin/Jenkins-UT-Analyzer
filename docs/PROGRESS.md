@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27 (Milestone 2)_
+_Last updated: 2026-06-27 (Milestone 3)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -131,8 +131,47 @@ deterministic CODE/DATA/INFRA/UNKNOWN from time-windowed candidates.
   intentionally not populated yet.
 - **Acknowledgement** is cleared on reopen here, but the **set** action arrives with the M3 dashboard.
 
-## Milestone 3 — dashboard (FastAPI + HTMX)  ·  `[ ]`
+## Milestone 3 — dashboard (FastAPI + HTMX)  ·  `[x]`
 Triage queue (§0), per-test record (§1) with acknowledge/confirm/edit, run summary (§2).
+
+### Done
+- [x] **Phase-1 self-declared identity** (`web/identity.py`): the acting user is a plain string read
+      from the `uta_actor` cookie, defaulting to `app_default_actor` (`test-user`). Set via a header
+      form (`POST /identity`); every human action is stamped with it. Phase-2 (Keycloak) swaps only
+      *how* the value is obtained — no data-model change.
+- [x] **§0 triage queue** (`web/views.triage_queue`, `GET /`): the three buckets as a pure
+      **projection** of lifecycle `state` × the orthogonal `acknowledged` attribute — **New**
+      (FAILING & unacknowledged, newest-first), **Still failing** (FAILING & acknowledged, plus
+      `REMOVED` open episodes surfaced with a distinct **Removed** flag), **Recently fixed** (FIXED
+      within `recently_fixed_days`, default 7). Counts double as the health indicator.
+- [x] **§1 per-test record** (`web/views.test_record`, `GET /tests/{id}`): identity + lifecycle,
+      every failure **episode** (first/last/fixed runs, age, triage), the latest failing result
+      (error type / details / stack / `file:line` / Jenkins link), and the **candidate code/data
+      changes** in the failure window — chronological.
+- [x] **§2 run summary** (`web/views.run_summary`, `GET /runs/{build}`): totals, per-shard timing,
+      the chosen **baseline** + the diff (regressions / newly-fixed / still-failing / removed) each
+      linking to the per-test record, and the full results table. Replaces the Slice-0 list view.
+- [x] **Actions with provenance** (`web/actions.py`): **Acknowledge** (stamps actor, moves New →
+      Still-failing); one-click **Confirm** of an AI suggestion (`AI_CONFIRMED`, retains original);
+      **edit** causing-person / reason / triage — provenance derived vs the AI suggestion
+      (`AI_CONFIRMED` / `HUMAN_CORRECTED` + original AI value retained / `HUMAN_ENTERED`). All
+      Post/Redirect/Get; thin route handlers, logic in views/actions, templates never touch a live
+      session.
+- [x] **Templates** (`base.html` + `triage.html` / `test_record.html` / `run.html`): server-rendered
+      Jinja, no external assets (CSP/offline-safe); self-declared actor shown in the header.
+- [x] **`python-multipart`** added for form parsing; `RECENTLY_FIXED_DAYS` added to settings +
+      `.env.example`.
+- [x] **Tests (+19, offline gate green: 88 passed, 3 skipped)**: `test_dashboard_views`
+      (bucket projection incl. removed flag & recently-fixed window, per-test record, run diff, and
+      the three provenance tiers) + `test_web_dashboard` (HTTP routes, identity cookie, and PRG
+      actions mutating state end-to-end). ruff lint + format clean. **SQLite-naive vs Postgres-aware**
+      datetimes normalized in the views so window comparisons never mix tz-aware/naive.
+
+### Open / deferred
+- **HTMX progressive enhancement** — actions are plain PRG forms today (fully functional + offline-
+  testable); inline HTMX swaps can be layered on without changing the handlers.
+- **Flaky leaderboard / KB search** surfaces arrive with M4; the `flaky` column shows the M2 flag
+  (still unpopulated until M4 computes oscillation).
 
 ## Milestone 4 — flakiness, knowledge base, email  ·  `[ ]`
 Oscillation flakiness (§3); KB signatures + `pg_trgm` similarity (§4); regression-only email (§5).

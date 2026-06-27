@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     app_default_actor: str = "test-user"
     flaky_transition_threshold: float = 0.3
     pgtrgm_similarity_cutoff: float = 0.3
+    # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
+    recently_fixed_days: int = 7
 
     # ── Ingest / correlation windows ───────────────────────────────────────────
     # Data changes precede the nightly run (the run's own window had none on #1702), so look back

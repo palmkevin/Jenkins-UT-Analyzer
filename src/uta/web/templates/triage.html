@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Triage queue — UT Analyzer{% endblock %}
+
+{% macro run_link(ref) -%}
+  {%- if ref -%}<a href="/runs/{{ ref.build }}">#{{ ref.build }}</a>{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% macro test_link(row) -%}
+  <a href="/tests/{{ row.identity_id }}">{{ row.test_id }}</a>
+  {%- if row.flaky %} <span class="badge flaky">flaky</span>{% endif -%}
+  {%- if row.reopen_count %} <span class="badge">reopened ×{{ row.reopen_count }}</span>{% endif -%}
+{%- endmacro %}
+
+{% block content %}
+<h1>Daily triage queue</h1>
+<p class="meta">
+  <span class="count">{{ queue.counts.new }}</span> new ·
+  <span class="count">{{ queue.counts.still_failing }}</span> still failing ·
+  <span class="count">{{ queue.counts.recently_fixed }}</span> recently fixed
+</p>
+
+<h2>★ New failing tests — not yet acknowledged ({{ queue.counts.new }})</h2>
+{% if not queue.new %}
+  <p class="empty">Nothing waiting — the action queue is empty.</p>
+{% else %}
+<table>
+  <thead><tr><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
+  <tbody>
+    {% for row in queue.new %}
+    <tr>
+      <td>{{ test_link(row) }}</td>
+      <td>{{ row.owner or "" }}</td>
+      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at }}</td>
+      <td>{{ row.predicted_cause or "—" }}</td>
+      <td>
+        <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
+          <button type="submit">Acknowledge</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>★ Tests still failing ({{ queue.counts.still_failing }})</h2>
+{% if not queue.still_failing %}
+  <p class="empty">No acknowledged failures in flight.</p>
+{% else %}
+<table>
+  <thead><tr><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
+  <tbody>
+    {% for row in queue.still_failing %}
+    <tr>
+      <td>
+        {{ test_link(row) }}
+        {% if row.removed %}<span class="badge removed">Removed</span>{% endif %}
+      </td>
+      <td>{{ row.age_runs if row.age_runs is not none else "?" }} runs / {{ row.age_days if row.age_days is not none else "?" }}d</td>
+      <td>{{ row.triage_status or "—" }}</td>
+      <td>{{ row.causing_person or "—" }}</td>
+      <td>{{ row.reason_text or row.predicted_cause or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>★ Tests recently fixed ({{ queue.counts.recently_fixed }})</h2>
+{% if not queue.recently_fixed %}
+  <p class="empty">No fixes in the recent window.</p>
+{% else %}
+<table>
+  <thead><tr><th>Test</th><th>Fixed in</th><th>When</th><th>Reason</th></tr></thead>
+  <tbody>
+    {% for row in queue.recently_fixed %}
+    <tr>
+      <td>{{ test_link(row) }}</td>
+      <td>{{ run_link(row.fixed_in) }}</td>
+      <td>{{ row.fixed_at }}</td>
+      <td>{{ row.reason_text or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

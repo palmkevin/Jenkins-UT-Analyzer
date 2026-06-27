@@ -1,0 +1,351 @@
+"""Read-side view builders for the dashboard (PLAN §0/§1/§2).
+
+Every function takes a live session and returns **plain detached dicts** so Jinja templates never
+touch a closed session (the Slice-0 pattern). Nothing here mutates state — the buckets are a pure
+**projection** of lifecycle state + the orthogonal acknowledgement attribute (§0), so no separate
+bookkeeping exists to drift.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from uta.analyze.baseline import compute_diff, select_baseline
+from uta.ingest.ut_report import FAILED_STATUSES
+from uta.models import (
+    Classification,
+    FailureEpisode,
+    Run,
+    TestIdentity,
+    TestLifecycle,
+    TestResult,
+)
+from uta.models.enums import LifecycleState
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    """Coerce to aware-UTC. SQLite (offline tests) drops tzinfo; Postgres keeps it — normalize so
+    comparisons against :func:`_now` never mix naive and aware datetimes."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _run_ref(session: Session, run_id: int | None) -> dict | None:
+    """A minimal {id, build, url} reference to a run (episodes hold only the FK)."""
+    if run_id is None:
+        return None
+    run = session.get(Run, run_id)
+    if run is None:
+        return None
+    return {"id": run.id, "build": run.build_number, "url": run.url}
+
+
+def _latest_classification(session: Session, episode_id: int) -> Classification | None:
+    """The current prediction for an episode (rows are append-only; newest wins)."""
+    return session.scalar(
+        select(Classification)
+        .where(Classification.episode_id == episode_id)
+        .order_by(Classification.created_at.desc(), Classification.id.desc())
+        .limit(1)
+    )
+
+
+def _days_between(start: datetime | None, end: datetime | None) -> int | None:
+    start, end = _aware(start), _aware(end)
+    if start is None or end is None:
+        return None
+    return max(0, (end - start).days)
+
+
+def _row(session: Session, lc: TestLifecycle) -> dict:
+    """Shared row projection for the triage buckets — identity + current episode + prediction."""
+    ident = lc.identity
+    ep = lc.current_episode
+    classification = _latest_classification(session, ep.id) if ep is not None else None
+    attribution = ep.attribution if ep is not None else None
+    first_failure = _run_ref(session, ep.first_failure_run_id) if ep is not None else None
+    fixed_in = _run_ref(session, ep.fixed_in_run_id) if ep is not None else None
+    return {
+        "identity_id": ident.id,
+        "test_id": ident.canonical_name,
+        "owner": ident.owner_initials,
+        "state": lc.state,
+        "flaky": lc.flaky,
+        "reopen_count": lc.reopen_count,
+        "acknowledged": lc.acknowledged,
+        "acknowledged_by": lc.acknowledged_by,
+        "acknowledged_at": lc.acknowledged_at,
+        "episode_id": ep.id if ep is not None else None,
+        "first_failure": first_failure,
+        "first_failure_at": ep.first_failure_at if ep is not None else None,
+        "fixed_in": fixed_in,
+        "fixed_at": ep.fixed_at if ep is not None else None,
+        "age_runs": ep.age_runs if ep is not None else None,
+        "age_days": _days_between(ep.first_failure_at, _now()) if ep is not None else None,
+        "triage_status": ep.triage_status if ep is not None else None,
+        "predicted_cause": classification.predicted_cause if classification else None,
+        "causing_person": attribution.causing_person if attribution else None,
+        "reason_text": attribution.reason_text if attribution else None,
+    }
+
+
+def triage_queue(session: Session, *, recently_fixed_days: int = 7) -> dict:
+    """The §0 three-bucket queue: new-unacknowledged / still-failing(+removed) / recently-fixed.
+
+    Buckets are a projection of lifecycle ``state`` and the orthogonal ``acknowledged`` attribute:
+
+    1. **New** — ``FAILING`` and not acknowledged (newest-first); the action queue.
+    2. **Still failing** — ``FAILING`` and acknowledged, plus ``REMOVED`` tests with an open
+       episode surfaced with a Removed flag (disappeared ≠ fixed).
+    3. **Recently fixed** — ``FIXED`` within the configured window (default 7 days).
+    """
+    lifecycles = session.scalars(
+        select(TestLifecycle).join(TestIdentity, TestLifecycle.identity)
+    ).all()
+
+    new: list[dict] = []
+    still_failing: list[dict] = []
+    recently_fixed: list[dict] = []
+    cutoff = _now() - timedelta(days=recently_fixed_days)
+
+    for lc in lifecycles:
+        ep = lc.current_episode
+        if lc.state == LifecycleState.FAILING:
+            row = _row(session, lc)
+            (still_failing if lc.acknowledged else new).append(row)
+        elif lc.state == LifecycleState.REMOVED and ep is not None and ep.is_open:
+            row = _row(session, lc)
+            row["removed"] = True
+            still_failing.append(row)
+        elif lc.state == LifecycleState.FIXED and ep is not None and ep.fixed_at is not None:
+            if _aware(ep.fixed_at) >= cutoff:
+                recently_fixed.append(_row(session, lc))
+
+    new.sort(key=lambda r: (r["first_failure_at"] is not None, r["first_failure_at"]), reverse=True)
+    still_failing.sort(key=lambda r: (r.get("removed", False), r["age_days"] or 0), reverse=True)
+    recently_fixed.sort(key=lambda r: (r["fixed_at"] is not None, r["fixed_at"]), reverse=True)
+
+    return {
+        "new": new,
+        "still_failing": still_failing,
+        "recently_fixed": recently_fixed,
+        "counts": {
+            "new": len(new),
+            "still_failing": len(still_failing),
+            "recently_fixed": len(recently_fixed),
+        },
+    }
+
+
+def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
+    classification = _latest_classification(session, ep.id)
+    attribution = ep.attribution
+    evidence = None
+    if classification and classification.evidence:
+        try:
+            evidence = json.loads(classification.evidence)
+        except (ValueError, TypeError):
+            evidence = None
+    return {
+        "id": ep.id,
+        "episode_number": ep.episode_number,
+        "is_open": ep.is_open,
+        "first_failure": _run_ref(session, ep.first_failure_run_id),
+        "first_failure_at": ep.first_failure_at,
+        "last_failing": _run_ref(session, ep.last_failing_run_id),
+        "last_failing_at": ep.last_failing_at,
+        "fixed_in": _run_ref(session, ep.fixed_in_run_id),
+        "fixed_at": ep.fixed_at,
+        "age_runs": ep.age_runs,
+        "age_days": _days_between(ep.first_failure_at, ep.fixed_at or _now()),
+        "triage_status": ep.triage_status,
+        "predicted_cause": classification.predicted_cause if classification else None,
+        "llm_hypothesis": classification.llm_hypothesis if classification else None,
+        "suggested_contact": classification.suggested_contact if classification else None,
+        "evidence": evidence,
+        "causing_person": attribution.causing_person if attribution else None,
+        "reason_text": attribution.reason_text if attribution else None,
+        "cause_provenance": attribution.cause_provenance if attribution else None,
+        "reason_provenance": attribution.reason_provenance if attribution else None,
+        "original_ai_cause": attribution.original_ai_cause if attribution else None,
+        "original_ai_reason": attribution.original_ai_reason if attribution else None,
+        "validated_by": attribution.validated_by if attribution else None,
+        "validated_at": attribution.validated_at if attribution else None,
+    }
+
+
+def _latest_failing_result(session: Session, identity_id: int) -> TestResult | None:
+    """The most recent failing result for a test — its error text/stack/location and links (§1)."""
+    return session.scalar(
+        select(TestResult)
+        .join(Run, Run.id == TestResult.run_id)
+        .where(
+            TestResult.test_identity_id == identity_id,
+            TestResult.status.in_(FAILED_STATUSES),
+        )
+        .order_by(Run.started_at.desc(), TestResult.id.desc())
+        .limit(1)
+    )
+
+
+def _candidates_for_run(session: Session, run_id: int | None) -> dict:
+    """Candidate code/data changes in the run's window (PLAN §1), presented chronologically."""
+    if run_id is None:
+        return {"code": [], "data": []}
+    run = session.get(Run, run_id)
+    if run is None:
+        return {"code": [], "data": []}
+    code = [
+        {
+            "revision": c.revision or c.commit_id,
+            "author": c.author,
+            "message": c.message,
+            "committed_at": c.committed_at,
+        }
+        for c in sorted(run.code_changes, key=lambda c: c.committed_at)
+    ]
+    data = [
+        {
+            "entity": d.lx_table_code,
+            "pk": d.pk_lst,
+            "change_type": d.change_type,
+            "component": d.component_name,
+            "author": d.author,
+            "changed_at": d.changed_at,
+        }
+        for d in sorted(run.data_changes, key=lambda d: d.changed_at)
+    ]
+    return {"code": code, "data": data}
+
+
+def test_record(session: Session, identity_id: int) -> dict | None:
+    """The §1 per-test record: identity, lifecycle, every episode, evidence and context links."""
+    ident = session.get(TestIdentity, identity_id)
+    if ident is None:
+        return None
+    lc = ident.lifecycle
+    episodes = sorted(ident.episodes, key=lambda e: e.episode_number, reverse=True)
+    current_ep = lc.current_episode if lc is not None else None
+    latest = _latest_failing_result(session, identity_id)
+    candidates = _candidates_for_run(
+        session, current_ep.first_failure_run_id if current_ep is not None else None
+    )
+    return {
+        "identity_id": ident.id,
+        "test_id": ident.canonical_name,
+        "suite": ident.suite,
+        "class_name": ident.class_name,
+        "method": ident.method,
+        "owner": ident.owner_initials,
+        "lifecycle": None
+        if lc is None
+        else {
+            "state": lc.state,
+            "flaky": lc.flaky,
+            "reopen_count": lc.reopen_count,
+            "acknowledged": lc.acknowledged,
+            "acknowledged_by": lc.acknowledged_by,
+            "acknowledged_at": lc.acknowledged_at,
+            "all_time_first_failure": _run_ref(session, lc.all_time_first_failure_run_id),
+            "all_time_first_failure_at": lc.all_time_first_failure_at,
+            "last_failing": _run_ref(session, lc.last_failing_run_id),
+            "last_failing_at": lc.last_failing_at,
+            "current_episode_id": lc.current_episode_id,
+        },
+        "episodes": [_episode_dict(session, e) for e in episodes],
+        "latest_failure": None
+        if latest is None
+        else {
+            "track": latest.track,
+            "status": latest.status,
+            "error_type": latest.error_type,
+            "error_details": latest.error_details,
+            "error_stack_trace": latest.error_stack_trace,
+            "file_path": latest.file_path,
+            "line": latest.line,
+            "run": _run_ref(session, latest.run_id),
+        },
+        "candidates": candidates,
+    }
+
+
+def run_summary(session: Session, build: int) -> dict | None:
+    """The §2 run summary: build/timing/totals, per-shard timing, baseline + diff, and results."""
+    run = session.scalar(select(Run).where(Run.build_number == build))
+    if run is None:
+        return None
+
+    baseline = (
+        session.get(Run, run.baseline_run_id)
+        if run.baseline_run_id is not None
+        else select_baseline(session, run)
+    )
+    diff = compute_diff(session, run, baseline)
+
+    # Resolve identity ids in the diff to linkable names.
+    ids = set(diff.regressions + diff.newly_fixed + diff.still_failing + diff.removed)
+    names = {
+        i.id: i.canonical_name
+        for i in session.scalars(select(TestIdentity).where(TestIdentity.id.in_(ids))).all()
+    }
+
+    def _diff_rows(identity_ids: list[int]) -> list[dict]:
+        return [{"identity_id": i, "test_id": names.get(i, str(i))} for i in identity_ids]
+
+    results = session.scalars(
+        select(TestResult)
+        .where(TestResult.run_id == run.id)
+        .order_by(TestResult.status, TestResult.test_identity_id)
+    ).all()
+
+    return {
+        "build": run.build_number,
+        "status": run.status,
+        "url": run.url,
+        "complete": run.complete,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "totals": {
+            "passed": run.total_passed,
+            "failed": run.total_failed,
+            "skipped": run.total_skipped,
+        },
+        "shards": [
+            {
+                "track": s.track,
+                "status": s.status,
+                "started_at": s.started_at,
+                "finished_at": s.finished_at,
+            }
+            for s in sorted(run.shards, key=lambda s: s.track)
+        ],
+        "baseline": _run_ref(session, baseline.id) if baseline is not None else None,
+        "diff": {
+            "regressions": _diff_rows(diff.regressions),
+            "newly_fixed": _diff_rows(diff.newly_fixed),
+            "still_failing": _diff_rows(diff.still_failing),
+            "removed": _diff_rows(diff.removed),
+        },
+        "results": [
+            {
+                "test_id": r.identity.canonical_name,
+                "identity_id": r.test_identity_id,
+                "track": r.track,
+                "status": r.status,
+                "duration": r.duration,
+                "owner": r.owner_initials,
+                "file_path": r.file_path,
+                "line": r.line,
+            }
+            for r in results
+        ],
+    }
