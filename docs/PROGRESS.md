@@ -57,8 +57,37 @@ _Last updated: 2026-06-27_
 
 ---
 
-## Milestone 1 — full schema + migrations  ·  `[ ]`
+## Milestone 1 — full schema + migrations  ·  `[x]`
 Alembic migrations for the full Information model; `CREATE EXTENSION pg_trgm`; indexing from scale.
+
+### Done
+- [x] **Full Information-model schema** (`src/uta/models/`, one module per concern, re-exported):
+      `Run` + `RunShard`, `TestIdentity` (alias self-ref), `TestResult` (keyed `(run, identity,
+      track)`), `TestLifecycle` (state + `flaky` + `reopen_count` + acknowledgement), `FailureEpisode`
+      (per fail→fix cycle, `current_episode` back-pointer via `use_alter`), `Attribution`
+      (cause/reason + provenance tier + original-AI value + validator), `Classification`
+      (cause/confidence-nullable/LLM hypothesis), `CodeChangeCandidate` + `DataChangeCandidate`
+      (run-windowed signals), `FailureSignature` (normalized text + hash + trigram GIN). Enums kept as
+      portable `varchar` (`enums.py`).
+- [x] **Alembic** scaffolded; `env.py` wired to `Base.metadata` + `DATABASE_URL` (12-factor, not
+      `alembic.ini`). Initial migration `31fdfa8031ac` creates all 11 tables.
+- [x] **`CREATE EXTENSION pg_trgm`** + the `gin_trgm_ops` GIN index in the migration; **startup
+      assertion** `assert_pg_trgm()` wired into the web lifespan + `uta migrate`/`backfill`.
+- [x] **`uta migrate`** (alembic upgrade head) replaces Slice-0's `create_all`; `init-db` is now an
+      alias.
+- [x] **Verified against real Postgres** (docker): `upgrade → downgrade base → upgrade` round-trips
+      clean, `alembic check` reports **no drift**, `pg_trgm` + GIN + `similarity()` all live, and the
+      `use_alter` circular FK lands.
+- [x] **Tests**: `test_models.py` (9, SQLite — relationships, constraints, defaults, alias,
+      failure-history-as-results, cascade) + `test_migrations.py` (3, real Postgres, **skip-if-absent**
+      so the gate stays green offline; runs in CI via the `services:` Postgres). Offline suite: **42
+      passed** (39 + 3 skipped without PG); ruff clean.
+
+### Scale sizing (B3)
+~25k tests × 2 tracks ≈ **50k `test_results` rows/run**; at ~1 run/day ≈ **18M rows/year**. Covered by
+B-tree indexes on `test_results(run_id)`, `(test_identity_id)`, `(status)` and the unique
+`(run, identity, track)`. Time/run partitioning of `test_results` is **deferred** until row counts
+warrant it (no code change — a migration when needed).
 
 ## Milestone 2 — ingest pipeline + classification  ·  `[ ]`
 Scheduled poll (APScheduler); complete-run baseline + diff; lifecycle state machine + episodes;

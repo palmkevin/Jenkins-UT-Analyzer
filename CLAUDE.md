@@ -8,6 +8,8 @@ captures only the invariants and conventions that are easy to get wrong or re-de
 - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — **how / in what order** it gets built
   (phased: Slice 0 spike → Milestones 1–5). Start here for sequencing.
 - [docs/NEXT-PHASE-REQUIREMENTS.md](docs/NEXT-PHASE-REQUIREMENTS.md) — the **inputs** the build needs.
+- [docs/PROGRESS.md](docs/PROGRESS.md) — the **durable status checklist** (done / in-progress / open).
+  **Update it as part of every change** — it is the source of truth for status and diffs in PRs.
 
 The execution gate (Jenkins A1–A4, Oracle B1) is **validated against live systems** — Slice 0 is
 unblocked. Live findings live in the plan's two "RESOLVED" sections.
