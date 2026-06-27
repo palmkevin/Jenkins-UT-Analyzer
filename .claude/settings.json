@@ -5,6 +5,7 @@
       "Edit(//opt/ls/Jenkins-UT-Analyzer/**)",
       "Write(//opt/ls/Jenkins-UT-Analyzer/**)",
       "Bash(git *)",
+      "Bash(git add *)",
       "Bash(gh *)",
       "Bash(ssh -T git@github.com)",
       "Bash(python3 *)",
@@ -48,7 +49,18 @@
       "Bash(touch *)",
       "Bash(cp *)",
       "Bash(mv *)",
-      "Bash(git add *)"
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"GET /health    -> %{http_code}\\\\n\" http://localhost:8088/health)",
+      "Bash(curl -s -o /dev/null -w \"GET /runs/1702 -> %{http_code}\\\\n\" http://localhost:8088/runs/1702)",
+      "Bash(.venv/bin/ruff --version)",
+      "Bash(echo \"local ruff: $\\(.venv/bin/ruff --version\\)\")",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(echo \"upgraded ruff: $\\(.venv/bin/ruff --version\\)\")",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(.venv/bin/ruff format *)",
+      "Bash(.venv/bin/pytest -m \"not live\" -q)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ],
     "deny": [
       "Bash(rm -rf /)",

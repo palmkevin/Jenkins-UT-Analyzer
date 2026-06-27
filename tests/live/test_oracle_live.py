@@ -22,7 +22,11 @@ pytestmark = pytest.mark.live
 def feed():
     s = get_settings()
     return OracleTrackingFeed(
-        s.ut_ref_host, s.ut_ref_port, s.ut_ref_service, s.ut_ref_user, s.ut_ref_password,
+        s.ut_ref_host,
+        s.ut_ref_port,
+        s.ut_ref_service,
+        s.ut_ref_user,
+        s.ut_ref_password,
         thick=s.ut_ref_thick,
     )
 
