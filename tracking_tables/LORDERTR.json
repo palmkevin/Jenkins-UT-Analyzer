@@ -1,0 +1,260 @@
+{
+	"name": "LORDERTR",
+	"model": "REQUEST",
+	"indb": true,
+	"upd": true,
+	"type": "entity",
+	"attached": [],
+	"bf": false,
+	"title": "LORDERTR",
+	"descr": "Lorder Trace Table",
+	"primaryKey": [
+		"LORDERTRID"
+	],
+	"indexes": [
+		[
+			"LORDERID"
+		],
+		[
+			"SESSIONLOGID"
+		]
+	],
+	"fields": {
+		"COMPNAME": {
+			"seq": 5,
+			"descr": "Component Name",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "W30"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"CREDATIM": {
+			"seq": 10,
+			"descr": "Creation date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LORDERID": {
+			"seq": 2,
+			"descr": "Lorder ID",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LORDERTRID": {
+			"seq": 1,
+			"descr": "Id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"mandatory": true,
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LXTABLECODEREF": {
+			"seq": 6,
+			"descr": "Reference table name",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"MSG": {
+			"seq": 4,
+			"descr": "Log Message",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "SW*"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"OEST": {
+			"seq": 8,
+			"descr": "Order entry status",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C1",
+				"type": "number",
+				"len": "1"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"PKLSTREF": {
+			"seq": 7,
+			"descr": "Reference key list",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"SESSIONLOGID": {
+			"seq": 9,
+			"descr": "Session Log",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"TYPE": {
+			"seq": 3,
+			"descr": "Type of trace",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "W15"
+			},
+			"widgettype": "DROPDOWNLIST",
+			"lxcatgrp": "LORDER_TR",
+			"isList": false
+		},
+		"UPDDATIM": {
+			"seq": 13,
+			"descr": "Update date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDCRE": {
+			"seq": 11,
+			"descr": "Creation user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDUPD": {
+			"seq": 14,
+			"descr": "Update user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USR_CODECRE": {
+			"seq": 12,
+			"descr": "Creation user",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": false,
+			"format": {
+				"intf": "VW30",
+				"type": "varchar",
+				"len": "30"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		}
+	},
+	"foreignKeys": [
+		{
+			"fields": [
+				"LORDERID"
+			],
+			"refTable": "LORDER",
+			"refFields": [
+				"LORDERID"
+			],
+			"isList": false,
+			"key": "LORDER"
+		},
+		{
+			"fields": [
+				"SESSIONLOGID"
+			],
+			"refTable": "SESSIONLOG",
+			"refFields": [
+				"SESSIONLOGID"
+			],
+			"isList": false,
+			"key": "SESSIONLOG"
+		},
+		{
+			"fields": [
+				"USRIDCRE"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRCRE"
+		},
+		{
+			"fields": [
+				"USRIDUPD"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRUPD"
+		}
+	],
+	"__md5__": "4c4806fe777a0925eed11abdbefc9d31"
+}

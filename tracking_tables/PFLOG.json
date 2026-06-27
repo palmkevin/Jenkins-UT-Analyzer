@@ -1,0 +1,220 @@
+{
+	"name": "PFLOG",
+	"model": "AUDITTRAIL",
+	"indb": true,
+	"upd": true,
+	"type": "entity",
+	"attached": [],
+	"bf": false,
+	"title": "PFLOG",
+	"descr": "Prod file logging",
+	"primaryKey": [
+		"PFLOGID"
+	],
+	"fields": {
+		"PFLOGID": {
+			"seq": 1,
+			"descr": "Id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"mandatory": true,
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"CREDATIM": {
+			"seq": 8,
+			"descr": "Creation date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDCRE": {
+			"seq": 9,
+			"descr": "Creation user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"UPDDATIM": {
+			"seq": 10,
+			"descr": "Update date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDUPD": {
+			"seq": 11,
+			"descr": "Update user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"SESSIONLOGID": {
+			"seq": 2,
+			"descr": "Sessionlog Id",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"COMPONENTNAME": {
+			"seq": 3,
+			"descr": "Component name",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LXTABLECODE": {
+			"seq": 4,
+			"descr": "Name of the entity",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"PKLST": {
+			"seq": 5,
+			"descr": "Primary Key",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW256",
+				"type": "varchar",
+				"len": "256"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"TYPE": {
+			"seq": 6,
+			"descr": "Type of change",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW1",
+				"type": "varchar",
+				"len": "1",
+				"uppercase": true
+			},
+			"widgettype": "DROPDOWNLIST",
+			"lxcatgrp": "LOGTYPE",
+			"isList": false
+		},
+		"MODDATA": {
+			"seq": 7,
+			"descr": "Changed fields",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "SW*"
+			},
+			"widgettype": "EDITBOXLONG",
+			"isList": false
+		},
+		"USR_CODECRE": {
+			"seq": 12,
+			"descr": "Creation user code",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": false,
+			"format": {
+				"intf": "VW30",
+				"type": "varchar",
+				"len": "30",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		}
+	},
+	"foreignKeys": [
+		{
+			"fields": [
+				"USRIDCRE"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRCRE"
+		},
+		{
+			"fields": [
+				"USRIDUPD"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRUPD"
+		},
+		{
+			"fields": [
+				"SESSIONLOGID"
+			],
+			"refTable": "SESSIONLOG",
+			"refFields": [
+				"SESSIONLOGID"
+			],
+			"isList": false,
+			"key": "SESSIONLOG"
+		}
+	],
+	"__md5__": "65271c15ab6499b999ab9c2d4d908f9f"
+}

@@ -1,0 +1,294 @@
+{
+	"name": "RESLOG",
+	"model": "REQUEST",
+	"indb": true,
+	"upd": true,
+	"type": "entity",
+	"attached": [],
+	"bf": false,
+	"title": "RESLOG",
+	"descr": "Result Log",
+	"primaryKey": [
+		"RESLOGID"
+	],
+	"indexes": [
+		[
+			"LORDERRESRID"
+		],
+		[
+			"LORDERID"
+		],
+		[
+			"SESSIONLOGID"
+		]
+	],
+	"fields": {
+		"COMPONENTNAME": {
+			"seq": 7,
+			"descr": "Component Name",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"CREDATIM": {
+			"seq": 9,
+			"descr": "Creation date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LORDERID": {
+			"seq": 3,
+			"descr": "Order ID",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LORDERRESRID": {
+			"seq": 2,
+			"descr": "result Id",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"MODDATA": {
+			"seq": 14,
+			"descr": "Modified data",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "SW*"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"RESLOGID": {
+			"seq": 1,
+			"descr": "ResLog Id",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"mandatory": true,
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"SESSIONLOGID": {
+			"seq": 8,
+			"descr": "Session Log",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"TESTID": {
+			"seq": 5,
+			"descr": "Test Id",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"TEST_CODE": {
+			"seq": 6,
+			"descr": "Test code",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": false,
+			"format": {
+				"intf": "VW30",
+				"type": "varchar",
+				"len": "30",
+				"uppercase": true
+			},
+			"readonly": true,
+			"widgettype": "EDITBOX",
+			"isList": false,
+			"fromdbfields": [
+				"TESTID"
+			]
+		},
+		"TYPE": {
+			"seq": 4,
+			"descr": "Type",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW1",
+				"type": "varchar",
+				"len": "1"
+			},
+			"widgettype": "DROPDOWNLIST",
+			"lxcatgrp": "LOGTYPE",
+			"isList": false
+		},
+		"UPDDATIM": {
+			"seq": 12,
+			"descr": "Update date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDCRE": {
+			"seq": 10,
+			"descr": "Creation user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDUPD": {
+			"seq": 13,
+			"descr": "Update user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USR_CODECRE": {
+			"seq": 11,
+			"descr": "Creation user",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": false,
+			"format": {
+				"intf": "VW30",
+				"type": "varchar",
+				"len": "30"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		}
+	},
+	"foreignKeys": [
+		{
+			"fields": [
+				"LORDERID"
+			],
+			"refTable": "LORDER",
+			"refFields": [
+				"LORDERID"
+			],
+			"isList": false,
+			"key": "LORDER"
+		},
+		{
+			"fields": [
+				"LORDERRESRID"
+			],
+			"refTable": "LORDERRESR",
+			"refFields": [
+				"LORDERRESRID"
+			],
+			"isList": false,
+			"key": "LORDERRESR"
+		},
+		{
+			"fields": [
+				"SESSIONLOGID"
+			],
+			"refTable": "SESSIONLOG",
+			"refFields": [
+				"SESSIONLOGID"
+			],
+			"isList": false,
+			"key": "SESSIONLOG"
+		},
+		{
+			"fields": [
+				"TESTID"
+			],
+			"refTable": "TEST",
+			"refFields": [
+				"TESTID"
+			],
+			"isList": false,
+			"key": "TEST"
+		},
+		{
+			"fields": [
+				"USRIDCRE"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRCRE"
+		},
+		{
+			"fields": [
+				"USRIDUPD"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRUPD"
+		}
+	],
+	"__md5__": "aaae689142656fbe72a2563f311722e8"
+}

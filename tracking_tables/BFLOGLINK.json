@@ -1,0 +1,172 @@
+{
+	"name": "BFLOGLINK",
+	"model": "AUDITTRAIL",
+	"indb": true,
+	"upd": true,
+	"type": "entity",
+	"attached": [],
+	"bf": false,
+	"title": "BFLOGLINK",
+	"descr": "Logging Link",
+	"primaryKey": [
+		"BFLOGLINKID"
+	],
+	"indexes": [
+		[
+			"LXTABLECODE",
+			"PKLST"
+		],
+		[
+			"BFLOGID"
+		]
+	],
+	"fields": {
+		"BFLOGID": {
+			"seq": 4,
+			"descr": "BFLOGID",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"mandatory": true,
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"BFLOGLINKID": {
+			"seq": 1,
+			"descr": "Id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C20",
+				"type": "number",
+				"len": "20"
+			},
+			"mandatory": true,
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"CREDATIM": {
+			"seq": 5,
+			"descr": "Creation date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"LXTABLECODE": {
+			"seq": 2,
+			"descr": "Name of the entity",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW32",
+				"type": "varchar",
+				"len": "32",
+				"uppercase": true
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"PKLST": {
+			"seq": 3,
+			"descr": "Primary key (ListItem)",
+			"u_dtyp": "S",
+			"type": "string",
+			"indb": true,
+			"format": {
+				"intf": "VW256",
+				"type": "varchar",
+				"len": "256"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"UPDDATIM": {
+			"seq": 7,
+			"descr": "Update date field",
+			"u_dtyp": "E",
+			"type": "datetime",
+			"indb": true,
+			"format": {
+				"intf": "E8"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDCRE": {
+			"seq": 6,
+			"descr": "Creation user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		},
+		"USRIDUPD": {
+			"seq": 8,
+			"descr": "Update user id field",
+			"u_dtyp": "N",
+			"type": "number",
+			"indb": true,
+			"format": {
+				"intf": "C10",
+				"type": "number",
+				"len": "10"
+			},
+			"widgettype": "EDITBOX",
+			"isList": false
+		}
+	},
+	"foreignKeys": [
+		{
+			"fields": [
+				"BFLOGID"
+			],
+			"refTable": "BFLOG",
+			"refFields": [
+				"BFLOGID"
+			],
+			"isList": false,
+			"key": "BFLOG"
+		},
+		{
+			"fields": [
+				"USRIDCRE"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRCRE"
+		},
+		{
+			"fields": [
+				"USRIDUPD"
+			],
+			"refTable": "USR",
+			"refFields": [
+				"USRID"
+			],
+			"isList": false,
+			"key": "USRUPD"
+		}
+	],
+	"__md5__": "a0ed26f11d4f8c3e47e2dc49189088f1"
+}
