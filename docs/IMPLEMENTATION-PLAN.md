@@ -21,6 +21,10 @@
 | `ut_ref` clock | `CREDATIM`/`UPDDATIM` are **local UTC+2** → normalize via `Europe/Luxembourg` |
 | LLM | stubbed (no-op) behind a swappable interface in v1 |
 | Identity | Phase 1 self-declared `actor` (default `test-user`); Keycloak = Phase 2 |
+| Source hosting | **GitHub**; Jenkins / Oracle `ut_ref` / real Postgres reachable **only when running locally** |
+| Test isolation | a **unit-test suite that needs no external systems** — runs identically locally **and** on GitHub |
+| Quality gate | **GitHub Actions CI** runs the suite on every PR; **must pass before merge to `main`** |
+| Coverage | **every subsequent step must land with good unit-test coverage** (a build-time obligation, not a phase) |
 
 ## Deployment model (decided)
 
@@ -55,6 +59,49 @@ The app runs **in Docker**, not directly on the host OS.
              ▼
    Jenkins API  +  Oracle ut_ref (read-only)
 ```
+
+## Hosting & testing strategy (decided)
+
+The source lives on **GitHub**, but the three external systems it integrates with — **Jenkins**, the
+Oracle **`ut_ref`** DB, and the **real production PostgreSQL** — are reachable **only when the app is
+run locally** (on the VM, inside the Docker network). GitHub runners cannot reach any of them. This
+splits testing into two clearly separated tiers:
+
+- **Unit / component suite (no external systems) — the default, runs everywhere.** This suite
+  exercises the app's own logic with **zero** dependence on Jenkins, Oracle, or a live Postgres. It
+  must run identically on a developer's machine **and** on GitHub Actions. To achieve that:
+  - **Parsers** (`ut_report.py`, `svn_update.py`, `clock.py`, `signature.py`) are tested against
+    **committed, anonymized golden fixtures** — captured real artifacts, not live fetches.
+  - **External clients** (`ingest/jenkins.py`, `refdb/oracle.py`, `llm/provider.py`, SMTP sender)
+    sit behind narrow interfaces and are exercised with **fakes / recorded responses**, never a real
+    connection. The Jenkins/Oracle/LLM boundaries are seams precisely so they can be stubbed.
+  - **Domain logic** (lifecycle, baseline/diff, classification, flakiness) is **pure** and unit-tested
+    on synthetic inputs.
+  - **DB-touching tests** run against an **ephemeral local Postgres** that CI spins up itself (a
+    GitHub Actions `services:` Postgres container with `pg_trgm`) — this is *infrastructure CI
+    provides*, not one of the three gated external systems. Tests requiring `pg_trgm` features are
+    written to run against that throwaway instance.
+  - Anything that genuinely needs a gated external system is marked (e.g. a `live`/`integration`
+    pytest marker) and **excluded from the default run** — so `pytest` is green offline and on CI.
+- **Live integration checks (local only).** The end-to-end / live-system verification (back-fill
+  build **#1702**, real `V_TRACKING` window, real Jenkins fetch) runs **only locally**, where access
+  exists. These are opt-in (the `live` marker) and are **never** part of the merge gate.
+
+### CI quality gate (GitHub Actions)
+
+A workflow (`.github/workflows/ci.yml`) runs on every **pull request** and on pushes:
+install deps → lint (ruff + format check) → **run the unit/component suite** (with the CI-provided
+Postgres service) → report coverage. `main` is a **protected branch** with this check as a
+**required status** — a PR **cannot be merged until CI is green**. The live markers are skipped in
+CI, so the gate never depends on Jenkins/Oracle/real-Postgres availability.
+
+### Coverage is a standing obligation, not a phase
+
+**Every step in the phased build below ships with its unit tests.** A milestone is not "done" until
+its new logic is covered by the offline suite at a meaningful level (target a coverage threshold,
+enforced in CI). New external touchpoints must be introduced behind a stubbable interface so they
+remain testable offline. This applies to Slice 0 and every milestone — it is called out per phase
+where it shapes the work, but it holds throughout.
 
 ## Execution gate — inputs required before coding the load-bearing layer
 
@@ -164,13 +211,19 @@ cutover only), **scale** (B3, tunes indexing; ~25k tests/run known), **tuning th
   entrypoint for the on-demand back-fill.
 - **Email:** stdlib `smtplib` / `email`, behind a small sender interface.
 - **LLM:** a `HypothesisProvider` interface with a **no-op stub** for v1 (manifest decision).
-- **Testing:** pytest; golden-file parser tests against anonymized real artifacts.
+- **Testing:** pytest + **pytest-cov**; golden-file parser tests against anonymized real artifacts;
+  external boundaries faked (no live Jenkins/Oracle in the default suite). Live checks gated behind a
+  `live` marker (`-m "not live"` is the default/CI run).
+- **CI:** **GitHub Actions** — lint + offline unit suite + coverage on every PR; required status check
+  on protected `main`. A `services:` Postgres (with `pg_trgm`) is provided by the runner for
+  DB-touching tests.
 - **Quality:** ruff + a formatter; type hints throughout.
 
 ## Project structure (target)
 
 ```
 .
+├── .github/workflows/ci.yml    # PR quality gate: lint + offline unit suite + coverage (required on main)
 ├── docker-compose.yml          # web + poller + db
 ├── Dockerfile                  # single image, role via command
 ├── .env.example                # every config key documented
@@ -199,6 +252,9 @@ cutover only), **scale** (B3, tunes indexing; ~25k tests/run known), **tuning th
 │   └── cli.py                  # back-fill / one-off commands
 └── tests/
     ├── fixtures/               # anonymized real artifacts (golden files)
+    ├── fakes/                  # fake Jenkins/Oracle/LLM clients (no external systems)
+    ├── unit/                   # offline suite — runs locally AND in CI (the merge gate)
+    ├── live/                   # `live`-marked integration checks — local only, never in CI
     └── ...
 ```
 
@@ -264,6 +320,10 @@ confidence**, and **Keycloak/Kerberos auth** (Phase 2 — swaps the `actor` sour
 change).
 
 ## Verification approach
+- **Two tiers (see "Hosting & testing strategy"):** an **offline unit/component suite** that needs no
+  Jenkins/Oracle/real-Postgres and runs identically locally and in **GitHub Actions CI** (the merge
+  gate on `main`), plus **`live`-marked** integration checks that run **only locally** where access
+  exists. The CI run is `pytest -m "not live"`.
 - **Parsers:** golden-file unit tests against captured real artifacts (A2/A3). **Data sensitivity:**
   the LIMS data is medical — error text / `MODDATA` / stack traces may contain patient data, so
   golden fixtures are **anonymized/redacted before commit** (and never include raw `MODDATA`).
