@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     flaky_transition_threshold: float = 0.3
     pgtrgm_similarity_cutoff: float = 0.3
 
+    # ── Ingest / correlation windows ───────────────────────────────────────────
+    # Data changes precede the nightly run (the run's own window had none on #1702), so look back
+    # before the run start; the tolerance margin (B1) absorbs residual clock skew between Jenkins
+    # and the Oracle ut_ref clock.
+    data_change_lookback_hours: int = 12
+    data_change_tolerance_minutes: int = 5
+    # Scheduled poll cadence (seconds) for `uta poll`.
+    poll_interval_seconds: int = 300
+
     @property
     def jenkins_job_url(self) -> str:
         return f"{self.jenkins_base_url.rstrip('/')}/{self.jenkins_job_path.strip('/')}"

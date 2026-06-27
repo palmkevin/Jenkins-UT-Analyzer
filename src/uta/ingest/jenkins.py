@@ -21,6 +21,7 @@ class JenkinsClient(Protocol):
     def test_report(self, build: int) -> dict: ...
     def change_sets(self, build: int) -> dict: ...
     def wfapi(self, build: int) -> dict: ...
+    def last_completed_build(self) -> int | None: ...
 
 
 class HttpJenkinsClient:
@@ -58,6 +59,12 @@ class HttpJenkinsClient:
 
     def wfapi(self, build: int) -> dict:
         return self._get_json(f"{build}/wfapi/describe")
+
+    def last_completed_build(self) -> int | None:
+        """The job's most recent *completed* build number (the poll high-water mark)."""
+        payload = self._get_json("api/json", {"tree": "lastCompletedBuild[number]"})
+        last = payload.get("lastCompletedBuild") or {}
+        return last.get("number")
 
     def close(self) -> None:
         self._client.close()
