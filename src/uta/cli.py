@@ -133,6 +133,8 @@ def backfill(build: int, to: int | None = None) -> None:
             data_change_tolerance=tolerance,
             flaky_window_days=settings.flaky_window_days,
             flaky_threshold=settings.flaky_transition_threshold,
+            ingest_unittest_logs=settings.ingest_unittest_stages,
+            unittest_suites=settings.unittest_suite_set,
         )
         typer.echo(f"ingested build #{n}")
 
@@ -169,6 +171,8 @@ def poll() -> None:
         hypothesis_provider=hypothesis_provider,
         kb_top_k=settings.kb_top_k,
         kb_similarity_cutoff=settings.pgtrgm_similarity_cutoff,
+        ingest_unittest_logs=settings.ingest_unittest_stages,
+        unittest_suites=settings.unittest_suite_set,
     )
 
 

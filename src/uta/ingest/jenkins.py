@@ -21,6 +21,7 @@ class JenkinsClient(Protocol):
     def test_report(self, build: int) -> dict: ...
     def change_sets(self, build: int) -> dict: ...
     def wfapi(self, build: int) -> dict: ...
+    def stage_log(self, build: int, node_id: str) -> dict: ...
     def last_completed_build(self) -> int | None: ...
 
 
@@ -59,6 +60,10 @@ class HttpJenkinsClient:
 
     def wfapi(self, build: int) -> dict:
         return self._get_json(f"{build}/wfapi/describe")
+
+    def stage_log(self, build: int, node_id: str) -> dict:
+        """One pipeline stage's console log (the unittest console-log UT stages live only here)."""
+        return self._get_json(f"{build}/execution/node/{node_id}/wfapi/log")
 
     def last_completed_build(self) -> int | None:
         """The job's most recent *completed* build number (the poll high-water mark)."""

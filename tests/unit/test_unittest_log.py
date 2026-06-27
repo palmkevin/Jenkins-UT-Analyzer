@@ -1,0 +1,116 @@
+"""Golden + unit tests for the unittest console-log parser (deferred UT stages)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from uta.ingest.unittest_log import parse_unittest_log
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "jenkins"
+
+
+def _log(node: int) -> dict:
+    return json.loads((_FIXTURES / f"stagelog_1702_{node}.json").read_text())
+
+
+def test_all_pass_stage_parses_each_case():
+    cases = parse_unittest_log(_log(274), track="permanent", suite_name="SMB Transform")
+    by_id = {c.test_id: c for c in cases}
+    assert len(cases) == 4
+    assert {c.track for c in cases} == {"permanent"}
+    assert {c.suite_name for c in cases} == {"SMB Transform"}
+    assert (
+        by_id["smb.transform.test_pricing.PricingTransformTest.test_apply_markup"].status
+        == "PASSED"
+    )
+    # 'skipped ...' maps to SKIPPED, not a failure.
+    assert (
+        by_id["smb.transform.test_rates.RatesTransformTest.test_skip_when_disabled"].status
+        == "SKIPPED"
+    )
+    assert not any(c.failed for c in cases)
+
+
+def test_failure_and_error_blocks_attach_details_and_location():
+    cases = parse_unittest_log(_log(292), track="permanent_py39", suite_name="SMB Transform")
+    by_id = {c.test_id: c for c in cases}
+
+    fail = by_id["smb.transform.test_pricing.PricingTransformTest.test_round_half_even"]
+    assert fail.status == "FAILED"
+    assert fail.error_details == "AssertionError: Decimal('0.00') != Decimal('REDACTED')"
+    assert fail.file_path == "/opt/ls/lx/release/permanent_py39/tests/smb/test_pricing.py"
+    assert fail.line == 88
+    assert "Traceback (most recent call last)" in fail.error_stack_trace
+
+    err = by_id["smb.transform.test_rates.RatesTransformTest.test_currency_conversion"]
+    assert err.status == "FAILED"
+    assert err.error_details == "KeyError: 'REDACTED'"
+    # The first frame is the test's own location (not the deeper library frame).
+    assert err.file_path == "/opt/ls/lx/release/permanent_py39/tests/smb/test_rates.py"
+    assert err.line == 142
+
+
+def test_track_is_stripped_so_both_tracks_share_identity():
+    """The same method in two tracks yields the same ``test_id`` — track is an attribute."""
+    perm = parse_unittest_log(_log(274), track="permanent", suite_name="SMB Transform")
+    py39 = parse_unittest_log(_log(292), track="permanent_py39", suite_name="SMB Transform")
+    assert {c.test_id for c in perm} == {c.test_id for c in py39}
+
+
+def test_python311_status_line_form_strips_duplicate_method():
+    text = "test_thing (pkg.mod.Klass.test_thing) ... ok\n"
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.class_name == "pkg.mod.Klass"
+    assert case.test_id == "pkg.mod.Klass.test_thing"
+    assert case.status == "PASSED"
+
+
+def test_outcome_vocabulary_mapping():
+    text = (
+        "t_ok (m.C) ... ok\n"
+        "t_fail (m.C) ... FAIL\n"
+        "t_err (m.C) ... ERROR\n"
+        "t_skip (m.C) ... skipped 'why'\n"
+        "t_xfail (m.C) ... expected failure\n"
+        "t_usucc (m.C) ... unexpected success\n"
+    )
+    status = {
+        c.name: c.status for c in parse_unittest_log(text, track="permanent", suite_name="LXS")
+    }
+    assert status == {
+        "t_ok": "PASSED",
+        "t_fail": "FAILED",
+        "t_err": "FAILED",
+        "t_skip": "SKIPPED",
+        "t_xfail": "PASSED",  # xfail is not a regression
+        "t_usucc": "FAILED",  # unexpected success counts as a failure
+    }
+
+
+def test_empty_log_yields_no_cases():
+    assert parse_unittest_log({"text": ""}, track="permanent", suite_name="LXS") == []
+
+
+def test_non_verbose_failure_block_still_surfaces():
+    """No per-test status lines (non-verbose), but a failure block still yields a FAILED case."""
+    text = (
+        "..F\n"
+        "======================================================================\n"
+        "FAIL: test_x (pkg.mod.Klass)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/pkg/test_mod.py", line 12, in test_x\n'
+        "    self.assertTrue(False)\n"
+        "AssertionError: False is not true\n"
+        "\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 3 tests in 0.001s\n"
+        "\n"
+        "FAILED (failures=1)\n"
+    )
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.test_id == "pkg.mod.Klass.test_x"
+    assert case.status == "FAILED"
+    assert case.error_details == "AssertionError: False is not true"
+    assert case.line == 12

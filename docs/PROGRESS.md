@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27 (Milestone 5)_
+_Last updated: 2026-06-27 (Post-v1: unittest console-log ingest)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -260,6 +260,42 @@ and tests that fill it. **No vector store** — "RAG" here is the existing `pg_t
 
 ---
 
+## Post-v1 — unittest console-log ingest  ·  `[x]`
+The second ingest source the v1 plan deferred: the unittest stages that run inside Jenkins *Shell
+Script* steps and report results **only in their stage console log** (no JUnit artifact). Added
+behind the existing ingest interface — no schema change, no redesign.
+
+### Done
+- [x] **`ingest/unittest_log.py`** — parses verbose `unittest` console text into the same
+      `TestCaseResult` the JUnit parser emits: status-line outcomes (ok / FAIL / ERROR / skipped /
+      expected-failure / unexpected-success → PASSED/FAILED/SKIPPED), `====`-delimited traceback
+      blocks → `error_details` + stack + first-frame `file:line`, and `module.Class.method` identity
+      (strips the 3.11+ duplicated method so it matches JUnit's `className.name`). Tolerates
+      non-verbose runs (a failure block alone still surfaces a FAILED case).
+- [x] **Stage discovery** (`wfapi.find_unittest_stages`) — maps the `"<suite> - <track>"` stage names
+      to `(node_id, suite, track)`, filtered by a configurable suite allowlist
+      (`DEFAULT_UNITTEST_SUITES` = LXS, SMB Pricing, SMB Transform, ITF Highlevel, Uniface deploy unit
+      tests) so non-test `"… - permanent"` stages (Clean logs, devUTs) are excluded.
+- [x] **Client seam** — `JenkinsClient.stage_log(build, node_id)` (`…/execution/node/<id>/wfapi/log`)
+      on the protocol + `HttpJenkinsClient`; the fake serves `stagelog_<build>_<node>.json` fixtures
+      (absent fixture ⇒ empty log).
+- [x] **Pipeline wiring** — `ingest_build(..., ingest_unittest_logs=, unittest_suites=)` appends the
+      console-log cases to the JUnit cases **before** persistence, so they share the identical
+      identity/lifecycle/episode/classification/signature/flakiness path. **Off by default** (the
+      devUTs-only path is byte-for-byte unchanged unless opted in); idempotent on re-ingest. Threaded
+      through `poller` + `cli`; `INGEST_UNITTEST_STAGES` (default on) / `UNITTEST_SUITES` drive the
+      live paths.
+- [x] **Golden fixtures** (anonymized, medical data redacted): `stagelog_1702_274.json` (all-pass +
+      skip) and `stagelog_1702_292.json` (FAIL + ERROR + skip), the two SMB Transform tracks.
+- [x] **Tests (+13, offline gate green: 148 passed, 3 skipped)**: `test_unittest_log` (outcome
+      mapping, failure/error block details + location, cross-track identity collapse, 3.11 line form,
+      empty + non-verbose logs), `test_wfapi` (stage discovery: named suites both tracks, devUTs /
+      non-test exclusion, restricted suite set), and `test_pipeline` (off-by-default, opt-in adds the
+      8 console-log results across both tracks + opens/classifies the 2 new failures, re-ingest
+      idempotent). ruff lint + format clean.
+
+---
+
 ## Notes / decisions discovered during build
 - **Data-change correlation needs a lookback window**, not just the run's own start/finish — the
   #1702 run window (19:01–20:41 local) contained **zero** `V_TRACKING` rows; the day's changes were
@@ -302,3 +338,11 @@ and tests that fill it. **No vector store** — "RAG" here is the existing `pg_t
   chosen by `LLM_PROVIDER`; the prompt is provider-agnostic. Each API key is a Platform/Console
   (pay-as-you-go) credential, **distinct from any Claude.ai or ChatGPT subscription**, and only the
   live poller path ever calls the model.
+- **Console-log ingest reuses the JUnit shape, doesn't fork it** (Post-v1): `unittest_log.py` emits
+  the same `TestCaseResult` as the JUnit parser, so the pipeline appends both into one `cases` list
+  before persistence and everything downstream (identity, lifecycle, episodes, classification,
+  signatures, flakiness) is untouched. The console-log stages are **not** devUTs shards, so run
+  **completeness** still keys off the 2 devUTs tracks only — an UNSTABLE unittest stage adds failing
+  tests without making the run "incomplete". Suite **allowlist** (not a generic `… - permanent`
+  regex) keeps non-test stages (Clean logs, devUTs) out. Default-off in the function signature keeps
+  the existing golden tests exact; `INGEST_UNITTEST_STAGES` (default on) turns it on for live runs.

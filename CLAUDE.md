@@ -23,9 +23,13 @@ unblocked. Live findings live in the plan's two "RESOLVED" sections.
   (`permanent` / `permanent_py39`) is an **attribute**, not a separate identity. A result is keyed by
   `(run, test, track)` — the same test runs in both tracks. Track comes from the JUnit suite's
   `enclosingBlockNames`.
-- **v1 ingest scope = devUTs (nose2) JUnit only**, via `/<n>/testReport/api/json`. The unittest
-  console-log stages (SMB Pricing/Transform, ITF Highlevel, LXS, Uniface) are **deferred post-v1**
-  behind the same ingest interface — do not build their parser now.
+- **Ingest scope.** The primary source is **devUTs (nose2) JUnit**, via `/<n>/testReport/api/json`
+  (the authoritative ~25k-test surface). The unittest **console-log** stages (SMB Pricing/Transform,
+  ITF Highlevel, LXS, Uniface) were the v1-deferred second source; they are now ingested **behind
+  the same interface** by `ingest/unittest_log.py`, which parses each stage's
+  `…/execution/node/<id>/wfapi/log` into the same per-`(test, track)` `TestCaseResult`. Gated by
+  `INGEST_UNITTEST_STAGES` (default on); `UNITTEST_SUITES` is the suite allowlist (a
+  `"<suite> - <track>"` stage name → suite), keeping non-test `"… - permanent"` stages out.
 - **Data-change feed = Oracle `V_TRACKING` view as-is** (author already resolved as `USRCODE`).
   PFLOG / BFLOGLINK fan-out are deferred. Correlation needs a **lookback window** (changes precede
   the nightly run), not just the run's own start/finish window.

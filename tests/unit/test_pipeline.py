@@ -18,6 +18,7 @@ from uta.models import (
     FailureEpisode,
     FailureSignature,
     Run,
+    TestIdentity,
     TestLifecycle,
     TestResult,
 )
@@ -35,6 +36,70 @@ def test_ingest_persists_run_and_results(session_factory):
         assert n == 14
         tracks = set(s.scalars(select(TestResult.track)).all())
         assert tracks == {"permanent", "permanent_py39"}
+
+
+def test_unittest_logs_off_by_default(session_factory):
+    """Without opt-in, ingest is the devUTs-only path — no console-log results leak in."""
+    ingest_build(FakeJenkinsClient(), session_factory, 1702)
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 14  # JUnit only
+        smb = s.scalars(
+            select(func.count())
+            .select_from(TestIdentity)
+            .where(TestIdentity.canonical_name.like("smb.transform.%"))
+        ).one()
+        assert smb == 0
+
+
+def test_ingest_unittest_logs_adds_console_log_results(session_factory):
+    """Opting in pulls the SMB Transform console-log stages into the same per-(test, track) path."""
+    ingest_build(
+        FakeJenkinsClient(),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        # 14 devUTs + 4 (perm) + 4 (py39) console-log cases.
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 22
+        smb = s.scalars(
+            select(TestResult)
+            .join(TestResult.identity)
+            .where(TestIdentity.canonical_name.like("smb.transform.%"))
+        ).all()
+        assert len(smb) == 8
+        assert {r.track for r in smb} == {"permanent", "permanent_py39"}
+
+        # The two console-log failures (py39) open episodes and get classified like JUnit failures.
+        failing = s.scalars(
+            select(TestLifecycle)
+            .join(TestLifecycle.identity)
+            .where(TestIdentity.canonical_name.like("smb.transform.%"))
+        ).all()
+        assert {lc.identity.canonical_name for lc in failing} == {
+            "smb.transform.test_pricing.PricingTransformTest.test_round_half_even",
+            "smb.transform.test_rates.RatesTransformTest.test_currency_conversion",
+        }
+        assert all(lc.state == LifecycleState.FAILING for lc in failing)
+        # 7 devUTs episodes + 2 console-log episodes, all classified.
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 9
+        assert s.scalar(select(func.count()).select_from(Classification)) == 9
+
+
+def test_unittest_log_reingest_is_idempotent(session_factory):
+    """Re-ingesting with the console-log stages on doesn't duplicate results or episodes."""
+    for _ in range(2):
+        ingest_build(
+            FakeJenkinsClient(),
+            session_factory,
+            1702,
+            ingest_unittest_logs=True,
+            unittest_suites={"SMB Transform"},
+        )
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 22
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 9
 
 
 def test_reingest_is_idempotent(session_factory):

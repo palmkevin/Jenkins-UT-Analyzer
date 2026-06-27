@@ -54,6 +54,8 @@ def poll_once(
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
     kb_similarity_cutoff: float = 0.3,
+    ingest_unittest_logs: bool = False,
+    unittest_suites: frozenset[str] | set[str] | None = None,
 ) -> list[int]:
     """Ingest every new completed build once. Returns the build numbers processed.
 
@@ -80,6 +82,8 @@ def poll_once(
             hypothesis_provider=hypothesis_provider,
             kb_top_k=kb_top_k,
             kb_similarity_cutoff=kb_similarity_cutoff,
+            ingest_unittest_logs=ingest_unittest_logs,
+            unittest_suites=unittest_suites,
         )
         processed.append(build)
     return processed
@@ -102,6 +106,8 @@ def run_scheduler(
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
     kb_similarity_cutoff: float = 0.3,
+    ingest_unittest_logs: bool = False,
+    unittest_suites: frozenset[str] | set[str] | None = None,
 ) -> None:
     """Block forever, polling on a fixed interval (the ``uta poll`` entrypoint)."""
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -122,6 +128,8 @@ def run_scheduler(
             hypothesis_provider=hypothesis_provider,
             kb_top_k=kb_top_k,
             kb_similarity_cutoff=kb_similarity_cutoff,
+            ingest_unittest_logs=ingest_unittest_logs,
+            unittest_suites=unittest_suites,
         )
 
     scheduler = BlockingScheduler()

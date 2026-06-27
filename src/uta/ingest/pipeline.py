@@ -23,8 +23,9 @@ from uta.db import session_scope
 from uta.delivery.email import EmailSender, maybe_notify
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
+from uta.ingest.unittest_log import parse_unittest_log
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
-from uta.ingest.wfapi import parse_wfapi
+from uta.ingest.wfapi import DEFAULT_UNITTEST_SUITES, find_unittest_stages, parse_wfapi
 from uta.kb.store import record_signatures_for_run
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.models import (
@@ -79,6 +80,8 @@ def ingest_build(
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
     kb_similarity_cutoff: float = 0.3,
+    ingest_unittest_logs: bool = False,
+    unittest_suites: frozenset[str] | set[str] | None = None,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
@@ -92,12 +95,26 @@ def ingest_build(
     ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode
     (§4); the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
     sender and no provider, so history is never re-mailed or re-hypothesised.
+
+    When ``ingest_unittest_logs`` is set, the deferred **unittest console-log** UT stages (``LXS``,
+    ``SMB Pricing``/``Transform``, ``ITF Highlevel``, ``Uniface deploy unit tests`` by default — see
+    ``unittest_suites``) are also fetched via ``wfapi/log`` and parsed into the same per-(test,
+    track) results, so they share the JUnit tests' identity/lifecycle/classification path. Off by
+    default, so the devUTs-only ingest is unchanged unless the caller opts in.
     """
     meta = client.build_meta(build)
-    timing = parse_wfapi(client.wfapi(build))
+    wfapi_payload = client.wfapi(build)
+    timing = parse_wfapi(wfapi_payload)
     report = parse_test_report(client.test_report(build))
     change_sets = parse_change_sets(client.change_sets(build))
     win_start, win_end = timing.window
+
+    cases: list[TestCaseResult] = list(report.cases)
+    if ingest_unittest_logs:
+        suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
+        for stage in find_unittest_stages(wfapi_payload, suites):
+            log = client.stage_log(build, stage.node_id)
+            cases.extend(parse_unittest_log(log, track=stage.track, suite_name=stage.suite))
 
     with session_scope(session_factory) as session:
         run = session.scalar(select(Run).where(Run.build_number == build))
@@ -116,9 +133,9 @@ def ingest_build(
         run.started_at = win_start
         run.finished_at = win_end
         run.complete = timing.is_complete(expected_shards)
-        run.total_passed = sum(1 for c in report.cases if c.status in _PASSED)
-        run.total_failed = sum(1 for c in report.cases if c.status in _FAILED)
-        run.total_skipped = sum(1 for c in report.cases if c.status == "SKIPPED")
+        run.total_passed = sum(1 for c in cases if c.status in _PASSED)
+        run.total_failed = sum(1 for c in cases if c.status in _FAILED)
+        run.total_skipped = sum(1 for c in cases if c.status == "SKIPPED")
 
         for shard in timing.shards.values():
             run.shards.append(
@@ -131,7 +148,7 @@ def ingest_build(
             )
 
         identities: dict[str, TestIdentity] = {}
-        for case in report.cases:
+        for case in cases:
             ident = _get_or_create_identity(session, case, identities)
             run.results.append(
                 TestResult(

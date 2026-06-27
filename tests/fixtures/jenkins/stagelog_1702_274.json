@@ -1,0 +1,7 @@
+{
+  "nodeId": "274",
+  "nodeStatus": "SUCCESS",
+  "length": 412,
+  "hasMore": false,
+  "text": "test_apply_markup (smb.transform.test_pricing.PricingTransformTest) ... ok\ntest_round_half_even (smb.transform.test_pricing.PricingTransformTest) ... ok\ntest_currency_conversion (smb.transform.test_rates.RatesTransformTest) ... ok\ntest_skip_when_disabled (smb.transform.test_rates.RatesTransformTest) ... skipped 'feature off'\n\n----------------------------------------------------------------------\nRan 4 tests in 2.317s\n\nOK (skipped=1)\n"
+}
