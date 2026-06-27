@@ -18,6 +18,7 @@ dependencies = [
     "typer>=0.12",
     "apscheduler>=3.10",
     "anthropic>=0.40",  # LLM hypothesis provider (§4); only used when ANTHROPIC_API_KEY is set
+    "openai>=1.40",  # alternate LLM hypothesis provider (§4); only used when OPENAI_API_KEY is set
 ]
 
 [project.optional-dependencies]

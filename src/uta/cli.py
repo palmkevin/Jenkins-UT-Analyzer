@@ -81,14 +81,31 @@ def _build_email_sender(settings):
 
 
 def _build_hypothesis_provider(settings):
-    """The Claude provider when an API key is set, else the Noop (no model call)."""
+    """The configured LLM provider (Anthropic or OpenAI), or Noop when no key is set.
+
+    ``LLM_PROVIDER`` picks explicitly; empty auto-selects whichever key is configured (Anthropic
+    wins if both). A chosen provider with no key falls back to Noop (no model call).
+    """
     from uta.llm import NoopHypothesisProvider
 
-    if not settings.anthropic_api_key:
-        return NoopHypothesisProvider()
-    from uta.llm.claude import AnthropicHypothesisProvider
+    choice = (settings.llm_provider or "").lower()
+    if not choice:
+        if settings.anthropic_api_key:
+            choice = "anthropic"
+        elif settings.openai_api_key:
+            choice = "openai"
 
-    return AnthropicHypothesisProvider(settings.anthropic_api_key, model=settings.llm_model)
+    if choice == "anthropic" and settings.anthropic_api_key:
+        from uta.llm.claude import AnthropicHypothesisProvider
+
+        return AnthropicHypothesisProvider(
+            settings.anthropic_api_key, model=settings.anthropic_model
+        )
+    if choice == "openai" and settings.openai_api_key:
+        from uta.llm.openai_provider import OpenAIHypothesisProvider
+
+        return OpenAIHypothesisProvider(settings.openai_api_key, model=settings.openai_model)
+    return NoopHypothesisProvider()
 
 
 @app.command("backfill")

@@ -232,22 +232,27 @@ and tests that fill it. **No vector store** — "RAG" here is the existing `pg_t
       deterministic predicted cause + change-signal counts (the prior), and the retrieved similar
       past cases (with their **validated** human conclusions) into `(system, user)`. Error/stack are
       length-capped; only already-redacted fields reach the prompt (no raw `MODDATA`).
-- [x] **Real provider** (`llm/claude.py`): `AnthropicHypothesisProvider` over the official
-      `anthropic` SDK, model `claude-opus-4-8` (configurable). One short non-streaming call; the
-      `anthropic` import is **local** so the offline path never loads the SDK; any API error →
-      `None` (a missing hypothesis never breaks ingest).
+- [x] **Real providers, swappable** (`llm/claude.py`, `llm/openai_provider.py`):
+      `AnthropicHypothesisProvider` (official `anthropic` SDK, `claude-opus-4-8`) and
+      `OpenAIHypothesisProvider` (official `openai` SDK, chat completions, `gpt-4o`) — both
+      configurable. Each does one short non-streaming call; the SDK import is **local** so the
+      offline path loads neither; any API error → `None` (a missing hypothesis never breaks ingest).
+      Selected by `LLM_PROVIDER` (`anthropic`/`openai`/empty=auto, Anthropic wins if both keys set);
+      a chosen provider with no key falls back to Noop.
 - [x] **Wiring step** (`analyze/hypothesize.py`): `hypothesize_run` runs **after** the pure
       `classify_run`, fills `Classification.llm_hypothesis` per newly-opened episode from
       `similar_cases`. No-op under Noop (no retrieval, no call, no write). Pipeline calls it inside
       the `complete`-run block; **poller passes the real provider, back-fill passes none** — history
       is never re-hypothesised (the same caller-side idempotency the email side uses).
-- [x] **Config + `.env.example`**: `ANTHROPIC_API_KEY`, `LLM_MODEL`; `anthropic` added to deps.
-      `uta poll` builds the real provider, `uta backfill` does not.
-- [x] **Tests (+10, offline gate green: 129 passed, 3 skipped)**: `test_prompt` (rendering,
+- [x] **Config + `.env.example`**: `LLM_PROVIDER`, `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL`,
+      `OPENAI_API_KEY`/`OPENAI_MODEL`; `anthropic` + `openai` added to deps. `uta poll` builds the
+      real provider, `uta backfill` does not.
+- [x] **Tests (+16, offline gate green: 135 passed, 3 skipped)**: `test_prompt` (rendering,
       validated conclusions, truncation, determinism), `test_hypothesize` (Noop no-op, real provider
       fills the right episode, declining provider leaves `NULL`, retrieved cases reach the prompt),
-      pipeline coverage (provider fills all 7 episodes; default leaves `NULL`), and a `live`-marked
-      real-provider test (skipped in CI). ruff lint + format clean.
+      `test_provider_selection` (auto-pick, both-keys precedence, explicit override, no-key→Noop),
+      pipeline coverage (provider fills all 7 episodes; default leaves `NULL`), and `live`-marked
+      real-provider tests for both Anthropic and OpenAI (skipped in CI). ruff lint + format clean.
 
 ### Open / deferred (per design — Post-v1)
 - Confidence/relevance scoring, automatic alias suggestion, structured multi-field output — parked;
@@ -293,5 +298,7 @@ and tests that fill it. **No vector store** — "RAG" here is the existing `pg_t
   network. The deterministic `predicted_cause` is authoritative; the hypothesis is the readable
   "why". `NoopHypothesisProvider` is the default, so the feature is purely additive (no key ⇒ no
   behavior change). **No vector DB** — RAG is the existing `pg_trgm`/difflib retrieval pasted into
-  the prompt. The Anthropic API key is a Developer Console (pay-as-you-go) credential, distinct from
-  any Claude subscription, and only the live poller path ever calls the model.
+  the prompt. Two interchangeable providers (Anthropic Claude, OpenAI) sit behind the one Protocol,
+  chosen by `LLM_PROVIDER`; the prompt is provider-agnostic. Each API key is a Platform/Console
+  (pay-as-you-go) credential, **distinct from any Claude.ai or ChatGPT subscription**, and only the
+  live poller path ever calls the model.
