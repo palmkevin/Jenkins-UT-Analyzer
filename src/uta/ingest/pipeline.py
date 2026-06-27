@@ -1,21 +1,36 @@
-"""Slice-0 ingest pipeline: fetch one build -> parse -> persist a run + its results.
+"""Ingest pipeline: fetch one build -> parse -> persist a run, its results and candidates, then
+(for complete runs) drive the cross-run analysis (lifecycle + diff + classification).
 
-Wires the Jenkins client (real or fake) and the parsers. Idempotent on ``build_number``: a
-re-ingest replaces the run's results rather than duplicating them.
+Wires the Jenkins client + Oracle feed (real or fake) and the parsers. Idempotent on
+``build_number``: a re-ingest replaces the run's results/shards/candidates rather than duplicating
+them, and re-runs the analysis (which is itself idempotent per baseline+run).
 """
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from uta.analyze.classify import classify_run
+from uta.analyze.error_type import derive_error_type
+from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
 from uta.ingest.jenkins import JenkinsClient
+from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
 from uta.ingest.wfapi import parse_wfapi
-from uta.models import Run, RunShard, TestIdentity, TestResult
+from uta.models import (
+    CodeChangeCandidate,
+    DataChangeCandidate,
+    Run,
+    RunShard,
+    TestIdentity,
+    TestResult,
+)
+from uta.refdb.oracle import TrackingFeed
 
 _PASSED = frozenset({"PASSED", "FIXED"})
 _FAILED = frozenset({"FAILED", "REGRESSION"})
@@ -48,15 +63,21 @@ def ingest_build(
     build: int,
     *,
     expected_shards: int = 2,
+    feed: TrackingFeed | None = None,
+    data_change_lookback: timedelta = timedelta(hours=12),
+    data_change_tolerance: timedelta = timedelta(minutes=5),
 ) -> int:
-    """Fetch, parse and persist one build. Returns the run's build_number.
+    """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
-    Milestone 1 populates the full result/identity/shard schema. Lifecycle, episodes, baseline diff
-    and classification are wired in Milestone 2; this still only persists facts from the report.
+    Persists the run, its per-(test, track) results (with derived error type), per-shard timing and
+    the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied).
+    For a **complete** run it then drives the lifecycle/episodes, the baseline diff and the
+    deterministic classification of new regressions. Idempotent on re-ingest.
     """
     meta = client.build_meta(build)
     timing = parse_wfapi(client.wfapi(build))
     report = parse_test_report(client.test_report(build))
+    change_sets = parse_change_sets(client.change_sets(build))
     win_start, win_end = timing.window
 
     with session_scope(session_factory) as session:
@@ -67,6 +88,8 @@ def ingest_build(
         else:
             run.results.clear()  # idempotent re-ingest
             run.shards.clear()
+            run.code_changes.clear()
+            run.data_changes.clear()
             session.flush()  # delete old rows before re-inserting (unique constraint)
 
         run.status = meta.get("result") or timing.status
@@ -100,19 +123,67 @@ def ingest_build(
                     file_path=case.file_path,
                     line=case.line,
                     owner_initials=case.owner_initials,
+                    error_type=derive_error_type(
+                        case.status, case.error_details, case.error_stack_trace
+                    ),
                     error_details=case.error_details,
                     error_stack_trace=case.error_stack_trace,
                 )
             )
+
+        for change in change_sets.changes:
+            run.code_changes.append(
+                CodeChangeCandidate(
+                    commit_id=change.commit_id,
+                    revision=change.commit_id,
+                    author=change.author,
+                    message=change.message,
+                    committed_at=change.when,
+                    paths=json.dumps(
+                        [{"editType": p.edit_type, "file": p.file} for p in change.paths]
+                    ),
+                )
+            )
+
+        if feed is not None:
+            lo, hi = data_change_window(
+                timing.window, lookback=data_change_lookback, tolerance=data_change_tolerance
+            )
+            for dc in feed.changes_in_window(lo, hi):
+                run.data_changes.append(
+                    DataChangeCandidate(
+                        lx_table_code=dc.entity,
+                        pk_lst=dc.pk,
+                        change_type=dc.change_type,
+                        component_name=dc.component,
+                        author=dc.user_code,
+                        session_log_id=None
+                        if dc.session_log_id is None
+                        else str(dc.session_log_id),
+                        changed_at=dc.cre_utc,
+                    )
+                )
+
+        session.flush()  # candidates must be visible to the classifier
+
+        if run.complete:
+            analysis = apply_run(session, run)
+            classify_run(session, run, analysis.opened_episodes)
+
     return build
 
 
-def data_change_window(timing_window: tuple, lookback: timedelta = timedelta(hours=12)) -> tuple:
+def data_change_window(
+    timing_window: tuple,
+    lookback: timedelta = timedelta(hours=12),
+    tolerance: timedelta = timedelta(minutes=5),
+) -> tuple:
     """The UTC window for candidate data changes: a lookback before the run through its end.
 
     Data changes precede the nightly run (confirmed empirically on #1702 — the run's own window had
-    no tracked changes), so we look back from the run start. ``lookback`` is a provisional default,
-    tuned on real data later.
+    no tracked changes), so we look back from the run start. The ``tolerance`` margin (B1) widens
+    both ends to absorb residual clock skew between the Jenkins and Oracle ``ut_ref`` clocks.
+    ``lookback`` is a provisional default, tuned on real data later.
     """
     start, end = timing_window
-    return start - lookback, end
+    return start - lookback - tolerance, end + tolerance

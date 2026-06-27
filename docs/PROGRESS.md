@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27_
+_Last updated: 2026-06-27 (Milestone 2)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -89,9 +89,47 @@ B-tree indexes on `test_results(run_id)`, `(test_identity_id)`, `(status)` and t
 `(run, identity, track)`. Time/run partitioning of `test_results` is **deferred** until row counts
 warrant it (no code change — a migration when needed).
 
-## Milestone 2 — ingest pipeline + classification  ·  `[ ]`
+## Milestone 2 — ingest pipeline + classification  ·  `[x]`
 Scheduled poll (APScheduler); complete-run baseline + diff; lifecycle state machine + episodes;
 deterministic CODE/DATA/INFRA/UNKNOWN from time-windowed candidates.
+
+### Done
+- [x] **`analyze/` package** — analysis derives only from persisted facts, so re-running it for an
+      already-processed run is idempotent (the offline gate proves this).
+- [x] **Baseline + diff** (`analyze/baseline.py`): `select_baseline` walks back to the most recent
+      **complete** run (incomplete runs stored/shown but skipped); per-identity status collapses both
+      tracks (FAILED in either ⇒ failing); `compute_diff` →
+      regressions / newly-fixed / still-failing / removed; the chosen baseline id is stamped on the run.
+- [x] **Lifecycle state machine + episodes** (`analyze/lifecycle.py`): `apply_run` drives
+      `FAILING`/`FIXED`/`REMOVED` against the baseline (not the stored state → **idempotent per
+      (baseline, run)**). Regression opens an episode; reopen bumps `reopen_count` and **clears
+      acknowledgement**; fix closes the episode (only on a real pass, never on REMOVED — disappeared ≠
+      fixed); `age_runs` + all-time/episode first-failure pointers maintained. Only ever-failing tests
+      get a lifecycle row.
+- [x] **Deterministic classification** (`analyze/classify.py`): per new episode, `INFRASTRUCTURE`
+      (error_type INFRA) > `CODE_CHANGE`/`DATA_CHANGE` (one signal kind in window) > `UNKNOWN`
+      (both/neither). **No confidence number** (deferred to §4); evidence JSON records the candidate
+      counts.
+- [x] **Error-type derivation** (`analyze/error_type.py`): ASSERTION/EXCEPTION/TIMEOUT/INFRA/UNKNOWN
+      from status + stack trace, set on every result at ingest (INFRA ordered first).
+- [x] **Pipeline wired** (`ingest/pipeline.py`): now also persists **code-change candidates** (SVN
+      changeSets) and **data-change candidates** (`ut_ref` feed, when supplied) over the lookback +
+      **tolerance (B1)** window, then runs the analysis for **complete** runs. Re-ingest clears+rebuilds
+      candidates and re-runs analysis without duplicating episodes/classifications.
+- [x] **Scheduled poller** (`poller.py` + `uta poll`): high-water mark = `max(Run.build_number)` in
+      the DB (restart-safe, converges with back-fill); ingests every new completed build oldest-first
+      on an APScheduler interval. `last_completed_build` added to the Jenkins client + fake.
+      `uta backfill <build> [--to N]` now ingests a range.
+- [x] **Tests (+27, offline gate green: 69 passed, 3 skipped)**: `test_error_type`,
+      `test_baseline_diff`, `test_lifecycle` (regression/fix/reopen+ack-clear/removed/still-failing/age,
+      **re-apply idempotency**), `test_classify` (all four causes), `test_poller` (selection +
+      idempotent poll), and pipeline coverage that ingest drives lifecycle/episodes/classification and
+      persists code+data candidates. ruff lint + format clean.
+
+### Open / deferred to later milestones
+- **Flaky flag** is computed in M4 (oscillation over the 30-day window); the diff's "flaky" column is
+  intentionally not populated yet.
+- **Acknowledgement** is cleared on reopen here, but the **set** action arrives with the M3 dashboard.
 
 ## Milestone 3 — dashboard (FastAPI + HTMX)  ·  `[ ]`
 Triage queue (§0), per-test record (§1) with acknowledge/confirm/edit, run summary (§2).
@@ -112,3 +150,11 @@ Real provider behind `HypothesisProvider`, RAG over KB top-k.
   → `CREDATIM` is naive `Europe/Luxembourg`. Tests pin summer(+2)/winter(+1)/DST.
 - Offline DB tests use **in-memory SQLite**; the web test needs `StaticPool` + a shared connection
   so the request thread sees the same in-memory DB.
+- **Lifecycle is computed vs the baseline, not vs the stored state** (M2). Deriving transitions from
+  two fixed facts (baseline + current results) makes re-ingest idempotent and keeps episodes stable
+  across re-runs (so M2 classifications and future M3 human input attached to an episode survive).
+  Only **complete** runs advance lifecycle — an incomplete run's missing shard would otherwise read
+  as a mass `REMOVED`. Both follow directly from PLAN §2 ("baseline = most recent complete run").
+- **Both-signal classification is `UNKNOWN`, not a guess** (M2). Most runs carry a commit, so when a
+  `ut_ref` change *also* falls in the window the cause is genuinely ambiguous; with no KB to rank yet
+  (confidence deferred), we attach both candidate sets as evidence and let the human attribute.

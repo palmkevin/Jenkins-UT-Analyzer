@@ -31,3 +31,6 @@ class FakeJenkinsClient:
 
     def wfapi(self, build: int) -> dict:
         return self._load(f"wfapi_{self._build}.json", build)
+
+    def last_completed_build(self) -> int | None:
+        return self._build

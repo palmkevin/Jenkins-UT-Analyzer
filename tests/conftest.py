@@ -15,6 +15,16 @@ def _load(rel: str) -> dict:
 
 
 @pytest.fixture
+def session_factory():
+    """An in-memory SQLite store with the full schema created (offline, no Postgres)."""
+    from uta.db import Base, make_engine, make_session_factory
+
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return make_session_factory(engine)
+
+
+@pytest.fixture
 def test_report_1702() -> dict:
     return _load("jenkins/testReport_1702.json")
 

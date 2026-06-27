@@ -36,10 +36,44 @@ def init_db() -> None:
     migrate()
 
 
-@app.command("backfill")
-def backfill(build: int) -> None:
-    """Fetch, parse and persist one Jenkins build (live — requires Jenkins access)."""
+def _build_client(settings):
     from uta.ingest.jenkins import HttpJenkinsClient
+
+    return HttpJenkinsClient(
+        settings.jenkins_job_url,
+        user=settings.jenkins_user,
+        token=settings.jenkins_api_token,
+    )
+
+
+def _build_feed(settings):
+    """The Oracle ut_ref feed, or ``None`` if no password is set (data candidates skipped)."""
+    if not settings.ut_ref_password:
+        return None
+    from uta.refdb.oracle import OracleTrackingFeed
+
+    return OracleTrackingFeed(
+        settings.ut_ref_host,
+        settings.ut_ref_port,
+        settings.ut_ref_service,
+        settings.ut_ref_user,
+        settings.ut_ref_password,
+        thick=settings.ut_ref_thick,
+    )
+
+
+def _windows(settings):
+    from datetime import timedelta
+
+    return (
+        timedelta(hours=settings.data_change_lookback_hours),
+        timedelta(minutes=settings.data_change_tolerance_minutes),
+    )
+
+
+@app.command("backfill")
+def backfill(build: int, to: int | None = None) -> None:
+    """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live)."""
     from uta.ingest.pipeline import ingest_build
 
     settings = get_settings()
@@ -47,13 +81,45 @@ def backfill(build: int) -> None:
     engine = make_engine(settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
-    client = HttpJenkinsClient(
-        settings.jenkins_job_url,
-        user=settings.jenkins_user,
-        token=settings.jenkins_api_token,
+    client = _build_client(settings)
+    feed = _build_feed(settings)
+    lookback, tolerance = _windows(settings)
+    for n in range(build, (to or build) + 1):
+        ingest_build(
+            client,
+            session_factory,
+            n,
+            expected_shards=settings.expected_shards,
+            feed=feed,
+            data_change_lookback=lookback,
+            data_change_tolerance=tolerance,
+        )
+        typer.echo(f"ingested build #{n}")
+
+
+@app.command("poll")
+def poll() -> None:
+    """Run the scheduled poller: ingest new completed builds on a fixed interval (live)."""
+    from uta.poller import run_scheduler
+
+    settings = get_settings()
+    _run_migrations()
+    engine = make_engine(settings.database_url)
+    assert_pg_trgm(engine)
+    session_factory = make_session_factory(engine)
+    client = _build_client(settings)
+    feed = _build_feed(settings)
+    lookback, tolerance = _windows(settings)
+    typer.echo(f"polling every {settings.poll_interval_seconds}s …")
+    run_scheduler(
+        client,
+        session_factory,
+        interval_seconds=settings.poll_interval_seconds,
+        expected_shards=settings.expected_shards,
+        feed=feed,
+        data_change_lookback=lookback,
+        data_change_tolerance=tolerance,
     )
-    ingest_build(client, session_factory, build, expected_shards=settings.expected_shards)
-    typer.echo(f"ingested build #{build}")
 
 
 if __name__ == "__main__":
