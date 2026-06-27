@@ -1,0 +1,608 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/wfapi/describe"
+    },
+    "changesets": {
+      "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/wfapi/changesets"
+    }
+  },
+  "id": "1702",
+  "name": "#1702",
+  "status": "UNSTABLE",
+  "startTimeMillis": 1782493274809,
+  "endTimeMillis": 1782499297496,
+  "durationMillis": 6022687,
+  "queueDurationMillis": 1,
+  "pauseDurationMillis": 0,
+  "stages": [
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/8/wfapi/describe"
+        }
+      },
+      "id": "8",
+      "name": "SCM baseline (tiny)",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493275105,
+      "durationMillis": 4162,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/13/wfapi/describe"
+        }
+      },
+      "id": "13",
+      "name": "Pre-Build (Update release)",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493279277,
+      "durationMillis": 4113,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/22/wfapi/describe"
+        }
+      },
+      "id": "22",
+      "name": "Install python libraries",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493283400,
+      "durationMillis": 33,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/28/wfapi/describe"
+        }
+      },
+      "id": "28",
+      "name": "Install python libraries (UX)",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493283433,
+      "durationMillis": 38620,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/30/wfapi/describe"
+        }
+      },
+      "id": "30",
+      "name": "Install python libraries (WIN)",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493283438,
+      "durationMillis": 47234,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/52/wfapi/describe"
+        }
+      },
+      "id": "52",
+      "name": "Build all",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330723,
+      "durationMillis": 37,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/62/wfapi/describe"
+        }
+      },
+      "id": "62",
+      "name": "Compile python",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330760,
+      "durationMillis": 4001,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/64/wfapi/describe"
+        }
+      },
+      "id": "64",
+      "name": "Build Uniface 9",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330764,
+      "durationMillis": 68,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/66/wfapi/describe"
+        }
+      },
+      "id": "66",
+      "name": "Build web apps",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330769,
+      "durationMillis": 1520,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/68/wfapi/describe"
+        }
+      },
+      "id": "68",
+      "name": "Build metas, doc & release notes",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330775,
+      "durationMillis": 4444,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/73/wfapi/describe"
+        }
+      },
+      "id": "73",
+      "name": "Compile uniface",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493330832,
+      "durationMillis": 1997,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/93/wfapi/describe"
+        }
+      },
+      "id": "93",
+      "name": "Create UAR archives",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493332840,
+      "durationMillis": 116654,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/118/wfapi/describe"
+        }
+      },
+      "id": "118",
+      "name": "Post build",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493449575,
+      "durationMillis": 37,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/128/wfapi/describe"
+        }
+      },
+      "id": "128",
+      "name": "Build meta_build/lxtext",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493449612,
+      "durationMillis": 53606,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/130/wfapi/describe"
+        }
+      },
+      "id": "130",
+      "name": "Check otree setting usage",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493449618,
+      "durationMillis": 23138,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/132/wfapi/describe"
+        }
+      },
+      "id": "132",
+      "name": "Generate manual",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493449623,
+      "durationMillis": 35473,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/134/wfapi/describe"
+        }
+      },
+      "id": "134",
+      "name": "Save build revision",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493449628,
+      "durationMillis": 1241,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/175/wfapi/describe"
+        }
+      },
+      "id": "175",
+      "name": "Restart processes",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493503287,
+      "durationMillis": 7786,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/184/wfapi/describe"
+        }
+      },
+      "id": "184",
+      "name": "Check backend processes",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493511084,
+      "durationMillis": 4943,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/197/wfapi/describe"
+        }
+      },
+      "id": "197",
+      "name": "Prepare UT execution",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516041,
+      "durationMillis": 29,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/201/wfapi/describe"
+        }
+      },
+      "id": "201",
+      "name": "Cleanup UT logfiles in Workspace",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516070,
+      "durationMillis": 340,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/214/wfapi/describe"
+        }
+      },
+      "id": "214",
+      "name": "Unit tests",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516455,
+      "durationMillis": 39,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/222/wfapi/describe"
+        }
+      },
+      "id": "222",
+      "name": "Tests for permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516494,
+      "durationMillis": 62,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/224/wfapi/describe"
+        }
+      },
+      "id": "224",
+      "name": "Tests for permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516499,
+      "durationMillis": 66,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/231/wfapi/describe"
+        }
+      },
+      "id": "231",
+      "name": "Clean logs - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516556,
+      "durationMillis": 306,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/234/wfapi/describe"
+        }
+      },
+      "id": "234",
+      "name": "Clean logs - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516565,
+      "durationMillis": 337,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/240/wfapi/describe"
+        }
+      },
+      "id": "240",
+      "name": "LXS - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516875,
+      "durationMillis": 5873,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/246/wfapi/describe"
+        }
+      },
+      "id": "246",
+      "name": "LXS - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493516908,
+      "durationMillis": 9024,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/256/wfapi/describe"
+        }
+      },
+      "id": "256",
+      "name": "SMB Pricing - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493522757,
+      "durationMillis": 38729,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/265/wfapi/describe"
+        }
+      },
+      "id": "265",
+      "name": "SMB Pricing - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493525943,
+      "durationMillis": 76139,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/274/wfapi/describe"
+        }
+      },
+      "id": "274",
+      "name": "SMB Transform - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493561497,
+      "durationMillis": 7762,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/283/wfapi/describe"
+        }
+      },
+      "id": "283",
+      "name": "ITF Highlevel - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493569269,
+      "durationMillis": 94157,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/292/wfapi/describe"
+        }
+      },
+      "id": "292",
+      "name": "SMB Transform - permanent_py39",
+      "execNode": "",
+      "status": "UNSTABLE",
+      "startTimeMillis": 1782493602093,
+      "durationMillis": 16214,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/302/wfapi/describe"
+        }
+      },
+      "id": "302",
+      "name": "ITF Highlevel - permanent_py39",
+      "execNode": "",
+      "status": "UNSTABLE",
+      "startTimeMillis": 1782493618318,
+      "durationMillis": 154881,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/311/wfapi/describe"
+        }
+      },
+      "id": "311",
+      "name": "Uniface deploy unit tests - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493663434,
+      "durationMillis": 13133,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/316/wfapi/describe"
+        }
+      },
+      "id": "316",
+      "name": "devUTs: Pre+Spread - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493676577,
+      "durationMillis": 5072,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/321/wfapi/describe"
+        }
+      },
+      "id": "321",
+      "name": "devUTs: Execute - permanent",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493681658,
+      "durationMillis": 5088185,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/345/wfapi/describe"
+        }
+      },
+      "id": "345",
+      "name": "Uniface deploy unit tests - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493773208,
+      "durationMillis": 14067,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/350/wfapi/describe"
+        }
+      },
+      "id": "350",
+      "name": "devUTs: Pre+Spread - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493787287,
+      "durationMillis": 6705,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/355/wfapi/describe"
+        }
+      },
+      "id": "355",
+      "name": "devUTs: Execute - permanent_py39",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1782493794007,
+      "durationMillis": 5501687,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/384/wfapi/describe"
+        }
+      },
+      "id": "384",
+      "name": "Collect test results - permanent",
+      "execNode": "",
+      "status": "UNSTABLE",
+      "startTimeMillis": 1782498769852,
+      "durationMillis": 1813,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/Development/view/Build/job/lsdevbuild-build-release-permanent/1702/execution/node/410/wfapi/describe"
+        }
+      },
+      "id": "410",
+      "name": "Collect test results - permanent_py39",
+      "execNode": "",
+      "status": "UNSTABLE",
+      "startTimeMillis": 1782499295703,
+      "durationMillis": 1628,
+      "pauseDurationMillis": 0
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+# Dev stack: web + poller (same image) + db. Postgres is "container now, external later":
+# the app reaches it only via DATABASE_URL, so production points at an external server with no
+# code change (disable the `db` service, set DATABASE_URL).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-uta}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uta}
+      POSTGRES_DB: ${POSTGRES_DB:-uta}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-uta}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    env_file: .env
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  poller:
+    build: .
+    env_file: .env
+    # Slice 0: ensure schema exists, then idle. Milestone 2 replaces this with the APScheduler
+    # poll + ingest loop and the on-demand back-fill command.
+    command: ["sh", "-c", "uta init-db && sleep infinity"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
