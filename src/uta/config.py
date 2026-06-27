@@ -26,10 +26,21 @@ class Settings(BaseSettings):
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+psycopg://uta:uta@db:5432/uta"
 
+    # ── Email (regression-only alert, §5) ────────────────────────────────────
+    smtp_host: str = ""
+    smtp_port: int = 25
+    smtp_from: str = ""
+    smtp_recipients: str = ""  # comma-separated; empty disables email
+    smtp_user: str = ""
+    smtp_password: str = ""
+    email_recovery_notice: bool = False
+
     # ── App ──────────────────────────────────────────────────────────────────
     app_default_actor: str = "test-user"
     flaky_transition_threshold: float = 0.3
+    flaky_window_days: int = 30  # oscillation window for the flaky score (§3)
     pgtrgm_similarity_cutoff: float = 0.3
+    kb_top_k: int = 5  # similar past cases surfaced per failure (§4)
     # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
     recently_fixed_days: int = 7
 
@@ -45,6 +56,10 @@ class Settings(BaseSettings):
     @property
     def jenkins_job_url(self) -> str:
         return f"{self.jenkins_base_url.rstrip('/')}/{self.jenkins_job_path.strip('/')}"
+
+    @property
+    def email_recipients(self) -> tuple[str, ...]:
+        return tuple(r.strip() for r in self.smtp_recipients.split(",") if r.strip())
 
 
 def get_settings() -> Settings:

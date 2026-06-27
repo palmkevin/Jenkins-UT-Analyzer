@@ -71,6 +71,15 @@ def _windows(settings):
     )
 
 
+def _build_email_sender(settings):
+    """The SMTP sender, or ``None`` when email is not configured (host + recipients required)."""
+    if not settings.smtp_host or not settings.email_recipients:
+        return None
+    from uta.delivery.email import SmtpEmailSender
+
+    return SmtpEmailSender(settings.smtp_host, settings.smtp_port, settings.smtp_from)
+
+
 @app.command("backfill")
 def backfill(build: int, to: int | None = None) -> None:
     """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live)."""
@@ -85,6 +94,7 @@ def backfill(build: int, to: int | None = None) -> None:
     feed = _build_feed(settings)
     lookback, tolerance = _windows(settings)
     for n in range(build, (to or build) + 1):
+        # No email sender on back-fill: historical regressions must not be (re-)mailed.
         ingest_build(
             client,
             session_factory,
@@ -93,6 +103,8 @@ def backfill(build: int, to: int | None = None) -> None:
             feed=feed,
             data_change_lookback=lookback,
             data_change_tolerance=tolerance,
+            flaky_window_days=settings.flaky_window_days,
+            flaky_threshold=settings.flaky_transition_threshold,
         )
         typer.echo(f"ingested build #{n}")
 
@@ -110,6 +122,7 @@ def poll() -> None:
     client = _build_client(settings)
     feed = _build_feed(settings)
     lookback, tolerance = _windows(settings)
+    email_sender = _build_email_sender(settings)
     typer.echo(f"polling every {settings.poll_interval_seconds}s …")
     run_scheduler(
         client,
@@ -119,6 +132,11 @@ def poll() -> None:
         feed=feed,
         data_change_lookback=lookback,
         data_change_tolerance=tolerance,
+        flaky_window_days=settings.flaky_window_days,
+        flaky_threshold=settings.flaky_transition_threshold,
+        email_sender=email_sender,
+        email_recipients=settings.email_recipients,
+        email_recovery_notice=settings.email_recovery_notice,
     )
 
 

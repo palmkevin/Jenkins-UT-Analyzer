@@ -16,12 +16,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from uta.analyze.classify import classify_run
 from uta.analyze.error_type import derive_error_type
+from uta.analyze.flakiness import recompute_flaky_flags
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
+from uta.delivery.email import EmailSender, maybe_notify
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
 from uta.ingest.wfapi import parse_wfapi
+from uta.kb.store import record_signatures_for_run
 from uta.models import (
     CodeChangeCandidate,
     DataChangeCandidate,
@@ -66,13 +69,22 @@ def ingest_build(
     feed: TrackingFeed | None = None,
     data_change_lookback: timedelta = timedelta(hours=12),
     data_change_tolerance: timedelta = timedelta(minutes=5),
+    flaky_window_days: int = 30,
+    flaky_threshold: float = 0.3,
+    email_sender: EmailSender | None = None,
+    email_recipients: tuple[str, ...] = (),
+    email_recovery_notice: bool = False,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
     Persists the run, its per-(test, track) results (with derived error type), per-shard timing and
-    the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied).
-    For a **complete** run it then drives the lifecycle/episodes, the baseline diff and the
-    deterministic classification of new regressions. Idempotent on re-ingest.
+    the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied),
+    and records a normalized **failure signature** per failing result (the KB recurrence key, §4).
+    For a
+    **complete** run it then drives the lifecycle/episodes, the baseline diff, the deterministic
+    classification of new regressions, refreshes the oscillation **flaky** flags (§3), and — when an
+    ``email_sender`` is supplied — sends the regression-only alert (§5). Idempotent on re-ingest;
+    back-fill passes no sender so historical regressions are never re-mailed.
     """
     meta = client.build_meta(build)
     timing = parse_wfapi(client.wfapi(build))
@@ -164,11 +176,23 @@ def ingest_build(
                     )
                 )
 
-        session.flush()  # candidates must be visible to the classifier
+        session.flush()  # candidates + results must be visible to the KB store and classifier
+
+        # KB: a normalized failure signature per failing result (recurrence key, §4). Recorded for
+        # any run (the signatures are facts about the failures), idempotent on re-ingest.
+        record_signatures_for_run(session, run)
 
         if run.complete:
             analysis = apply_run(session, run)
             classify_run(session, run, analysis.opened_episodes)
+            recompute_flaky_flags(session, window_days=flaky_window_days, threshold=flaky_threshold)
+            maybe_notify(
+                session,
+                run,
+                email_sender,
+                email_recipients,
+                recovery_notice=email_recovery_notice,
+            )
 
     return build
 

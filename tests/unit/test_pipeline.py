@@ -7,13 +7,16 @@ from datetime import timedelta
 from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
+from tests.fakes.email import RecordingEmailSender
 from uta.db import session_scope
 from uta.ingest.pipeline import data_change_window, ingest_build
+from uta.ingest.ut_report import FAILED_STATUSES
 from uta.models import (
     Classification,
     CodeChangeCandidate,
     DataChangeCandidate,
     FailureEpisode,
+    FailureSignature,
     Run,
     TestLifecycle,
     TestResult,
@@ -80,3 +83,39 @@ def test_data_change_window_looks_back_with_tolerance():
     )
     assert lo == start - timedelta(hours=12) - timedelta(minutes=5)
     assert hi == end + timedelta(minutes=5)
+
+
+def test_ingest_records_failure_signatures(session_factory):
+    """Every failing result gets a KB signature linked (§4); re-ingest doesn't double-count."""
+    ingest_build(FakeJenkinsClient(), session_factory, 1702)
+    with session_scope(session_factory) as s:
+        sigs = s.scalars(select(FailureSignature)).all()
+        assert sigs  # signatures recorded
+        # Every failing result is linked to a signature.
+        failing = s.scalars(select(TestResult).where(TestResult.status.in_(FAILED_STATUSES))).all()
+        assert failing and all(r.signature_id is not None for r in failing)
+        before = {sig.id: sig.occurrence_count for sig in sigs}
+
+    ingest_build(FakeJenkinsClient(), session_factory, 1702)  # re-ingest
+    with session_scope(session_factory) as s:
+        after = {sig.id: sig.occurrence_count for sig in s.scalars(select(FailureSignature)).all()}
+        assert after == before  # recomputed from live links, not inflated
+
+
+def test_ingest_emails_on_regression_only_via_sender(session_factory):
+    """A sender + recipients ⇒ regression email; back-fill (no sender) stays silent."""
+    sender = RecordingEmailSender()
+    ingest_build(
+        FakeJenkinsClient(),
+        session_factory,
+        1702,
+        email_sender=sender,
+        email_recipients=("team@example.com",),
+    )
+    # First run with failures vs an empty baseline ⇒ new failures ⇒ one email.
+    assert len(sender.sent) == 1
+    assert "new failing" in sender.sent[0].subject
+
+    # Re-ingest with no sender (the back-fill path) sends nothing more.
+    ingest_build(FakeJenkinsClient(), session_factory, 1702)
+    assert len(sender.sent) == 1

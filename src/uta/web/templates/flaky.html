@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Flaky leaderboard — UT Analyzer{% endblock %}
+
+{% block content %}
+<h1>Flaky leaderboard</h1>
+<p class="meta">
+  Ranked by oscillation (state transitions ÷ runs) over the last {{ board.window_days }} days.
+  A test is <span class="badge flaky">flaky</span> when it flip-flops; a solidly-failing test is a
+  regression, not flaky.
+</p>
+
+{% if not board.rows %}
+  <p class="empty">No oscillating tests in the window.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Test</th><th>Owner</th><th>Score</th><th>Transitions</th><th>Runs</th>
+      <th>Fail rate</th><th>Fails (window / all)</th><th>Last failed</th><th>Pattern</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in board.rows %}
+    <tr>
+      <td>
+        <a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a>
+        {% if r.flaky %}<span class="badge flaky">flaky</span>{% endif %}
+        {% if r.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
+      </td>
+      <td>{{ r.owner or "—" }}</td>
+      <td class="count">{{ "%.2f"|format(r.score) }}</td>
+      <td>{{ r.transitions }}</td>
+      <td>{{ r.runs_in_window }}</td>
+      <td>{{ "%.2f"|format(r.fail_rate) }}</td>
+      <td>{{ r.failed_in_window }} / {{ r.failed_total }}</td>
+      <td>{{ r.last_failed_at or "—" }}</td>
+      <td>{{ r.pattern }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}
