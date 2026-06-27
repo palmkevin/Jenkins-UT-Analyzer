@@ -18,6 +18,7 @@ from uta.db import session_scope
 from uta.delivery.email import EmailSender
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
+from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
 
 
@@ -50,12 +51,16 @@ def poll_once(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     email_recovery_notice: bool = False,
+    hypothesis_provider: HypothesisProvider | None = None,
+    kb_top_k: int = 5,
+    kb_similarity_cutoff: float = 0.3,
 ) -> list[int]:
     """Ingest every new completed build once. Returns the build numbers processed.
 
-    The poller is the **live** path, so it forwards the email sender — each newly-processed build
-    that introduces a regression triggers the §5 alert. Each build is ingested at most once (the
-    high-water mark), so an alert is never re-sent.
+    The poller is the **live** path, so it forwards the email sender and the LLM hypothesis provider
+    — each newly-processed build that introduces a regression triggers the §5 alert and (with a real
+    provider) the §4 hypothesis. Each build is ingested at most once (the high-water mark), so
+    neither is re-done.
     """
     processed: list[int] = []
     for build in builds_to_ingest(client, session_factory):
@@ -72,6 +77,9 @@ def poll_once(
             email_sender=email_sender,
             email_recipients=email_recipients,
             email_recovery_notice=email_recovery_notice,
+            hypothesis_provider=hypothesis_provider,
+            kb_top_k=kb_top_k,
+            kb_similarity_cutoff=kb_similarity_cutoff,
         )
         processed.append(build)
     return processed
@@ -91,6 +99,9 @@ def run_scheduler(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     email_recovery_notice: bool = False,
+    hypothesis_provider: HypothesisProvider | None = None,
+    kb_top_k: int = 5,
+    kb_similarity_cutoff: float = 0.3,
 ) -> None:
     """Block forever, polling on a fixed interval (the ``uta poll`` entrypoint)."""
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -108,6 +119,9 @@ def run_scheduler(
             email_sender=email_sender,
             email_recipients=email_recipients,
             email_recovery_notice=email_recovery_notice,
+            hypothesis_provider=hypothesis_provider,
+            kb_top_k=kb_top_k,
+            kb_similarity_cutoff=kb_similarity_cutoff,
         )
 
     scheduler = BlockingScheduler()

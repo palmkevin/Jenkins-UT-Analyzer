@@ -80,6 +80,34 @@ def _build_email_sender(settings):
     return SmtpEmailSender(settings.smtp_host, settings.smtp_port, settings.smtp_from)
 
 
+def _build_hypothesis_provider(settings):
+    """The configured LLM provider (Anthropic or OpenAI), or Noop when no key is set.
+
+    ``LLM_PROVIDER`` picks explicitly; empty auto-selects whichever key is configured (Anthropic
+    wins if both). A chosen provider with no key falls back to Noop (no model call).
+    """
+    from uta.llm import NoopHypothesisProvider
+
+    choice = (settings.llm_provider or "").lower()
+    if not choice:
+        if settings.anthropic_api_key:
+            choice = "anthropic"
+        elif settings.openai_api_key:
+            choice = "openai"
+
+    if choice == "anthropic" and settings.anthropic_api_key:
+        from uta.llm.claude import AnthropicHypothesisProvider
+
+        return AnthropicHypothesisProvider(
+            settings.anthropic_api_key, model=settings.anthropic_model
+        )
+    if choice == "openai" and settings.openai_api_key:
+        from uta.llm.openai_provider import OpenAIHypothesisProvider
+
+        return OpenAIHypothesisProvider(settings.openai_api_key, model=settings.openai_model)
+    return NoopHypothesisProvider()
+
+
 @app.command("backfill")
 def backfill(build: int, to: int | None = None) -> None:
     """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live)."""
@@ -123,6 +151,7 @@ def poll() -> None:
     feed = _build_feed(settings)
     lookback, tolerance = _windows(settings)
     email_sender = _build_email_sender(settings)
+    hypothesis_provider = _build_hypothesis_provider(settings)
     typer.echo(f"polling every {settings.poll_interval_seconds}s …")
     run_scheduler(
         client,
@@ -137,6 +166,9 @@ def poll() -> None:
         email_sender=email_sender,
         email_recipients=settings.email_recipients,
         email_recovery_notice=settings.email_recovery_notice,
+        hypothesis_provider=hypothesis_provider,
+        kb_top_k=settings.kb_top_k,
+        kb_similarity_cutoff=settings.pgtrgm_similarity_cutoff,
     )
 
 

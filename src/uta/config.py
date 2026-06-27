@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
     recently_fixed_days: int = 7
 
+    # ── LLM hypothesis (§4 / Milestone 5) ────────────────────────────────────
+    # Provider: "anthropic", "openai", or "" to auto-pick from whichever key is set (Anthropic wins
+    # when both are). A chosen provider with no key ⇒ NoopHypothesisProvider (no model call;
+    # llm_hypothesis stays NULL). Both keys are Platform/Console keys (pay-as-you-go), separate from
+    # any Claude.ai or ChatGPT subscription.
+    llm_provider: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-8"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o"
+
     # ── Ingest / correlation windows ───────────────────────────────────────────
     # Data changes precede the nightly run (the run's own window had none on #1702), so look back
     # before the run start; the tolerance margin (B1) absorbs residual clock skew between Jenkins

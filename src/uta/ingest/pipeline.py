@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from uta.analyze.classify import classify_run
 from uta.analyze.error_type import derive_error_type
 from uta.analyze.flakiness import recompute_flaky_flags
+from uta.analyze.hypothesize import hypothesize_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
 from uta.delivery.email import EmailSender, maybe_notify
@@ -25,6 +26,7 @@ from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
 from uta.ingest.wfapi import parse_wfapi
 from uta.kb.store import record_signatures_for_run
+from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.models import (
     CodeChangeCandidate,
     DataChangeCandidate,
@@ -74,6 +76,9 @@ def ingest_build(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     email_recovery_notice: bool = False,
+    hypothesis_provider: HypothesisProvider | None = None,
+    kb_top_k: int = 5,
+    kb_similarity_cutoff: float = 0.3,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
@@ -83,8 +88,10 @@ def ingest_build(
     For a
     **complete** run it then drives the lifecycle/episodes, the baseline diff, the deterministic
     classification of new regressions, refreshes the oscillation **flaky** flags (§3), and — when an
-    ``email_sender`` is supplied — sends the regression-only alert (§5). Idempotent on re-ingest;
-    back-fill passes no sender so historical regressions are never re-mailed.
+    ``email_sender`` is supplied — sends the regression-only alert (§5). When a real
+    ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode
+    (§4); the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
+    sender and no provider, so history is never re-mailed or re-hypothesised.
     """
     meta = client.build_meta(build)
     timing = parse_wfapi(client.wfapi(build))
@@ -185,6 +192,14 @@ def ingest_build(
         if run.complete:
             analysis = apply_run(session, run)
             classify_run(session, run, analysis.opened_episodes)
+            hypothesize_run(
+                session,
+                run,
+                analysis.opened_episodes,
+                hypothesis_provider or NoopHypothesisProvider(),
+                top_k=kb_top_k,
+                cutoff=kb_similarity_cutoff,
+            )
             recompute_flaky_flags(session, window_days=flaky_window_days, threshold=flaky_threshold)
             maybe_notify(
                 session,

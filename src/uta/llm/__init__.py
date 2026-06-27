@@ -1,4 +1,16 @@
-"""LLM hypothesis provider — stubbed (no-op) in v1 behind a swappable interface."""
+"""LLM hypothesis provider (PLAN §4 / Milestone 5).
+
+A failing test's *predicted cause* is derived deterministically (``analyze/classify.py``); the LLM
+adds a **human-readable hypothesis** — one sentence naming the most likely root cause — grounded in
+the top-k similar past cases the knowledge base already retrieves (``kb/retrieval.py``). That is the
+whole "RAG": fetch the similar cases, render them into a prompt, ask the model. **No vector store**
+— retrieval is the existing ``pg_trgm`` / difflib similarity.
+
+The model call sits behind :class:`HypothesisProvider` so the offline gate drives a fake and never
+touches the network. :class:`NoopHypothesisProvider` is the **default**: with no API key configured,
+ingest behaves exactly as before (``Classification.llm_hypothesis`` stays ``NULL``). The real
+provider lives in :mod:`uta.llm.claude`; prompt assembly lives in :mod:`uta.llm.prompt`.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +25,11 @@ class Hypothesis:
 
 
 class HypothesisProvider(Protocol):
-    def hypothesize(self, *, error_details: str | None, context: str) -> Hypothesis | None: ...
+    def hypothesize(self, *, system: str, user: str) -> Hypothesis | None: ...
 
 
 class NoopHypothesisProvider:
-    """v1 default: returns nothing. Milestone 5 swaps in a real provider + RAG."""
+    """Default provider: returns nothing. Active whenever no LLM API key is configured."""
 
-    def hypothesize(self, *, error_details: str | None, context: str) -> Hypothesis | None:
+    def hypothesize(self, *, system: str, user: str) -> Hypothesis | None:
         return None
