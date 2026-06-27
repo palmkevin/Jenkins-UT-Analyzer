@@ -1,53 +1,56 @@
-"""Minimal Slice-0 schema: a run and its per-(test, track) results.
+"""The full Information model (PLAN.md §"Information model").
 
-This is intentionally small — enough to persist one ingested run and render it. The full
-Information model (lifecycle, episodes, signals, KB signatures, …) arrives in Milestone 1 behind
-Alembic migrations.
+One module per concern; everything is re-exported here so callers can ``from uta.models import X``
+and so importing this package registers every mapper on ``Base.metadata`` (Alembic autogenerate and
+``create_all`` rely on that). The DB-level decisions:
+
+- **Identity** is test-level; ``track`` is an attribute on the result (CLAUDE.md invariant).
+- **actor** is a plain string on every human action (acknowledged_by / validated_by / entered_by /
+  causing_person) — Phase-1 self-declared, Phase-2 Keycloak swaps the value with no model change;
+  there is intentionally no ``users`` table.
+- **Failure history** (§3) is the ``test_results`` rows across runs, not a separate table.
+- Candidate **signals** are run-windowed (link to a run), not per-test, in v1.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from uta.models.attribution import Attribution
+from uta.models.classification import Classification
+from uta.models.enums import (
+    AliasState,
+    ChangeType,
+    ErrorType,
+    LifecycleState,
+    PredictedCause,
+    Provenance,
+    TriageStatus,
+)
+from uta.models.identity import TestIdentity
+from uta.models.kb import FailureSignature
+from uta.models.lifecycle import FailureEpisode, TestLifecycle
+from uta.models.result import TestResult
+from uta.models.run import Run, RunShard
+from uta.models.signals import CodeChangeCandidate, DataChangeCandidate
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from uta.db import Base
-
-
-class Run(Base):
-    __tablename__ = "runs"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    build_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    status: Mapped[str] = mapped_column(String(32))
-    url: Mapped[str] = mapped_column(String(512), default="")
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    complete: Mapped[bool] = mapped_column(default=False)
-
-    results: Mapped[list[TestResult]] = relationship(
-        back_populates="run", cascade="all, delete-orphan"
-    )
-
-
-class TestResult(Base):
-    __test__ = False  # not a pytest test class despite the Test* name
-    __tablename__ = "test_results"
-    __table_args__ = (UniqueConstraint("run_id", "test_id", "track", name="uq_run_test_track"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
-    test_id: Mapped[str] = mapped_column(String(512), index=True)  # class_name.name
-    track: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(32))
-    duration: Mapped[float] = mapped_column(Float, default=0.0)
-    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    line: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    owner_initials: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    error_details: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    run: Mapped[Run] = relationship(back_populates="results")
-
-
-__all__ = ["Run", "TestResult"]
+__all__ = [
+    # entities
+    "Run",
+    "RunShard",
+    "TestIdentity",
+    "TestResult",
+    "TestLifecycle",
+    "FailureEpisode",
+    "Attribution",
+    "Classification",
+    "CodeChangeCandidate",
+    "DataChangeCandidate",
+    "FailureSignature",
+    # enums
+    "AliasState",
+    "ChangeType",
+    "ErrorType",
+    "LifecycleState",
+    "PredictedCause",
+    "Provenance",
+    "TriageStatus",
+]
