@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # CI-provided throwaway Postgres (with pg_trgm) for DB-touching tests. This is NOT one of the
+    # three gated external systems — it is infrastructure the runner provides.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: uta
+          POSTGRES_PASSWORD: uta
+          POSTGRES_DB: uta
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U uta"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://uta:uta@localhost:5432/uta
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Test (offline suite — live markers excluded)
+        run: pytest -m "not live" --cov=uta --cov-report=term-missing

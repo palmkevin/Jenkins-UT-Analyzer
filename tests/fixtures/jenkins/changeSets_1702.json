@@ -1,0 +1,34 @@
+{
+  "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+  "changeSets": [
+    {
+      "_class": "hudson.scm.SubversionChangeLogSet",
+      "items": [
+        {
+          "_class": "hudson.scm.SubversionChangeLogSet$LogEntry",
+          "author": {
+            "fullName": "deploy"
+          },
+          "commitId": "135136",
+          "timestamp": 1782491452040,
+          "msg": "LX-0 Adding metas to SVN...",
+          "paths": [
+            {
+              "editType": "edit",
+              "file": "/trunk/lx/uniface96ud6/meta/lxmenuitem.xml"
+            },
+            {
+              "editType": "edit",
+              "file": "/trunk/lx/uniface96ud6/meta/lxtext.xml"
+            },
+            {
+              "editType": "edit",
+              "file": "/trunk/lx/uniface96ud6/meta/lxtextlang.xml"
+            }
+          ]
+        }
+      ],
+      "kind": "svn"
+    }
+  ]
+}
