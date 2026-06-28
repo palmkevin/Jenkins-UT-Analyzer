@@ -19,6 +19,24 @@ from .clock import from_jenkins_millis
 # The UT shard stages, e.g. "devUTs: Execute - permanent_py39".
 _UT_STAGE_RE = re.compile(r"^devUTs: Execute - (permanent(?:_py39)?)$")
 
+# The deferred **unittest console-log** stages report results only in their stage log (no JUnit
+# artifact). Their stage name is ``"<suite> - <track>"``; the suite set is configurable because the
+# pipeline must not treat unrelated ``"<x> - permanent"`` stages (e.g. "Clean logs") as test stages.
+DEFAULT_UNITTEST_SUITES = frozenset(
+    {"LXS", "SMB Pricing", "SMB Transform", "ITF Highlevel", "Uniface deploy unit tests"}
+)
+_LOG_STAGE_RE = re.compile(r"^(?P<suite>.+) - (?P<track>permanent(?:_py39)?)$")
+
+
+@dataclass(frozen=True)
+class LogStage:
+    """A unittest console-log stage to ingest: its flow ``node_id`` (for ``wfapi/log``) + track."""
+
+    node_id: str
+    suite: str
+    track: str
+    status: str
+
 
 @dataclass(frozen=True)
 class ShardTiming:
@@ -77,3 +95,28 @@ def parse_wfapi(payload: dict) -> RunTiming:
         end=end,
         shards=shards,
     )
+
+
+def find_unittest_stages(
+    payload: dict, suites: frozenset[str] | set[str] = DEFAULT_UNITTEST_SUITES
+) -> list[LogStage]:
+    """The console-log UT stages whose suite is in ``suites`` — one per ``(suite, track)``.
+
+    Used by the pipeline to fetch each stage's ``wfapi/log`` and parse it with
+    :mod:`uta.ingest.unittest_log`. The devUTs shard stages are deliberately excluded (they're in
+    the JUnit report and matched by :data:`_UT_STAGE_RE`); only the named ``suites`` are returned.
+    """
+    found: list[LogStage] = []
+    for stage in payload.get("stages", []):
+        m = _LOG_STAGE_RE.match(stage.get("name", ""))
+        if not m or m.group("suite") not in suites:
+            continue
+        found.append(
+            LogStage(
+                node_id=str(stage.get("id", "")),
+                suite=m.group("suite"),
+                track=m.group("track"),
+                status=stage.get("status", ""),
+            )
+        )
+    return found

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     jenkins_user: str = ""
     jenkins_api_token: str = ""
     expected_shards: int = 2
+    # Also ingest the unittest console-log UT stages (no JUnit artifact — parsed from stage logs).
+    ingest_unittest_stages: bool = True
+    unittest_suites: str = "LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests"
 
     # ── Oracle ut_ref (read-only) ────────────────────────────────────────────
     ut_ref_host: str = "lsdb04"
@@ -71,6 +74,10 @@ class Settings(BaseSettings):
     @property
     def email_recipients(self) -> tuple[str, ...]:
         return tuple(r.strip() for r in self.smtp_recipients.split(",") if r.strip())
+
+    @property
+    def unittest_suite_set(self) -> frozenset[str]:
+        return frozenset(s.strip() for s in self.unittest_suites.split(",") if s.strip())
 
 
 def get_settings() -> Settings:
