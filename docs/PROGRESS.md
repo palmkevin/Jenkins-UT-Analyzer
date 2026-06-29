@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-29 (Post-v1 console-log ingest: live-validated fix — step-node + HTML)_
+_Last updated: 2026-06-29 (Post-v1 live-deployment fixes: console-log/JUnit dedup + poller poll-loop & migrate race)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -301,6 +301,38 @@ behind the existing ingest interface — no schema change, no redesign.
       an HTML-wrapped golden fixture `stagelog_1702_295.json`, and tests covering step-node resolution,
       HTML stripping, and the pipeline descend path. Offline gate green (153 passed, 3 skipped); the
       live `test_live_unittest_console_log_stages_parse` now passes.
+
+---
+
+## Post-v1 — fixes from first live deployment (2026-06-29)  ·  `[x]`
+First live run on the VM (empty DB, default config) surfaced two blockers; both fixed.
+- [x] **Duplicate-`(test_id, track)` ingest crash → dedup.** With `INGEST_UNITTEST_STAGES` on
+      (the default), build #1707 hit `UniqueViolation` on `uq_run_test_track` and the whole run
+      rolled back → empty DB → empty triage. Root cause: the unittest **console-log** stages are
+      **not disjoint** from the devUTs nose2 surface — nose2 also collects some of the modules those
+      stages run, so the same test is reported by both sources in one build (#1707: 2 tests —
+      `itf.highlevel.tests.iricell.TestCase.test_query` and
+      `ls.smb.tests.transform.lx.cases.LXTransformTestCases.test_39_specbillgrpid_for_micb_elements`,
+      both `permanent_py39`). Fix: `pipeline._dedupe_cases` collapses duplicate `(test_id, track)`
+      to the **first** occurrence; callers list JUnit (authoritative) first, so JUnit wins and the
+      console-log stages contribute only tests JUnit didn't cover. Logs the dropped keys (no silent
+      truncation). Tests: `_dedupe_cases` first-wins + cross-track preservation, and a pipeline
+      integration test with an overlapping JUnit/console-log case. Offline gate green (156 passed,
+      3 skipped). _Possible follow-up:_ overlapping tests keep JUnit's status+detail; for #1707 the
+      console-log copy carried the richer error text (`KeyError: 'micborgdata'`) while nose2 only said
+      `'test failure'` — a merge (JUnit status + best-available detail) could be considered later.
+- [x] **Poller didn't poll + cold-start migrate race.** The compose `poller` was still the Slice-0
+      placeholder (`uta init-db && sleep infinity`), and both `web` and `poller` ran Alembic at
+      startup → race on `CREATE TABLE alembic_version` (poller crashed `Exited 1`). Fix in
+      `docker-compose.yml`: a one-shot **`migrate`** service brings the schema to head; `web`
+      (now `uvicorn` only) and `poller` (now **`uta poll`**) both `depends_on: migrate
+      [service_completed_successfully]`, so neither races. Verified live: `migrate` exits 0 → web +
+      poller start after → poller polls every 300s, no crash.
+- [ ] **Heads-up (not yet addressed): poller cold-start mass-ingest.** On a truly empty DB,
+      `builds_to_ingest` returns `range(highest+1, latest+1)` = `range(1, latest+1)` and the startup
+      pass would try to ingest **every** historical build oldest-first. Operationally: back-fill a
+      recent baseline via `uta backfill <recent>..<latest>` **before** relying on the poller, or add a
+      floor/window to the cold-start range.
 
 ---
 

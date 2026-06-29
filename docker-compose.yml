@@ -1,6 +1,7 @@
-# Dev stack: web + poller (same image) + db. Postgres is "container now, external later":
-# the app reaches it only via DATABASE_URL, so production points at an external server with no
-# code change (disable the `db` service, set DATABASE_URL).
+# Dev stack: web + poller (same image) + db, with a one-shot `migrate` that brings the schema to
+# head before either app service starts. Postgres is "container now, external later": the app
+# reaches it only via DATABASE_URL, so production points at an external server with no code change
+# (disable the `db` service, set DATABASE_URL).
 services:
   db:
     image: postgres:16
@@ -16,24 +17,39 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot schema migration. web/poller wait for this to *complete* so they never race each other
+  # on `CREATE TABLE alembic_version` (the bug that crashed the poller on a cold start).
+  migrate:
+    build: .
+    env_file: .env
+    command: ["uta", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+
   web:
     build: .
     env_file: .env
+    # Schema is applied by the `migrate` service; this just serves (no init-db, so no migrate race).
+    command: ["uvicorn", "uta.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${WEB_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   poller:
     build: .
     env_file: .env
-    # Slice 0: ensure schema exists, then idle. Milestone 2 replaces this with the APScheduler
-    # poll + ingest loop and the on-demand back-fill command.
-    command: ["sh", "-c", "uta init-db && sleep infinity"]
+    # The scheduled poll + ingest loop (was a Slice-0 `sleep infinity` placeholder).
+    command: ["uta", "poll"]
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
