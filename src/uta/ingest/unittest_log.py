@@ -21,9 +21,17 @@ It never touches the network; feed it the parsed ``wfapi/log`` JSON (or its raw 
 
 from __future__ import annotations
 
+import html
 import re
 
 from .ut_report import TestCaseResult
+
+# Jenkins' Timestamper plugin wraps each console line in HTML: a visible ``<b>HH:MM:SS</b>`` span
+# and a hidden ISO-8601 span, with ``>`` etc. HTML-escaped. The ``wfapi/log`` ``text`` field carries
+# this markup verbatim, so it must be stripped to plain console text before the line patterns match.
+_TS_SPAN_RE = re.compile(r'<span class="timestamp">.*?</span>\s*')
+_HIDDEN_SPAN_RE = re.compile(r'<span style="display: ?none">.*?</span>\s*')
+_TAG_RE = re.compile(r"<[^>]+>")
 
 # A verbose status line: ``test_method (dotted.path) ... <outcome>``.
 _STATUS_RE = re.compile(r"^(?P<name>\w+) \((?P<path>[\w.]+)\) \.\.\. (?P<rest>.+?)\s*$")
@@ -36,6 +44,20 @@ _FRAME_RE = re.compile(r'File "([^"]+)", line (\d+)')
 
 # A parsed traceback block: (details, stack, file_path, line) keyed by (class_name, method).
 _Block = tuple[str | None, str, str | None, int | None]
+
+
+def _strip_console_html(text: str) -> str:
+    """Strip Timestamper HTML markup back to plain console text.
+
+    A no-op fast path for already-plain text (the fixtures, hand-written test strings) so the parser
+    behaves identically whether fed raw or pre-cleaned logs.
+    """
+    if "<" not in text and "&" not in text:
+        return text
+    text = _TS_SPAN_RE.sub("", text)
+    text = _HIDDEN_SPAN_RE.sub("", text)
+    text = _TAG_RE.sub("", text)
+    return html.unescape(text)
 
 
 def _status_of(rest: str) -> str:
@@ -115,7 +137,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
     Per-test durations are not reported in unittest console output, so they are ``0.0``.
     """
     text = log if isinstance(log, str) else (log.get("text") or "")
-    lines = text.splitlines()
+    lines = _strip_console_html(text).splitlines()
 
     outcomes: dict[tuple[str, str], str] = {}
     order: list[tuple[str, str]] = []

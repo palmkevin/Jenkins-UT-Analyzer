@@ -25,7 +25,12 @@ from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.unittest_log import parse_unittest_log
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
-from uta.ingest.wfapi import DEFAULT_UNITTEST_SUITES, find_unittest_stages, parse_wfapi
+from uta.ingest.wfapi import (
+    DEFAULT_UNITTEST_SUITES,
+    find_log_step_node,
+    find_unittest_stages,
+    parse_wfapi,
+)
 from uta.kb.store import record_signatures_for_run
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.models import (
@@ -113,7 +118,10 @@ def ingest_build(
     if ingest_unittest_logs:
         suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
         for stage in find_unittest_stages(wfapi_payload, suites):
-            log = client.stage_log(build, stage.node_id)
+            # The console text is on the stage's Shell Script step node, not the stage node itself.
+            describe = client.stage_describe(build, stage.node_id)
+            step_id = find_log_step_node(describe) or stage.node_id
+            log = client.stage_log(build, step_id)
             cases.extend(parse_unittest_log(log, track=stage.track, suite_name=stage.suite))
 
     with session_scope(session_factory) as session:

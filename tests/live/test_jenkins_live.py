@@ -11,7 +11,7 @@ from uta.config import get_settings
 from uta.ingest.jenkins import HttpJenkinsClient
 from uta.ingest.unittest_log import parse_unittest_log
 from uta.ingest.ut_report import parse_test_report
-from uta.ingest.wfapi import find_unittest_stages, parse_wfapi
+from uta.ingest.wfapi import find_log_step_node, find_unittest_stages, parse_wfapi
 
 pytestmark = pytest.mark.live
 
@@ -42,8 +42,10 @@ def test_live_unittest_console_log_stages_parse(client):
     assert stages, "expected unittest console-log stages on #1702"
     cases = []
     for stage in stages:
+        # The console text is on the stage's Shell Script step node, not the stage node itself.
+        step_id = find_log_step_node(client.stage_describe(BUILD, stage.node_id)) or stage.node_id
         cases += parse_unittest_log(
-            client.stage_log(BUILD, stage.node_id), track=stage.track, suite_name=stage.suite
+            client.stage_log(BUILD, step_id), track=stage.track, suite_name=stage.suite
         )
     # The stages do produce per-test results, both tracks represented.
     assert cases

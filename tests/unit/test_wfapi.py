@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC
 
-from uta.ingest.wfapi import find_unittest_stages, parse_wfapi
+from uta.ingest.wfapi import find_log_step_node, find_unittest_stages, parse_wfapi
 
 
 def test_both_ut_shards_parsed(wfapi_1702):
@@ -61,3 +61,22 @@ def test_find_unittest_stages_respects_a_restricted_suite_set(wfapi_1702):
     stages = find_unittest_stages(wfapi_1702, suites={"SMB Transform"})
     assert {s.suite for s in stages} == {"SMB Transform"}
     assert {s.node_id for s in stages} == {"274", "292"}
+
+
+def test_find_log_step_node_returns_shell_script_child():
+    """The console text lives on the stage's Shell Script step node, not the stage node itself."""
+    describe = {
+        "id": "292",
+        "stageFlowNodes": [
+            {"id": "294", "name": "Set environment variables", "status": "SUCCESS"},
+            {"id": "295", "name": "Shell Script", "status": "FAILED"},
+            {"id": "296", "name": "Set stage result to unstable", "status": "SUCCESS"},
+        ],
+    }
+    assert find_log_step_node(describe) == "295"
+
+
+def test_find_log_step_node_returns_none_without_a_shell_step():
+    """No Shell Script step → None, so the caller falls back to the (empty) stage node."""
+    assert find_log_step_node({"id": "292", "stageFlowNodes": []}) is None
+    assert find_log_step_node({}) is None

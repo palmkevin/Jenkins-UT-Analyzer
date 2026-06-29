@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-27 (Post-v1: unittest console-log ingest)_
+_Last updated: 2026-06-29 (Post-v1 console-log ingest: live-validated fix — step-node + HTML)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -293,6 +293,14 @@ behind the existing ingest interface — no schema change, no redesign.
       non-test exclusion, restricted suite set), and `test_pipeline` (off-by-default, opt-in adds the
       8 console-log results across both tracks + opens/classifies the 2 new failures, re-ingest
       idempotent). ruff lint + format clean.
+- [x] **Live-validated against #1702** — two corrections from real data: (1) the console text lives on
+      the stage's **Shell Script step node**, not the stage node (whose own `wfapi/log` is empty), so
+      ingest descends via `stage_describe` → `wfapi.find_log_step_node` to the step node; (2) the real
+      `wfapi/log` `text` is **Timestamper-HTML-wrapped** (`<span>`-wrapped lines, `&gt;` entities), now
+      stripped to plain console text before parsing. Added `JenkinsClient.stage_describe` (+ fake),
+      an HTML-wrapped golden fixture `stagelog_1702_295.json`, and tests covering step-node resolution,
+      HTML stripping, and the pipeline descend path. Offline gate green (153 passed, 3 skipped); the
+      live `test_live_unittest_console_log_stages_parse` now passes.
 
 ---
 

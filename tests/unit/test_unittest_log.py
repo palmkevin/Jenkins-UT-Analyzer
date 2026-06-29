@@ -88,6 +88,34 @@ def test_outcome_vocabulary_mapping():
     }
 
 
+def test_real_timestamper_html_log_is_stripped_and_parsed():
+    """Real stage log is HTML-wrapped (Timestamper) and non-verbose; the failure still surfaces."""
+    cases = parse_unittest_log(_log(295), track="permanent_py39", suite_name="SMB Transform")
+    (case,) = cases
+    assert case.class_name == "ls.smb.tests.transform.lx.cases.LXTransformTestCases"
+    assert case.name == "test_39_specbillgrpid_for_micb_elements"
+    assert case.status == "FAILED"
+    assert case.error_details == "KeyError: 'REDACTED'"
+    # The first traceback frame is the test's own location, recovered through the markup.
+    assert case.file_path.endswith("/ls/smb/tests/transform/lx/cases.py")
+    assert case.line == 177
+    # The HTML entity and the timestamper markup are gone from the captured stack.
+    assert "<span" not in case.error_stack_trace
+    assert "&gt;" not in case.error_stack_trace
+
+
+def test_html_entities_and_tags_stripped_in_status_lines():
+    """A verbose status line wrapped in Timestamper markup still maps to the right outcome."""
+    text = (
+        '<span class="timestamp"><b>10:00:00</b> </span>'
+        '<span style="display: none">[2026-06-26T08:00:00.000Z]</span> '
+        "t_ok (pkg.mod.Klass) ... ok\n"
+    )
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.test_id == "pkg.mod.Klass.t_ok"
+    assert case.status == "PASSED"
+
+
 def test_empty_log_yields_no_cases():
     assert parse_unittest_log({"text": ""}, track="permanent", suite_name="LXS") == []
 

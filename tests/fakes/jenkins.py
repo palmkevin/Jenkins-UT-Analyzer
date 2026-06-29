@@ -32,6 +32,19 @@ class FakeJenkinsClient:
     def wfapi(self, build: int) -> dict:
         return self._load(f"wfapi_{self._build}.json", build)
 
+    def stage_describe(self, build: int, node_id: str) -> dict:
+        """A stage's flow graph fixture (``stage_describe_<build>_<node>.json``).
+
+        Absent fixture returns no step nodes, so the caller falls back to the stage node (whose log
+        fixture, if any, is served directly) — keeps stages without a committed describe working.
+        """
+        if build != self._build:
+            raise KeyError(f"no fixture for build {build}")
+        path = self._dir / f"stage_describe_{self._build}_{node_id}.json"
+        if not path.exists():
+            return {"id": str(node_id), "stageFlowNodes": []}
+        return json.loads(path.read_text())
+
     def stage_log(self, build: int, node_id: str) -> dict:
         """A stage's console-log fixture (``stagelog_<build>_<node>.json``).
 
