@@ -65,4 +65,19 @@ Two tiers — see the plan's "Hosting & testing strategy":
 - Secrets never committed. Don't add a `live` dependency to the default test path.
 - **No `gh` CLI on this host** (and no `hub`). Don't attempt GitHub PR operations via `gh` — push
   the branch and merge locally (`git merge --no-ff`), or open the PR via the web URL git prints.
+
+## Shell-command hygiene (avoid needless permission prompts)
+The allow-list uses **prefix rules** (`Bash(docker *)`, `Bash(curl *)`, …). A prefix rule only
+auto-approves a command Claude Code can prove is a **single, simple invocation**. Any shell-control
+character makes the command "complex" and it will prompt **even though the prefix matches**:
+- pipes `|`, chains `;` `&&` `||`, redirections (`2>&1`, `2>/dev/null`, `>`);
+- subshell/glob characters `(` `)` `*` — **even inside quotes** (e.g. a `count(*)` in piped SQL).
+
+So prefer **one bare command at a time**:
+- Don't append `2>&1 | tail`/`| grep`/`| head` to trim output — the harness truncates already; run
+  the bare command (`docker compose logs web`, `docker compose build web`).
+- Avoid glob/paren metacharacters in arguments when a plain form exists (`count(1)` not `count(*)`).
+- Chain only when every segment is independently allow-listed — and expect it may still prompt.
+- Hand-editing `.claude/settings.json` mid-session may **not** hot-reload; add live rules via the
+  prompt's "always allow" option or `/permissions`, not a manual file edit.
 </content>

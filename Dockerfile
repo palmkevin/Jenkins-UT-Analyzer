@@ -10,7 +10,12 @@ WORKDIR /app
 # Install deps first for layer caching.
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --upgrade pip && pip install .
+# Alembic config + migrations: `uta migrate` (run at container start) resolves alembic.ini as
+# the repo root one level above src/ (cli.py `parents[2]`). Ship them and install editable so
+# `uta`'s __file__ stays under /app/src, keeping that path valid inside the image.
+COPY alembic.ini ./
+COPY alembic ./alembic
+RUN pip install --upgrade pip && pip install -e .
 
 # tzdata so ZoneInfo("Europe/Luxembourg") resolves inside the slim image.
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
