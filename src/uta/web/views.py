@@ -173,6 +173,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "age_runs": ep.age_runs,
         "age_days": _days_between(ep.first_failure_at, ep.fixed_at or _now()),
         "triage_status": ep.triage_status,
+        "jira_ticket": ep.jira_ticket,
         "predicted_cause": classification.predicted_cause if classification else None,
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
         "suggested_contact": classification.suggested_contact if classification else None,

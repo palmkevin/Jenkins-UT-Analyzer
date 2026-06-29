@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     kb_top_k: int = 5  # similar past cases surfaced per failure (§4)
     # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
     recently_fixed_days: int = 7
+    # Cold-start back-fill: on an empty store, ingest the last N completed builds oldest-first
+    # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
+    # not try to ingest every historical build from #1.
+    backfill_depth: int = 10
+
+    # ── External links (read-only deep links surfaced in the UI) ──────────────
+    # Jira base for ticket links: {jira_base_url}/browse/<TICKET>.
+    jira_base_url: str = "https://labsolution.atlassian.net"
+    # FishEye changelog for SVN revisions: {fisheye_changelog_url}?cs=<revision>.
+    fisheye_changelog_url: str = "https://fisheye.labsolution.lu/changelog/LS_TRUNK"
 
     # ── LLM hypothesis (§4 / Milestone 5) ────────────────────────────────────
     # Provider: "anthropic", "openai", or "" to auto-pick from whichever key is set (Anthropic wins

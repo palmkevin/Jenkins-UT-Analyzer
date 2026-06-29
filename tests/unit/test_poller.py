@@ -25,7 +25,23 @@ class _MultiBuildFake(FakeJenkinsClient):
 
 
 def test_builds_to_ingest_from_empty_store(session_factory):
+    # Fewer completed builds than the depth ⇒ floor at 1 (whole history, oldest-first).
     assert builds_to_ingest(_MultiBuildFake(last_completed=3), session_factory) == [1, 2, 3]
+
+
+def test_cold_start_is_bounded_to_backfill_depth(session_factory):
+    # Empty store + many builds ⇒ only the last `backfill_depth`, oldest-first (age N → age 1).
+    assert builds_to_ingest(
+        _MultiBuildFake(last_completed=100), session_factory, backfill_depth=10
+    ) == list(range(91, 101))
+
+
+def test_backfill_depth_ignored_once_store_is_non_empty(session_factory):
+    poll_once(_MultiBuildFake(last_completed=2), session_factory)
+    # High-water mark present ⇒ incremental above it regardless of depth.
+    assert builds_to_ingest(
+        _MultiBuildFake(last_completed=50), session_factory, backfill_depth=10
+    ) == list(range(3, 51))
 
 
 def test_builds_to_ingest_skips_already_ingested(session_factory):

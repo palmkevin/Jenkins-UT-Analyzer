@@ -173,7 +173,50 @@ def poll() -> None:
         kb_similarity_cutoff=settings.pgtrgm_similarity_cutoff,
         ingest_unittest_logs=settings.ingest_unittest_stages,
         unittest_suites=settings.unittest_suite_set,
+        backfill_depth=settings.backfill_depth,
     )
+
+
+@app.command("bootstrap")
+def bootstrap(depth: int | None = None) -> None:
+    """Populate a fresh store with the last ``depth`` completed builds, oldest-first (live).
+
+    Ingests ``last_completed - depth + 1 … last_completed`` in ascending order so lifecycle and
+    episodes accrue chronologically (age N → age 1). Like ``backfill`` it passes no email sender and
+    no hypothesis provider — back-filled history must not be (re-)mailed. ``depth`` defaults to
+    ``BACKFILL_DEPTH``.
+    """
+    from uta.ingest.pipeline import ingest_build
+
+    settings = get_settings()
+    depth = depth if depth is not None else settings.backfill_depth
+    _run_migrations()
+    engine = make_engine(settings.database_url)
+    assert_pg_trgm(engine)
+    session_factory = make_session_factory(engine)
+    client = _build_client(settings)
+    latest = client.last_completed_build()
+    if latest is None:
+        typer.echo("no completed build to ingest")
+        return
+    feed = _build_feed(settings)
+    lookback, tolerance = _windows(settings)
+    start = max(1, latest - depth + 1)
+    for n in range(start, latest + 1):
+        ingest_build(
+            client,
+            session_factory,
+            n,
+            expected_shards=settings.expected_shards,
+            feed=feed,
+            data_change_lookback=lookback,
+            data_change_tolerance=tolerance,
+            flaky_window_days=settings.flaky_window_days,
+            flaky_threshold=settings.flaky_transition_threshold,
+            ingest_unittest_logs=settings.ingest_unittest_stages,
+            unittest_suites=settings.unittest_suite_set,
+        )
+        typer.echo(f"ingested build #{n}")
 
 
 if __name__ == "__main__":

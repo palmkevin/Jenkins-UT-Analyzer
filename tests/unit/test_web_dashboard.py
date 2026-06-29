@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from tests.builders import get_identity, make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import Base, make_session_factory, session_scope
-from uta.models import TestLifecycle
+from uta.models import CodeChangeCandidate, Run, TestLifecycle
 from uta.web.app import create_app
 
 
@@ -102,6 +102,52 @@ def test_attribute_form_persists_reason(client, seeded):
     assert resp.status_code == 303
     page = client.get(f"/tests/{ident_id}").text
     assert "frank" in page and "flaky fixture" in page
+
+
+def test_jira_ticket_persists_and_links(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        ep_id = lc.current_episode_id
+    client.cookies.set("uta_actor", "erin")
+    resp = client.post(
+        f"/episodes/{ep_id}/attribute",
+        data={"jira_ticket": "ABC-123"},
+        headers={"referer": f"/tests/{ident_id}"},
+    )
+    assert resp.status_code == 303
+    page = client.get(f"/tests/{ident_id}").text
+    assert "https://labsolution.atlassian.net/browse/ABC-123" in page
+    # An empty submission clears it (editable both ways).
+    client.post(
+        f"/episodes/{ep_id}/attribute",
+        data={"jira_ticket": ""},
+        headers={"referer": f"/tests/{ident_id}"},
+    )
+    assert "browse/ABC-123" not in client.get(f"/tests/{ident_id}").text
+
+
+def test_detail_sections_are_collapsible_and_reordered(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    page = client.get(f"/tests/{ident_id}").text
+    # Native collapsibles, with the three important sections expanded by default.
+    assert '<details class="card" open>' in page  # Lifecycle / Latest failure
+    assert '<details class="episodes" open>' in page  # Failure episodes
+    # Failure episodes sits directly after Lifecycle and before Latest failure.
+    assert page.index("Lifecycle") < page.index("Failure episodes") < page.index("Latest failure")
+
+
+def test_svn_revision_links_to_fisheye(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    with session_scope(seeded) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1))
+        s.add(
+            CodeChangeCandidate(
+                run_id=run.id, commit_id="135180", revision="135180", committed_at=run.started_at
+            )
+        )
+    page = client.get(f"/tests/{ident_id}").text
+    assert "https://fisheye.labsolution.lu/changelog/LS_TRUNK?cs=135180" in page
 
 
 def test_run_summary_page_shows_diff_and_results(client):

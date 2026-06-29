@@ -17,8 +17,8 @@
 </p>
 
 {% set lc = record.lifecycle %}
-<div class="card">
-  <h2 style="margin-top:0">Lifecycle</h2>
+<details class="card" open>
+  <summary>Lifecycle</summary>
   {% if not lc %}
     <p class="empty">No lifecycle row.</p>
   {% else %}
@@ -39,12 +39,73 @@
     </form>
   {% endif %}
   {% endif %}
-</div>
+</details>
+
+<details class="episodes" open>
+  <summary>Failure episodes</summary>
+  {% for ep in record.episodes %}
+  <div class="card">
+    <h3 style="margin-top:0">
+      Episode {{ ep.episode_number }}
+      {% if ep.is_open %}<span class="badge removed">open</span>{% else %}<span class="badge">closed</span>{% endif %}
+      {% if lc and ep.id == lc.current_episode_id %}<span class="badge">current</span>{% endif %}
+    </h3>
+    <p class="meta">
+      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at }}<br>
+      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at }}<br>
+      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at or "—" }}<br>
+      Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
+    </p>
+
+    {% if ep.jira_ticket %}
+    <p>Jira ticket:
+      <a href="{{ jira_base_url }}/browse/{{ ep.jira_ticket }}">{{ ep.jira_ticket }}</a>
+    </p>
+    {% endif %}
+
+    <p>
+      <strong>Predicted cause:</strong> {{ ep.predicted_cause or "—" }}
+      {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
+    </p>
+    {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
+    {% if (ep.suggested_contact or ep.llm_hypothesis) %}
+    <form method="post" action="/episodes/{{ ep.id }}/confirm">
+      <button type="submit">Confirm AI suggestion</button>
+    </form>
+    {% endif %}
+
+    <p class="meta">
+      Causing person: {{ ep.causing_person or "—" }} ({{ ep.cause_provenance or "—" }})<br>
+      Reason: {{ ep.reason_text or "—" }} ({{ ep.reason_provenance or "—" }})
+      {% if ep.original_ai_reason %}<br><em>was (AI): {{ ep.original_ai_reason }}</em>{% endif %}
+      {% if ep.validated_by %}<br>Validated by {{ ep.validated_by }} at {{ ep.validated_at }}{% endif %}
+    </p>
+
+    <form method="post" action="/episodes/{{ ep.id }}/attribute">
+      <label>Causing person</label>
+      <input type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
+      <label>Reason for failure</label>
+      <textarea name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
+      <label>Jira ticket</label>
+      <input type="text" name="jira_ticket" value="{{ ep.jira_ticket or '' }}" placeholder="e.g. ABC-123">
+      <label>Triage status</label>
+      <select name="triage_status">
+        {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}
+        <option value="{{ s }}"{% if ep.triage_status == s %} selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <p><button type="submit">Save</button></p>
+    </form>
+  </div>
+  {% else %}
+  <p class="empty">No episodes recorded.</p>
+  {% endfor %}
+</details>
 
 {% set fl = record.flakiness %}
 {% if fl %}
-<div class="card">
-  <h2 style="margin-top:0">Flakiness &amp; history (§3)</h2>
+<details class="card">
+  <summary>Flakiness &amp; history (§3)</summary>
   <p>
     {% if fl.flaky %}<span class="badge flaky">flaky</span>{% endif %}
     {% if fl.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
@@ -58,13 +119,13 @@
     Oscillation score {{ "%.2f"|format(fl.score) }}
     ({{ fl.transitions }} transitions) · fail-rate {{ "%.2f"|format(fl.fail_rate) }}
   </p>
-</div>
+</details>
 {% endif %}
 
 {% set rec = record.recurrence %}
 {% if rec %}
-<div class="card">
-  <h2 style="margin-top:0">Knowledge base (§4)</h2>
+<details class="card">
+  <summary>Knowledge base (§4)</summary>
   <p class="meta">
     This exact failure signature has been seen <strong>{{ rec.occurrence_count }}×</strong>
     {% if rec.exception_type %} ({{ rec.exception_type }}){% endif %};
@@ -90,13 +151,13 @@
   {% else %}
   <p class="empty">No similar past failures yet.</p>
   {% endif %}
-</div>
+</details>
 {% endif %}
 
 {% set lf = record.latest_failure %}
 {% if lf %}
-<div class="card">
-  <h2 style="margin-top:0">Latest failure</h2>
+<details class="card" open>
+  <summary>Latest failure</summary>
   <p class="meta">
     Run {{ run_link(lf.run) }} · track {{ lf.track }} ·
     status <span class="{{ lf.status }}">{{ lf.status }}</span> ·
@@ -106,20 +167,21 @@
   </p>
   {% if lf.error_details %}<p><strong>{{ lf.error_details }}</strong></p>{% endif %}
   {% if lf.error_stack_trace %}<pre><code>{{ lf.error_stack_trace }}</code></pre>{% endif %}
-</div>
+</details>
 {% endif %}
 
 {% set cand = record.candidates %}
 {% if cand and (cand.code or cand.data) %}
-<div class="card">
-  <h2 style="margin-top:0">Candidate changes in the failure window</h2>
+<details class="card">
+  <summary>Candidate changes in the failure window</summary>
   {% if cand.code %}
   <h3 style="font-size:0.92rem">Code changes (SVN)</h3>
   <table>
     <thead><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th></tr></thead>
     <tbody>
       {% for c in cand.code %}
-      <tr><td><code>{{ c.revision }}</code></td><td>{{ c.author or "" }}</td>
+      <tr><td>{% if c.revision %}<a href="{{ fisheye_changelog_url }}?cs={{ c.revision }}"><code>{{ c.revision }}</code></a>{% else %}—{% endif %}</td>
+          <td>{{ c.author or "" }}</td>
           <td>{{ c.committed_at }}</td><td>{{ c.message or "" }}</td></tr>
       {% endfor %}
     </tbody>
@@ -137,58 +199,7 @@
     </tbody>
   </table>
   {% endif %}
-</div>
+</details>
 {% endif %}
-
-<h2>Failure episodes</h2>
-{% for ep in record.episodes %}
-<div class="card">
-  <h3 style="margin-top:0">
-    Episode {{ ep.episode_number }}
-    {% if ep.is_open %}<span class="badge removed">open</span>{% else %}<span class="badge">closed</span>{% endif %}
-    {% if lc and ep.id == lc.current_episode_id %}<span class="badge">current</span>{% endif %}
-  </h3>
-  <p class="meta">
-    First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at }}<br>
-    Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at }}<br>
-    Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at or "—" }}<br>
-    Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
-  </p>
-
-  <p>
-    <strong>Predicted cause:</strong> {{ ep.predicted_cause or "—" }}
-    {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
-  </p>
-  {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
-  {% if (ep.suggested_contact or ep.llm_hypothesis) %}
-  <form method="post" action="/episodes/{{ ep.id }}/confirm">
-    <button type="submit">Confirm AI suggestion</button>
-  </form>
-  {% endif %}
-
-  <p class="meta">
-    Causing person: {{ ep.causing_person or "—" }} ({{ ep.cause_provenance or "—" }})<br>
-    Reason: {{ ep.reason_text or "—" }} ({{ ep.reason_provenance or "—" }})
-    {% if ep.original_ai_reason %}<br><em>was (AI): {{ ep.original_ai_reason }}</em>{% endif %}
-    {% if ep.validated_by %}<br>Validated by {{ ep.validated_by }} at {{ ep.validated_at }}{% endif %}
-  </p>
-
-  <form method="post" action="/episodes/{{ ep.id }}/attribute">
-    <label>Causing person</label>
-    <input type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
-    <label>Reason for failure</label>
-    <textarea name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
-    <label>Triage status</label>
-    <select name="triage_status">
-      {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}
-      <option value="{{ s }}"{% if ep.triage_status == s %} selected{% endif %}>{{ s }}</option>
-      {% endfor %}
-    </select>
-    <p><button type="submit">Save</button></p>
-  </form>
-</div>
-{% else %}
-<p class="empty">No episodes recorded.</p>
-{% endfor %}
 {% endif %}
 {% endblock %}

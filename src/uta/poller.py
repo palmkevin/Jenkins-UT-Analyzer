@@ -29,13 +29,25 @@ def highest_ingested_build(session_factory: sessionmaker[Session]) -> int:
         return session.scalar(select(func.max(Run.build_number))) or 0
 
 
-def builds_to_ingest(client: JenkinsClient, session_factory: sessionmaker[Session]) -> list[int]:
-    """The not-yet-ingested completed builds, oldest first (so lifecycle advances in order)."""
+def builds_to_ingest(
+    client: JenkinsClient,
+    session_factory: sessionmaker[Session],
+    *,
+    backfill_depth: int = 10,
+) -> list[int]:
+    """The not-yet-ingested completed builds, oldest first (so lifecycle advances in order).
+
+    On a **fresh** store (no builds yet) the window is bounded to the last ``backfill_depth``
+    completed builds — ingesting every historical build from #1 is neither wanted nor feasible — so
+    a cold start populates ``latest - backfill_depth + 1 … latest`` oldest-first (age N → age 1).
+    Once the store is non-empty, selection is purely incremental above the high-water mark.
+    """
     latest = client.last_completed_build()
     if latest is None:
         return []
     highest = highest_ingested_build(session_factory)
-    return list(range(highest + 1, latest + 1))
+    start = highest + 1 if highest else max(1, latest - backfill_depth + 1)
+    return list(range(start, latest + 1))
 
 
 def poll_once(
@@ -56,6 +68,7 @@ def poll_once(
     kb_similarity_cutoff: float = 0.3,
     ingest_unittest_logs: bool = False,
     unittest_suites: frozenset[str] | set[str] | None = None,
+    backfill_depth: int = 10,
 ) -> list[int]:
     """Ingest every new completed build once. Returns the build numbers processed.
 
@@ -65,7 +78,7 @@ def poll_once(
     neither is re-done.
     """
     processed: list[int] = []
-    for build in builds_to_ingest(client, session_factory):
+    for build in builds_to_ingest(client, session_factory, backfill_depth=backfill_depth):
         ingest_build(
             client,
             session_factory,
@@ -108,6 +121,7 @@ def run_scheduler(
     kb_similarity_cutoff: float = 0.3,
     ingest_unittest_logs: bool = False,
     unittest_suites: frozenset[str] | set[str] | None = None,
+    backfill_depth: int = 10,
 ) -> None:
     """Block forever, polling on a fixed interval (the ``uta poll`` entrypoint)."""
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -130,6 +144,7 @@ def run_scheduler(
             kb_similarity_cutoff=kb_similarity_cutoff,
             ingest_unittest_logs=ingest_unittest_logs,
             unittest_suites=unittest_suites,
+            backfill_depth=backfill_depth,
         )
 
     scheduler = BlockingScheduler()
