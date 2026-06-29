@@ -63,4 +63,6 @@ Two tiers — see the plan's "Hosting & testing strategy":
   every key. Postgres reached only via `DATABASE_URL` ("container now, external later").
 - Run: `docker compose up` (services `web` / `poller` / `db`); back-fill via the CLI.
 - Secrets never committed. Don't add a `live` dependency to the default test path.
+- **No `gh` CLI on this host** (and no `hub`). Don't attempt GitHub PR operations via `gh` — push
+  the branch and merge locally (`git merge --no-ff`), or open the PR via the web URL git prints.
 </content>
