@@ -87,6 +87,44 @@ def test_ingest_unittest_logs_adds_console_log_results(session_factory):
         assert s.scalar(select(func.count()).select_from(Classification)) == 9
 
 
+class _DescendingFakeJenkins(FakeJenkinsClient):
+    """SMB Transform py39 stage (292) whose console text lives on a Shell Script step node (295).
+
+    Mirrors the real job: the stage node's own log is empty, so ingest must descend via
+    ``stage_describe`` to the step node, whose log is HTML-wrapped (Timestamper).
+    """
+
+    def stage_describe(self, build: int, node_id: str) -> dict:
+        if node_id == "292":
+            return {
+                "id": "292",
+                "stageFlowNodes": [{"id": "295", "name": "Shell Script", "status": "FAILED"}],
+            }
+        return super().stage_describe(build, node_id)
+
+
+def test_ingest_descends_to_step_node_and_parses_html_log(session_factory):
+    """The real flow: stage → Shell Script step node → HTML-wrapped log → the failure surfaces."""
+    ingest_build(
+        _DescendingFakeJenkins(),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        # py39 descended to step node 295 (1 failure); permanent fell back to stage node 274 (4).
+        failing = s.scalars(
+            select(TestLifecycle)
+            .join(TestLifecycle.identity)
+            .where(TestIdentity.canonical_name.like("ls.smb.tests.transform.%"))
+        ).all()
+        assert {lc.identity.canonical_name for lc in failing} == {
+            "ls.smb.tests.transform.lx.cases.LXTransformTestCases.test_39_specbillgrpid_for_micb_elements"
+        }
+        assert all(lc.state == LifecycleState.FAILING for lc in failing)
+
+
 def test_unittest_log_reingest_is_idempotent(session_factory):
     """Re-ingesting with the console-log stages on doesn't duplicate results or episodes."""
     for _ in range(2):

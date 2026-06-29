@@ -120,3 +120,20 @@ def find_unittest_stages(
             )
         )
     return found
+
+
+# The step that runs the tests and prints the console output. The stage node's own ``wfapi/log`` is
+# empty; the text lives on this child step node.
+_LOG_STEP_NAME = "Shell Script"
+
+
+def find_log_step_node(describe_payload: dict, step_name: str = _LOG_STEP_NAME) -> str | None:
+    """The ``node_id`` of the stage's step that holds the console log (its ``Shell Script`` step).
+
+    Returns the first matching ``stageFlowNodes`` entry's id, or ``None`` if the stage has no such
+    step (then the caller falls back to the stage node, which simply yields an empty log).
+    """
+    for node in describe_payload.get("stageFlowNodes", []):
+        if node.get("name") == step_name:
+            return str(node.get("id", "")) or None
+    return None

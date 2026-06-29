@@ -21,6 +21,7 @@ class JenkinsClient(Protocol):
     def test_report(self, build: int) -> dict: ...
     def change_sets(self, build: int) -> dict: ...
     def wfapi(self, build: int) -> dict: ...
+    def stage_describe(self, build: int, node_id: str) -> dict: ...
     def stage_log(self, build: int, node_id: str) -> dict: ...
     def last_completed_build(self) -> int | None: ...
 
@@ -60,6 +61,14 @@ class HttpJenkinsClient:
 
     def wfapi(self, build: int) -> dict:
         return self._get_json(f"{build}/wfapi/describe")
+
+    def stage_describe(self, build: int, node_id: str) -> dict:
+        """A stage's flow graph — its child step nodes (``stageFlowNodes``).
+
+        The unittest console-log text lives on the stage's *Shell Script* step node, not the stage
+        node itself (whose own ``wfapi/log`` is empty), so the ingest descends here to find it.
+        """
+        return self._get_json(f"{build}/execution/node/{node_id}/wfapi/describe")
 
     def stage_log(self, build: int, node_id: str) -> dict:
         """One pipeline stage's console log (the unittest console-log UT stages live only here)."""
