@@ -9,6 +9,7 @@ them, and re-runs the analysis (which is itself idempotent per baseline+run).
 from __future__ import annotations
 
 import json
+import logging
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -45,6 +46,39 @@ from uta.refdb.oracle import TrackingFeed
 
 _PASSED = frozenset({"PASSED", "FIXED"})
 _FAILED = frozenset({"FAILED", "REGRESSION"})
+
+logger = logging.getLogger(__name__)
+
+
+def _dedupe_cases(cases: list[TestCaseResult]) -> list[TestCaseResult]:
+    """Collapse duplicate ``(test_id, track)`` results to one, keeping the first occurrence.
+
+    A result is keyed ``(run, test, track)`` (``uq_run_test_track``), so two cases sharing a
+    ``(test_id, track)`` would violate that constraint and roll back the whole ingest. This happens
+    because the unittest **console-log** stages are not disjoint from the devUTs nose2 surface:
+    nose2 also collects some of the modules those stages run (e.g. ``itf.highlevel.tests.iricell``,
+    ``ls.smb.tests.transform.lx.cases``), so the same test is reported by both sources in one build.
+
+    The JUnit report is the **authoritative** surface (callers list its cases first), so first-wins
+    keeps the JUnit result and lets the console-log stages contribute only tests JUnit didn't cover.
+    """
+    seen: set[tuple[str, str]] = set()
+    deduped: list[TestCaseResult] = []
+    dropped: list[tuple[str, str]] = []
+    for case in cases:
+        key = (case.test_id, case.track)
+        if key in seen:
+            dropped.append(key)
+            continue
+        seen.add(key)
+        deduped.append(case)
+    if dropped:
+        logger.info(
+            "dropped %d duplicate (test_id, track) result(s) before persist: %s",
+            len(dropped),
+            ", ".join(f"{t}@{k}" for t, k in dropped[:10]),
+        )
+    return deduped
 
 
 def _get_or_create_identity(
@@ -123,6 +157,10 @@ def ingest_build(
             step_id = find_log_step_node(describe) or stage.node_id
             log = client.stage_log(build, step_id)
             cases.extend(parse_unittest_log(log, track=stage.track, suite_name=stage.suite))
+
+    # The two ingest sources overlap on a few tests (nose2 also collects some console-log modules),
+    # so collapse duplicate (test_id, track) results before persist — JUnit (listed first) wins.
+    cases = _dedupe_cases(cases)
 
     with session_scope(session_factory) as session:
         run = session.scalar(select(Run).where(Run.build_number == build))

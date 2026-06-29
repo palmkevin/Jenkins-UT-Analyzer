@@ -9,8 +9,8 @@ from sqlalchemy import func, select
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
 from tests.fakes.email import RecordingEmailSender
 from uta.db import session_scope
-from uta.ingest.pipeline import data_change_window, ingest_build
-from uta.ingest.ut_report import FAILED_STATUSES
+from uta.ingest.pipeline import _dedupe_cases, data_change_window, ingest_build
+from uta.ingest.ut_report import FAILED_STATUSES, TestCaseResult
 from uta.models import (
     Classification,
     CodeChangeCandidate,
@@ -246,3 +246,92 @@ def test_ingest_default_leaves_hypothesis_null(session_factory):
     with session_scope(session_factory) as s:
         hyps = s.scalars(select(Classification.llm_hypothesis)).all()
         assert hyps and all(h is None for h in hyps)
+
+
+def _case(class_name: str, name: str, track: str, *, status: str = "PASSED", duration: float = 0.0):
+    return TestCaseResult(
+        track=track,
+        suite_name="s",
+        class_name=class_name,
+        name=name,
+        status=status,
+        duration=duration,
+        age=0,
+        failed_since=0,
+        error_details=None,
+        error_stack_trace=None,
+        file_path=None,
+        line=None,
+    )
+
+
+def test_dedupe_cases_first_wins_within_track():
+    """Two cases sharing (test_id, track) collapse to one — the first (authoritative JUnit) wins."""
+    junit = _case("pkg.Cls", "test_a", "permanent_py39", status="REGRESSION", duration=1.5)
+    console = _case("pkg.Cls", "test_a", "permanent_py39", status="FAILED", duration=0.0)
+    other = _case("pkg.Cls", "test_b", "permanent_py39")
+    deduped = _dedupe_cases([junit, console, other])
+    assert len(deduped) == 2
+    kept = next(c for c in deduped if c.name == "test_a")
+    assert kept.status == "REGRESSION" and kept.duration == 1.5  # JUnit (first) kept, not console
+
+
+def test_dedupe_cases_keeps_same_test_in_both_tracks():
+    """The same test in different tracks is two distinct identities — never collapsed."""
+    perm = _case("pkg.Cls", "test_a", "permanent")
+    py39 = _case("pkg.Cls", "test_a", "permanent_py39")
+    assert len(_dedupe_cases([perm, py39])) == 2
+
+
+class _OverlappingFakeJenkins(FakeJenkinsClient):
+    """A JUnit report that re-reports a test the SMB Transform console-log stage also emits (py39).
+
+    Mirrors the real #1707 overlap: nose2 collects some of the same modules the console-log stages
+    run, so both sources report the test in one build. The injected case carries a distinctive
+    duration so the test can assert the JUnit copy (not the duration-0.0 console copy) survives.
+    """
+
+    def test_report(self, build: int) -> dict:
+        report = super().test_report(build)
+        report = {**report, "suites": [*report.get("suites", [])]}
+        report["suites"].append(
+            {
+                "name": "overlap",
+                "enclosingBlockNames": ["permanent_py39"],
+                "cases": [
+                    {
+                        "className": "smb.transform.test_pricing.PricingTransformTest",
+                        "name": "test_round_half_even",
+                        "status": "REGRESSION",
+                        "duration": 2.5,
+                    }
+                ],
+            }
+        )
+        return report
+
+
+def test_ingest_dedupes_junit_console_log_overlap(session_factory):
+    """An overlapping (test_id, track) across the two sources must not break the constraint."""
+    ingest_build(
+        _OverlappingFakeJenkins(),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        # 15 JUnit (14 + injected) + 8 console-log − 1 overlap collapsed = 22.
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 22
+        # Exactly one row for the overlap, and it's the JUnit copy (duration 2.5, not console 0.0).
+        overlap = s.scalars(
+            select(TestResult)
+            .join(TestResult.identity)
+            .where(
+                TestIdentity.canonical_name
+                == "smb.transform.test_pricing.PricingTransformTest.test_round_half_even",
+                TestResult.track == "permanent_py39",
+            )
+        ).all()
+        assert len(overlap) == 1
+        assert overlap[0].duration == 2.5
