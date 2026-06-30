@@ -47,7 +47,13 @@ def create_app(session_factory=None) -> FastAPI:
     app = FastAPI(title="Jenkins UT Analyzer", lifespan=lifespan)
 
     def render(request: Request, template: str, context: dict) -> HTMLResponse:
-        context = {**context, "actor": current_actor(request)}
+        cfg = get_settings()
+        context = {
+            **context,
+            "actor": current_actor(request),
+            "jira_base_url": cfg.jira_base_url,
+            "fisheye_changelog_url": cfg.fisheye_changelog_url,
+        }
         return _TEMPLATES.TemplateResponse(request, template, context)
 
     def back(request: Request, fallback: str = "/") -> RedirectResponse:
@@ -136,6 +142,7 @@ def create_app(session_factory=None) -> FastAPI:
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         triage_status: str = Form(""),
+        jira_ticket: str = Form(""),
     ):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
@@ -146,6 +153,7 @@ def create_app(session_factory=None) -> FastAPI:
                 causing_person=causing_person,
                 reason_text=reason_text,
                 triage_status=triage_status or None,
+                jira_ticket=jira_ticket,
             )
         return back(request)
 

@@ -125,11 +125,15 @@ def set_attribution(
     causing_person: str | None = None,
     reason_text: str | None = None,
     triage_status: str | None = None,
+    jira_ticket: str | None = None,
 ) -> Attribution | None:
-    """Human edit of cause/reason/triage for an episode, deriving provenance from the AI suggestion.
+    """Human edit of cause/reason/triage/Jira-ticket, deriving provenance from the AI suggestion.
 
-    Only non-empty submitted fields are written (so a partial form never clears the others).
-    ``triage_status`` is set on the episode. Returns None if the episode doesn't exist.
+    Only non-empty submitted ``causing_person``/``reason_text`` are written (so a partial form
+    never clears the others). ``triage_status`` is set on the episode. ``jira_ticket`` is also set
+    directly on the episode — a submitted value is trimmed and stored, an empty submission clears it
+    (so the ticket is editable both ways); it is not a provenance-tracked conclusion, so it does not
+    touch the Attribution row. Returns None if the episode doesn't exist.
     """
     episode = session.get(FailureEpisode, episode_id)
     if episode is None:
@@ -161,6 +165,9 @@ def set_attribution(
 
     if triage_status:
         episode.triage_status = triage_status
+
+    if jira_ticket is not None:
+        episode.jira_ticket = jira_ticket.strip() or None
 
     if touched:
         attr.entered_by = actor

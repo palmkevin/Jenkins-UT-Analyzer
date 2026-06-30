@@ -178,7 +178,8 @@ explicitly requested are marked ★; the rest are suggestions to consider.
   KB on day one would be a fabricated number, so it is deliberately deferred rather than guessed.
 - **Candidate code changes** — revisions from the **SVN update step** that fall inside the run's
   time window, with committer(s) and changed paths, presented **chronologically** (relevance
-  ranking is the later enhancement noted above).
+  ranking is the later enhancement noted above). Each revision is a deep link into FishEye
+  (`{FISHEYE_CHANGELOG_URL}?cs=<revision>`).
 - **Candidate data changes** — `ut_ref` tracking-table changes inside the run's
   time window, with the **change author** and change timestamp.
 - **UT ownership** — the test's main developer from SVN history/blame, as a fallback contact.
@@ -187,6 +188,9 @@ explicitly requested are marked ★; the rest are suggestions to consider.
 - ★ **Causing person** — **entered by the person in charge** (may differ from the predicted one).
 - ★ **Reason for failure** — **entered by the person in charge**; free text. This is the key input
   that feeds the knowledge base (§4).
+- **Jira ticket** — **entered by the person in charge**; the ticket the problem is tracked under,
+  stored on the episode and rendered as a deep link into Jira (`{JIRA_BASE_URL}/browse/<TICKET>`).
+  Plain reference, no provenance tier (it is a pointer, not a derived conclusion).
 - **Conclusion provenance + confidence tier** — every cause/reason carries *how it was reached*,
   because the knowledge base (§4) weights entries by this, not just by their text:
   - `AI_UNCONFIRMED` — LLM/deterministic suggestion, nobody has validated it yet (treated as a
@@ -357,7 +361,8 @@ knowledge into a growing, queryable asset:
 - **Classifications** — predicted cause, confidence, suggested contact, LLM hypothesis.
 - **Users** — an `actor` identity on every human action (Phase 1: `test-user`; Phase 2: Keycloak
   principal) — a single field shared by acknowledgements, confirmations, and entered reasons.
-- **Human input** — causing person, reason text, triage status, **acknowledger + acknowledged-at**,
+- **Human input** — causing person, reason text, triage status, **Jira ticket**, **acknowledger +
+  acknowledged-at**,
   and for each conclusion its **provenance tier** (`AI_UNCONFIRMED` / `AI_CONFIRMED` /
   `HUMAN_CORRECTED` / `HUMAN_ENTERED`), the **original AI value** when corrected, and **who
   confirmed/corrected it + when**.

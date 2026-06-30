@@ -91,6 +91,8 @@ class FailureEpisode(Base, TimestampMixin):
     is_open: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     age_runs: Mapped[int] = mapped_column(Integer, default=0)
     triage_status: Mapped[str] = mapped_column(String(16), default=TriageStatus.UNTRIAGED)
+    # Human-entered Jira ticket this episode is tracked under (e.g. "ABC-123"); links into Jira.
+    jira_ticket: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     identity: Mapped[TestIdentity] = relationship(
         back_populates="episodes", foreign_keys=[test_identity_id]

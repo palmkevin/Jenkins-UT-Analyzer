@@ -61,7 +61,11 @@ Two tiers — see the plan's "Hosting & testing strategy":
 - Stack: FastAPI + HTMX/Jinja, SQLAlchemy 2.x + Alembic, `psycopg` (PG), `oracledb` (thin), ruff.
 - Config via env (12-factor) → typed settings object; `.env` is gitignored, `.env.example` documents
   every key. Postgres reached only via `DATABASE_URL` ("container now, external later").
-- Run: `docker compose up` (services `web` / `poller` / `db`); back-fill via the CLI.
+- Run: `docker compose up` (services `web` / `poller` / `db`); back-fill via the CLI. On a **fresh
+  (empty) store** the poller does **not** ingest from build #1 — `builds_to_ingest` floors the
+  cold-start window to the last `BACKFILL_DEPTH` builds (default 10), oldest-first; `uta bootstrap
+  [--depth N]` does the same on demand. Once the store is non-empty, selection is incremental above
+  the high-water mark.
 - Secrets never committed. Don't add a `live` dependency to the default test path.
 - **No `gh` CLI on this host** (and no `hub`). Don't attempt GitHub PR operations via `gh` — push
   the branch and merge locally (`git merge --no-ff`), or open the PR via the web URL git prints.

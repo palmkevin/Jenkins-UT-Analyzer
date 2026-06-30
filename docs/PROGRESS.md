@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-29 (Post-v1 live-deployment fixes: console-log/JUnit dedup + poller poll-loop & migrate race)_
+_Last updated: 2026-06-29 (Post-v1: cold-start back-fill window, Jira ticket on episodes, collapsible test-detail page + FishEye links)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -328,11 +328,31 @@ First live run on the VM (empty DB, default config) surfaced two blockers; both 
       (now `uvicorn` only) and `poller` (now **`uta poll`**) both `depends_on: migrate
       [service_completed_successfully]`, so neither races. Verified live: `migrate` exits 0 → web +
       poller start after → poller polls every 300s, no crash.
-- [ ] **Heads-up (not yet addressed): poller cold-start mass-ingest.** On a truly empty DB,
-      `builds_to_ingest` returns `range(highest+1, latest+1)` = `range(1, latest+1)` and the startup
-      pass would try to ingest **every** historical build oldest-first. Operationally: back-fill a
-      recent baseline via `uta backfill <recent>..<latest>` **before** relying on the poller, or add a
-      floor/window to the cold-start range.
+- [x] **Poller cold-start mass-ingest → bounded window.** See the next section — `builds_to_ingest`
+      now floors a fresh-store window to the last `BACKFILL_DEPTH` builds.
+
+---
+
+## Post-v1 — cold-start window, Jira ticket, collapsible detail page (2026-06-29)  ·  `[x]`
+Three enhancements; offline gate green, no new permissions needed (SQLite-backed tests).
+- [x] **Cold-start back-fill window.** `poller.builds_to_ingest` now floors the start on an **empty**
+      store to `max(1, latest - backfill_depth + 1)` (was `range(1, latest+1)` — would ingest every
+      historical build). Result: a fresh DB bootstraps the last `BACKFILL_DEPTH` builds **oldest-first**
+      (age N → age 1) so lifecycle/episodes accrue chronologically, then polling is incremental above
+      the high-water mark as before (depth ignored once non-empty). `BACKFILL_DEPTH` (default 10)
+      threaded through `poll_once`/`run_scheduler`/`uta poll`. New `uta bootstrap [--depth N]` does the
+      same window on demand (no email/LLM, like `backfill`). Tests: empty→last-N oldest-first,
+      empty-with-fewer→from 1, non-empty→unchanged.
+- [x] **Jira ticket on failure episodes.** New nullable `failure_episodes.jira_ticket` (migration
+      `4f1a2b3c5d6e`), human-entered via the per-episode Save form alongside cause/reason/triage
+      (`set_attribution(jira_ticket=…)` sets it directly on the episode — not a provenance-tracked
+      Attribution conclusion; empty submission clears it). Rendered as a link to
+      `{JIRA_BASE_URL}/browse/<TICKET>`.
+- [x] **Test-detail page UX.** Every section is now a native `<details>/<summary>` collapsible (no
+      JS). Default-open: **Lifecycle**, **Failure episodes**, **Latest failure**; collapsed: Flakiness,
+      Knowledge base, Candidate changes. **Failure episodes** moved to directly after **Lifecycle**.
+      SVN revisions link into FishEye (`{FISHEYE_CHANGELOG_URL}?cs=<rev>`). New config: `JIRA_BASE_URL`,
+      `FISHEYE_CHANGELOG_URL` (passed into every page via the `render` context).
 
 ---
 

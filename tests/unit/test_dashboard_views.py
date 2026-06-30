@@ -14,7 +14,7 @@ from sqlalchemy import select
 from tests.builders import get_identity, make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.models import Classification, TestLifecycle
+from uta.models import Classification, FailureEpisode, TestLifecycle
 from uta.models.enums import PredictedCause, Provenance
 from uta.web import actions, views
 
@@ -189,6 +189,23 @@ def test_set_attribution_correction_retains_original_ai(session_factory):
         assert attr.original_ai_cause == "dev-dave"
         assert attr.reason_provenance == Provenance.HUMAN_CORRECTED
         assert attr.original_ai_reason == "trunk commit r123"
+
+
+def test_set_attribution_sets_and_clears_jira_ticket(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_id = _episode_id(s, "t")
+        ep = s.get(FailureEpisode, ep_id)
+        # Set a ticket (trimmed); it lives on the episode, not the Attribution row.
+        actions.set_attribution(s, ep_id, "bob", jira_ticket="  ABC-123  ")
+        assert ep.jira_ticket == "ABC-123"
+        # Omitting the field leaves it untouched…
+        actions.set_attribution(s, ep_id, "bob", causing_person="carol")
+        assert ep.jira_ticket == "ABC-123"
+        # …and an empty submission clears it.
+        actions.set_attribution(s, ep_id, "bob", jira_ticket="")
+        assert ep.jira_ticket is None
 
 
 def test_acknowledge_unknown_identity_returns_false(session_factory):
