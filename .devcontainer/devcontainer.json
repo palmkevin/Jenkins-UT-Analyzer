@@ -1,0 +1,45 @@
+{
+  "name": "Jenkins-UT-Analyzer",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.dev.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspaces/Jenkins-UT-Analyzer",
+
+  // Only `db` auto-starts with the `dev` service; web/poller/migrate stay down for a fast inner loop.
+  "runServices": ["db"],
+
+  "features": {
+    // Installs the docker CLI + compose plugin and binds the VM's /var/run/docker.sock, so
+    // `docker compose up` from inside the container drives the VM daemon (the full prod-like stack).
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    // Installs the Claude Code CLI in the container (native binary, on PATH) + registers the
+    // extension. The VS Code panel bundles its own CLI, but this makes `claude` work in the
+    // integrated terminal too. Auto-updates by default.
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  // Persist Claude Code's login/settings/history across container rebuilds. The base image runs as
+  // user `vscode` (home /home/vscode); without this, ~/.claude is discarded and you re-sign-in each
+  // rebuild. First run: `claude` in a terminal to authenticate (browser flow).
+  "mounts": [
+    "source=claude-code-config,target=/home/vscode/.claude,type=volume"
+  ],
+
+  "remoteEnv": { "TZ": "Europe/Luxembourg" },
+
+  // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
+  "forwardPorts": [8000, 8088],
+
+  // Match CI's install exactly (.github/workflows/ci.yml), then bring the schema to head against `db`.
+  "postCreateCommand": "pip install -e '.[dev]' && uta migrate",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "[python]": { "editor.defaultFormatter": "charliermarsh.ruff" }
+      }
+    }
+  }
+}

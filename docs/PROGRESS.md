@@ -45,6 +45,11 @@ _Last updated: 2026-06-29 (Post-v1: cold-start back-fill window, Jira ticket on 
       `docker-compose.yml` (web/poller/db, healthchecks, `WEB_PORT` override), `.dockerignore`.
 - [x] **GitHub Actions CI** (`.github/workflows/ci.yml`): ruff → `pytest -m "not live"` → coverage,
       with a `services:` Postgres.
+- [x] **Devcontainer** (`.devcontainer/`): reuses `docker-compose.yml` + a `docker-compose.dev.yml`
+      override adding a `dev` workspace service (mcr Python 3.12) + isolated `db`, under its own
+      compose project `jenkins-ut-analyzer-dev` so it never touches a running deployment. Runs on the
+      VM via Remote-SSH (keeps Jenkins/Oracle reach); docker-outside-of-docker feature enables the
+      full stack from inside. `postCreateCommand`: `pip install -e '.[dev]'` (CI parity) + `uta migrate`.
 - [x] **Live end-to-end verified** (2026-06-27): `docker compose up`, `uta backfill 1702` ingested
       **25,592** results (counts match source), run window UTC-normalized (17:08→18:41Z),
       `/runs/1702` renders. **`V_TRACKING` tz proven**: latest change naive-local 15:46 → 13:46Z;

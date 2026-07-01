@@ -41,6 +41,27 @@ uta poll                      # run the scheduled poller (live path: email + LLM
 Only `uta poll` (the live path) sends email and calls the LLM; **`uta backfill` does neither**, so
 re-processing history never re-alerts or re-hypothesises.
 
+## Develop in a devcontainer
+
+For a reproducible dev environment, open the repo in a VS Code **devcontainer** ([`.devcontainer/`](.devcontainer/)).
+It must run **on the VM** (via **Remote-SSH** → *Reopen in Container*) so it keeps the network route to
+Jenkins/Oracle that live `uta poll` / `uta backfill` need.
+
+```
+Remote-SSH to the VM  →  Reopen in Container  →  pytest -m "not live"
+```
+
+The devcontainer reuses [`docker-compose.yml`](docker-compose.yml) plus
+[`.devcontainer/docker-compose.dev.yml`](.devcontainer/docker-compose.dev.yml), which adds a `dev`
+workspace service (Python 3.12) alongside a fresh `db`. It runs under an **isolated compose project**
+(`jenkins-ut-analyzer-dev`), so it never touches a separately-running `docker compose up` deployment.
+`postCreateCommand` runs `pip install -e '.[dev]'` (matching CI) and `uta migrate`. Only `db` auto-starts;
+bring the full prod-like stack up from inside on demand:
+
+```bash
+docker compose -f docker-compose.yml -f .devcontainer/docker-compose.dev.yml up web poller
+```
+
 ## Configuration
 
 All configuration is **12-factor environment variables**, parsed into a typed settings object

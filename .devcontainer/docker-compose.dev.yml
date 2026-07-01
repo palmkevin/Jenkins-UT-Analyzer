@@ -1,0 +1,30 @@
+# Devcontainer override: adds a `dev` workspace service to the existing stack in ../docker-compose.yml.
+#
+# Path note: devcontainer.json lists ../docker-compose.yml FIRST, so the compose *project directory*
+# is the repo root — relative paths below (`.`, `.env`) resolve from the repo root, not this folder.
+#
+# VS Code attaches to `dev`; `runServices` in devcontainer.json keeps only `db` up alongside it, so
+# migrate/web/poller stay down for the fast inner loop. Bring the full prod-like stack up on demand:
+#   docker compose -f docker-compose.yml -f .devcontainer/docker-compose.dev.yml up web poller
+#
+# `name` forces a project SEPARATE from the running deployment (which is project
+# `jenkins-ut-analyzer`), so the devcontainer's db/volumes/network are isolated — closing or
+# rebuilding the container can never stop the live poller/web or touch their data.
+name: jenkins-ut-analyzer-dev
+services:
+  dev:
+    # Prebuilt devcontainer image: Python 3.12 + git + build tools + non-root `vscode` user + tzdata.
+    # No custom Dockerfile needed; dev-only deps come from postCreateCommand (`pip install -e '.[dev]'`).
+    image: mcr.microsoft.com/devcontainers/python:1-3.12-bookworm
+    volumes:
+      - .:/workspaces/Jenkins-UT-Analyzer:cached
+    command: sleep infinity
+    env_file: .env
+    environment:
+      # Load-bearing: zoneinfo/clock normalization (Europe/Luxembourg, DST-aware) — see CLAUDE.md.
+      TZ: Europe/Luxembourg
+      # Reach the compose `db` service by name (overrides any container-host value from .env).
+      DATABASE_URL: postgresql+psycopg://uta:uta@db:5432/uta
+    depends_on:
+      db:
+        condition: service_healthy
