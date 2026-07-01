@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-06-29 (Post-v1: cold-start back-fill window, Jira ticket on episodes, collapsible test-detail page + FishEye links)_
+_Last updated: 2026-07-01 (Post-v1: ingest performance — batched N+1s, bulk insert, deferred flaky recompute, timing logs)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -353,6 +353,35 @@ Three enhancements; offline gate green, no new permissions needed (SQLite-backed
       Knowledge base, Candidate changes. **Failure episodes** moved to directly after **Lifecycle**.
       SVN revisions link into FishEye (`{FISHEYE_CHANGELOG_URL}?cs=<rev>`). New config: `JIRA_BASE_URL`,
       `FISHEYE_CHANGELOG_URL` (passed into every page via the `render` context).
+
+---
+
+## Post-v1 — ingest performance (2026-07-01)  ·  `[x]`
+The cold-start refill of 10 builds (~25.6k results/build, ~1k failing tests/build) took ~4–6
+min/build; profiling showed the cost was **per-test N+1 round-trips + row-by-row ORM inserts**, not
+slow queries. Optimized to **~13s/build** (≈20–25× faster; full 10-build refill ~2–3 min). Verified
+by wiping + refilling the dev Postgres and reading the new per-build timing logs.
+- [x] **Defer flaky recompute during backfill.** `recompute_flaky_flags` walked all ~2,135 lifecycle
+      rows (one query each) **every build**; flags are display-only and derived from results, so
+      `ingest_build` gained `recompute_flaky=True` and `backfill`/`bootstrap` pass `False` per build
+      then recompute **once** after the loop. (`flaky=0.0` per build in the timing logs.)
+- [x] **Batch the per-test N+1s.** Identity resolution (one chunked `canonical_name IN (...)`
+      preload, was ~12.8k SELECTs/build); `apply_run` (preload lifecycles/open-episodes/counts +
+      one failing-run-starts scan for age, single flush — `lifecycle` phase now ~0.7s);
+      `record_signatures_for_run` (chunked hash preload + batched `signature_id` write-back + one
+      grouped aggregate recompute).
+- [x] **Bulk-insert results.** `session.execute(insert(TestResult), rows)` instead of ~25.6k ORM
+      appends; the signature step now reads the run's failing results via query (not `run.results`,
+      which the Core insert leaves unpopulated). `persist` is now the dominant phase (~7–10s of real
+      write + index maintenance) — the N+1 pathology is gone.
+- [x] **Composite index** `ix_test_results_identity_run (test_identity_id, run_id)` (migration
+      `a1b2c3d4e5f6`) for the identity→run joins.
+- [x] **Per-build timing logs** in `ingest_build` (`fetch/parse/persist/signatures/lifecycle/
+      classify/flaky`). `alembic/env.py` now passes `disable_existing_loggers=False` and the CLI
+      re-asserts the `uta` logger to INFO after migrations so the timing lines actually emit.
+- [x] **Fixed a pre-existing date-sensitive test** (`test_web_m4::test_flaky_leaderboard_…`): its
+      fixture used a fixed 2026-06-01 epoch that aged out of the 30-day flaky window, failing on
+      later run dates. Runs are now anchored to *now*. (Unrelated to the perf work; found via the gate.)
 
 ---
 

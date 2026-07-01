@@ -5,6 +5,8 @@ Also asserts the per-test record now carries the flakiness + recurrence cards.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -39,11 +41,19 @@ def session_factory():
 
 @pytest.fixture
 def seeded(session_factory):
-    """An oscillating test (for the leaderboard) and a recorded signature (for KB search)."""
+    """An oscillating test (for the leaderboard) and a recorded signature (for KB search).
+
+    Runs are anchored to *now* (not a fixed epoch) so they always fall inside the flaky
+    oscillation window — the leaderboard route computes that window from the real clock, so a
+    fixed past date would silently age out and empty the board on later run dates.
+    """
+    base = datetime.now(UTC) - timedelta(days=2)
     with session_scope(session_factory) as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
             errors = {"flap.test": ("test failure", _STACK.format(line=b, msg="1 != 2"))}
-            run = make_run(s, b, {"flap.test": st}, errors=errors)
+            run = make_run(
+                s, b, {"flap.test": st}, errors=errors, started_at=base + timedelta(hours=b)
+            )
             apply_run(s, run)
             record_signatures_for_run(s, run)
             recompute_flaky_flags(s)
