@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jenkins UT Analyzer — Concept Overview</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2740; --ink:#e8edf6; --muted:#9fb0cc;
+    --line:#2c3a57; --accent:#5aa0ff; --accent2:#7ee0c0;
+    --jenkins:#d33833; --oracle:#f28c1e; --pg:#4a90d9; --llm:#a97bf0; --mail:#4bbf73;
+    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 22px 90px}
+  header.hero{padding:54px 22px 30px;background:
+    radial-gradient(1200px 400px at 20% -10%,rgba(90,160,255,.18),transparent),
+    radial-gradient(900px 400px at 90% 0%,rgba(126,224,192,.12),transparent);
+    border-bottom:1px solid var(--line)}
+  header.hero .wrap{padding-bottom:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.5px}
+  .sub{color:var(--muted);font-size:17px;max-width:760px;margin:0}
+  .tag{display:inline-block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--accent2);border:1px solid var(--line);border-radius:999px;padding:3px 12px;margin-bottom:16px}
+  h2{font-size:22px;margin:52px 0 4px;letter-spacing:-.3px}
+  h2 .n{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:10px}
+  h3{font-size:16px;margin:26px 0 8px;color:var(--ink)}
+  p{color:#cdd7ea}
+  .lead{color:var(--muted)}
+  section{scroll-margin-top:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr}}
+  .part{border-left:3px solid var(--line);padding:2px 0 2px 14px;margin:14px 0}
+  .part h4{margin:0 0 3px;font-size:15px}
+  .part p{margin:0;color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:6px;
+    background:var(--panel2);color:var(--muted);border:1px solid var(--line);margin-left:6px;vertical-align:middle}
+  code{background:#0b1120;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#bfe0ff}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 4px;font-size:13px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .diagram{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px}
+  .diagram svg{display:block;min-width:720px;width:100%;height:auto}
+  ol.flow{counter-reset:step;list-style:none;padding:0;margin:10px 0}
+  ol.flow>li{position:relative;padding:12px 12px 12px 52px;border:1px solid var(--line);
+    border-radius:12px;margin:10px 0;background:var(--panel)}
+  ol.flow>li::before{counter-increment:step;content:counter(step);position:absolute;left:12px;top:12px;
+    width:26px;height:26px;border-radius:50%;background:var(--accent);color:#06101f;font-weight:700;
+    display:flex;align-items:center;justify-content:center;font-size:13px}
+  ol.flow b{color:var(--ink)}
+  ol.flow small{color:var(--muted)}
+  .kv{width:100%;border-collapse:collapse;font-size:14px}
+  .kv td,.kv th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  .kv th{color:var(--muted);font-weight:600}
+  .note{border-left:3px solid var(--warn);background:rgba(240,119,75,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:16px 0}
+  .note b{color:#ffd3c0}
+  nav.toc{position:sticky;top:0;background:rgba(15,20,32,.92);backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line);z-index:5;padding:10px 0}
+  nav.toc .wrap{padding-top:0;padding-bottom:0;display:flex;gap:6px;flex-wrap:wrap}
+  nav.toc a{font-size:13px;color:var(--muted);padding:5px 11px;border-radius:8px}
+  nav.toc a:hover{background:var(--panel2);color:var(--ink);text-decoration:none}
+  footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);margin-top:60px;padding-top:18px}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="tag">Concept Overview · Architecture &amp; Workflows</div>
+    <h1>Jenkins UT Analyzer</h1>
+    <p class="sub">Automates the daily triage of integration-test (“unittest”/UT) failures from a
+    Jenkins pipeline — gathering the evidence, correlating causes, and learning from the human’s
+    explanations — so the work that one person did full-time becomes fast, persistent and
+    reproducible.</p>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#why">Why</a>
+    <a href="#parts">The parts</a>
+    <a href="#diagram">System map</a>
+    <a href="#ingest">Ingest loop</a>
+    <a href="#analysis">Analysis</a>
+    <a href="#triage">Human triage</a>
+    <a href="#learning">Learning loop</a>
+    <a href="#email">Alerting</a>
+    <a href="#deploy">Deployment</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<section id="why">
+  <h2>Why this tool exists</h2>
+  <div class="card">
+    <p>Integration tests run in a Jenkins job triggered by <b>every commit to the SVN trunk</b>. Before each
+    run, a working <code>ut</code> database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
+    Roughly <b>25 000 tests</b> run, split across parallel shards (the <code>permanent</code> and
+    <code>permanent_py39</code> tracks) and merged into one report.</p>
+    <p>Historically <b>one person monitored this full-time</b>: after each run they compared failures to the
+    previous run, isolated the <i>new</i> failures, and attributed each to a probable cause —
+    a <b>code change</b>, a <b>data change</b> in <code>ut_ref</code>, <b>infrastructure</b>, or <b>other</b> —
+    then contacted the responsible developer and watched the next run to confirm a fix. That triage was slow,
+    person-dependent, and not reproducible.</p>
+    <p class="lead"><b>The Analyzer automates the evidence-gathering and presents a clear, persistent picture
+    per test and per run — and learns from the human’s confirmed explanations over time.</b> It is deliberately
+    <b>assistive</b>: it gathers, correlates, predicts and presents; the human confirms the cause and reason.</p>
+  </div>
+</section>
+
+<section id="parts">
+  <h2>The parts involved</h2>
+  <p class="lead">Four external systems the app reads or notifies, its own store, and the app’s own containers.</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>External systems</h3>
+      <div class="part" style="border-color:var(--jenkins)">
+        <h4>Jenkins <span class="pill">source of truth — read</span></h4>
+        <p>The UT pipeline. The app reads, per build: the merged <b>test report</b>
+        (<code>/testReport/api/json</code>), the <b>SVN change sets</b> (the authoritative list of code
+        changes), per-shard <b>timing</b> (<code>wfapi/describe</code>), and — for the console-log UT stages —
+        the stage <b>logs</b> (<code>wfapi/log</code>). Anonymous read; token optional.</p>
+      </div>
+      <div class="part" style="border-color:var(--oracle)">
+        <h4>Oracle <code>ut_ref</code> <span class="pill">read-only</span></h4>
+        <p>Reference DB. Its <code>V_TRACKING</code> view lists <b>data changes</b> (entity, author
+        <code>USRCODE</code>, timestamp). There is no changelog for data — attribution rests on
+        <b>timestamp correlation</b> against the run’s time window. Reached read-only via <code>oracledb</code>
+        thin mode.</p>
+      </div>
+      <div class="part" style="border-color:var(--llm)">
+        <h4>LLM provider <span class="pill">optional</span></h4>
+        <p>Anthropic (Claude) or OpenAI, behind a swappable <code>HypothesisProvider</code>. Turns the
+        deterministic signals + similar past cases into a one-sentence, human-readable root-cause
+        <b>hypothesis</b>. With no API key the default <b>Noop</b> provider is a no-op — everything else still
+        works.</p>
+      </div>
+      <div class="part" style="border-color:var(--mail)">
+        <h4>SMTP <span class="pill">outbound</span></h4>
+        <p>Email is sent <b>only when a run worsens</b> (≥1 new failing test vs the baseline). Silence means
+        “no worse than before.” Disabled when no recipients are configured.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>The app &amp; its store</h3>
+      <div class="part" style="border-color:var(--pg)">
+        <h4>PostgreSQL <span class="pill">the app’s own store</span></h4>
+        <p>All run history, test lifecycle, failure episodes, flakiness, and the knowledge base live here.
+        Similarity search uses stock <b><code>pg_trgm</code></b> / full-text — <b>no vector database</b>.
+        Reached only via <code>DATABASE_URL</code> (“container now, external later”).</p>
+      </div>
+      <div class="part" style="border-color:var(--app)">
+        <h4><code>poller</code> container <span class="pill">ingest</span></h4>
+        <p>Runs <code>uta poll</code>: on a fixed interval, detects new completed builds above the DB
+        high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also sends email
+        and fills LLM hypotheses.</p>
+      </div>
+      <div class="part" style="border-color:var(--app)">
+        <h4><code>web</code> container <span class="pill">dashboard</span></h4>
+        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, per-test
+        records, flaky leaderboard, and knowledge-base search. Where the human confirms causes and enters
+        reasons.</p>
+      </div>
+      <div class="part" style="border-color:var(--app)">
+        <h4><code>migrate</code> + <code>db</code> <span class="pill">infra</span></h4>
+        <p>A one-shot <code>uta migrate</code> brings the schema to head before <code>web</code>/<code>poller</code>
+        start (so they never race). <code>db</code> is the Postgres container in dev; production points
+        <code>DATABASE_URL</code> at an external server.</p>
+      </div>
+      <div class="part" style="border-color:var(--human)">
+        <h4>The monitor <span class="pill">human-in-the-loop</span></h4>
+        <p>Acknowledges new failures, confirms or corrects AI suggestions, enters the causing person / reason /
+        Jira ticket. Every action is stamped with an <code>actor</code> (self-declared name in Phase 1;
+        Keycloak SSO later).</p>
+      </div>
+      <div class="part" style="border-color:var(--muted)">
+        <h4>Deep-link targets <span class="pill">read-only links</span></h4>
+        <p><b>FishEye</b> (<code>?cs=&lt;revision&gt;</code>) for SVN revisions and <b>Jira</b>
+        (<code>/browse/&lt;TICKET&gt;</code>) for tickets — surfaced as links in the UI, not integrations.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="diagram">
+  <h2>System map</h2>
+  <p class="lead">How data and notifications flow between the parts. The <code>poller</code> pulls from Jenkins
+  and Oracle, writes to Postgres, and fans out to email + LLM; the <code>web</code> app reads Postgres and the
+  human writes back through it.</p>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
+    <span><i class="dot" style="background:var(--oracle)"></i> Oracle ut_ref</span>
+    <span><i class="dot" style="background:var(--app)"></i> App containers</span>
+    <span><i class="dot" style="background:var(--pg)"></i> PostgreSQL</span>
+    <span><i class="dot" style="background:var(--llm)"></i> LLM</span>
+    <span><i class="dot" style="background:var(--mail)"></i> Email</span>
+    <span><i class="dot" style="background:var(--human)"></i> Human</span>
+  </div>
+
+  <div class="diagram">
+    <svg viewBox="0 0 900 470" role="img" aria-label="System architecture data-flow diagram">
+      <defs>
+        <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#9fb0cc"/>
+        </marker>
+        <marker id="arrA" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#7ee0c0"/>
+        </marker>
+        <style>
+          .box{rx:12;stroke-width:1.5}
+          .lbl{fill:#e8edf6;font:13px system-ui;font-weight:600}
+          .sub{fill:#9fb0cc;font:11px system-ui}
+          .edge{stroke:#9fb0cc;stroke-width:1.6;fill:none}
+          .edgeA{stroke:#7ee0c0;stroke-width:1.8;fill:none}
+          .etxt{fill:#9fb0cc;font:11px system-ui}
+        </style>
+      </defs>
+
+      <!-- Jenkins -->
+      <rect class="box" x="20" y="40" width="180" height="86" fill="#2a1414" stroke="#d33833"/>
+      <text class="lbl" x="36" y="66">Jenkins UT pipeline</text>
+      <text class="sub" x="36" y="86">test report · SVN change</text>
+      <text class="sub" x="36" y="102">sets · wfapi timing/logs</text>
+
+      <!-- Oracle -->
+      <rect class="box" x="20" y="164" width="180" height="72" fill="#2a1f0d" stroke="#f28c1e"/>
+      <text class="lbl" x="36" y="192">Oracle ut_ref</text>
+      <text class="sub" x="36" y="212">V_TRACKING data changes</text>
+      <text class="sub" x="36" y="228">(read-only)</text>
+
+      <!-- Poller -->
+      <rect class="box" x="330" y="60" width="200" height="120" fill="#12233d" stroke="#5aa0ff"/>
+      <text class="lbl" x="352" y="88">poller container</text>
+      <text class="sub" x="352" y="108">uta poll — interval loop</text>
+      <text class="sub" x="352" y="126">fetch → parse → persist</text>
+      <text class="sub" x="352" y="144">→ lifecycle · classify</text>
+      <text class="sub" x="352" y="162">→ flaky · hypothesize</text>
+
+      <!-- Postgres -->
+      <rect class="box" x="360" y="250" width="180" height="96" fill="#0f2036" stroke="#4a90d9"/>
+      <text class="lbl" x="380" y="278">PostgreSQL</text>
+      <text class="sub" x="380" y="298">runs · results · episodes</text>
+      <text class="sub" x="380" y="314">lifecycle · flakiness</text>
+      <text class="sub" x="380" y="330">knowledge base (pg_trgm)</text>
+
+      <!-- LLM -->
+      <rect class="box" x="690" y="40" width="190" height="72" fill="#20143a" stroke="#a97bf0"/>
+      <text class="lbl" x="710" y="68">LLM provider</text>
+      <text class="sub" x="710" y="88">Claude / OpenAI</text>
+      <text class="sub" x="710" y="104">root-cause hypothesis</text>
+
+      <!-- Email -->
+      <rect class="box" x="690" y="140" width="190" height="64" fill="#122a1c" stroke="#4bbf73"/>
+      <text class="lbl" x="710" y="168">SMTP → recipients</text>
+      <text class="sub" x="710" y="188">regression-only alert</text>
+
+      <!-- Web -->
+      <rect class="box" x="330" y="380" width="200" height="70" fill="#12233d" stroke="#5aa0ff"/>
+      <text class="lbl" x="352" y="408">web container</text>
+      <text class="sub" x="352" y="428">FastAPI + HTMX dashboard</text>
+      <text class="sub" x="352" y="443">§0 triage · records · KB</text>
+
+      <!-- Human -->
+      <rect class="box" x="690" y="384" width="190" height="62" fill="#2a2410" stroke="#f5c451"/>
+      <text class="lbl" x="710" y="412">Monitor (human)</text>
+      <text class="sub" x="710" y="432">ack · confirm · reason</text>
+
+      <!-- edges: Jenkins -> poller -->
+      <path class="edge" d="M200,83 C260,83 280,110 328,110" marker-end="url(#arr)"/>
+      <text class="etxt" x="222" y="76">builds</text>
+      <!-- Oracle -> poller -->
+      <path class="edge" d="M200,196 C270,196 280,150 328,140" marker-end="url(#arr)"/>
+      <text class="etxt" x="222" y="182">changes</text>
+      <!-- poller -> postgres -->
+      <path class="edge" d="M430,180 L440,248" marker-end="url(#arr)"/>
+      <text class="etxt" x="446" y="220">persist</text>
+      <!-- poller -> LLM -->
+      <path class="edge" d="M530,100 C610,90 640,80 688,78" marker-end="url(#arr)"/>
+      <text class="etxt" x="560" y="72">signals</text>
+      <!-- LLM -> poller (hypothesis back) -->
+      <path class="edgeA" d="M688,96 C620,120 600,120 532,120" marker-end="url(#arrA)"/>
+      <text class="etxt" x="560" y="138" style="fill:#7ee0c0">hypothesis</text>
+      <!-- poller -> email -->
+      <path class="edge" d="M530,150 C600,160 640,168 688,170" marker-end="url(#arr)"/>
+      <text class="etxt" x="560" y="163">on regression</text>
+      <!-- postgres -> web -->
+      <path class="edge" d="M450,346 L440,378" marker-end="url(#arr)"/>
+      <text class="etxt" x="456" y="368">read</text>
+      <!-- web <-> human -->
+      <path class="edge" d="M530,415 L688,415" marker-end="url(#arr)"/>
+      <path class="edgeA" d="M688,432 L532,432" marker-end="url(#arrA)"/>
+      <text class="etxt" x="560" y="452" style="fill:#7ee0c0">writes back (ack/reason)</text>
+      <!-- email -> human (dashed feel) -->
+      <path class="edge" d="M785,204 L785,382" marker-end="url(#arr)"/>
+      <text class="etxt" x="792" y="300">alert</text>
+    </svg>
+  </div>
+  <p class="muted" style="font-size:13px">Green arrows are write-backs / results returning to a producer.
+  The same Docker image runs as both <code>poller</code> and <code>web</code>; only the command differs.</p>
+</section>
+
+<section id="ingest">
+  <h2><span class="n">1</span>Ingest loop <span class="muted" style="font-size:14px">— poller</span></h2>
+  <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 300 s). On an empty store
+  it back-fills the last <code>BACKFILL_DEPTH</code> builds oldest-first; then it runs purely incrementally
+  above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
+  hand.</p>
+  <ol class="flow">
+    <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
+      <code>lastCompletedBuild</code>. The cursor is the DB itself — restart-safe, no separate state.</small></li>
+    <li><b>Fetch.</b> <small>Per build: build meta, merged test report, SVN change sets, per-shard wfapi timing,
+      and (if enabled) the unittest console-log stages’ logs.</small></li>
+    <li><b>Parse.</b> <small>JUnit report → per-<code>(test, track)</code> results; console-log stages parsed
+      into the <i>same</i> shape behind one interface; SVN change sets → code-change candidates; timing → the
+      run window + per-shard start/finish.</small></li>
+    <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes inside a
+      <i>lookback</i> window before the run (changes precede the nightly run) plus a tolerance margin for clock
+      skew.</small></li>
+    <li><b>Persist.</b> <small>Bulk-insert the run, results, shards and candidates into Postgres — idempotent on
+      <code>build_number</code> (re-ingest replaces, never duplicates).</small></li>
+    <li><b>Record signatures.</b> <small>A normalized failure <b>signature</b> per failing result (the KB
+      recurrence key) — for any run, complete or not.</small></li>
+  </ol>
+  <div class="note"><b>Clock discipline is load-bearing.</b> Jenkins timestamps are epoch-millis UTC; Oracle
+    <code>ut_ref</code> timestamps are naive local wall-clock (server is UTC+2), normalized via the named
+    zone <code>Europe/Luxembourg</code>. Data-change attribution rests entirely on these timestamps.</div>
+</section>
+
+<section id="analysis">
+  <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete runs only</span></h2>
+  <p class="lead">A run is analysed only when it is <b>complete</b> (finished, and all expected shards reported).
+  Incomplete runs are stored and shown but skipped as a baseline, so partial runs never produce phantom
+  regressions.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Lifecycle &amp; episodes</h3>
+      <p>Each test carries a lifecycle state — <code>FAILING</code> → <code>FIXED</code>, plus
+      <code>REMOVED</code> and a cross-cutting <code>FLAKY</code> flag. A previously-fixed test that fails again
+      opens a <b>new failure episode</b> (regressions are first-class, history is never overwritten).
+      <b>Acknowledgement</b> is an orthogonal attribute, not a state.</p>
+    </div>
+    <div class="card">
+      <h3>Baseline diff</h3>
+      <p>The run is diffed against the <b>most recent complete run</b>: new failures (regressions), newly fixed,
+      still failing, and flaky — each linking to the per-test record. The summary states which run was used as
+      baseline.</p>
+    </div>
+    <div class="card">
+      <h3>Classification</h3>
+      <p>Each new regression gets a deterministic predicted cause —
+      <code>CODE_CHANGE</code> / <code>DATA_CHANGE</code> / <code>INFRASTRUCTURE</code> / <code>UNKNOWN</code> —
+      from the window-filtered code &amp; data candidates. The evidence stands on its own; the human attributes
+      the final cause.</p>
+    </div>
+    <div class="card">
+      <h3>Flakiness</h3>
+      <p>Scored by <b>oscillation</b>, not “no change”: transitions ÷ runs over a 30-day window. Gaps
+      (incomplete/absent) are missing data, never counted as flips. Feeds the <b>flaky leaderboard</b>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="triage">
+  <h2><span class="n">3</span>Human triage <span class="muted" style="font-size:14px">— web dashboard</span></h2>
+  <p class="lead">The dashboard opens on the <b>daily triage queue (§0)</b> — the primary landing surface —
+  organized into the three buckets the monitor thinks in.</p>
+  <div class="grid g3">
+    <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. The action
+      queue: predicted cause + an <b>Acknowledge</b> button. Driven toward empty.</p></div>
+    <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with age,
+      triage status, causing person, and a one-line cause. <code>REMOVED</code> mid-failure is flagged
+      distinctly.</p></div>
+    <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
+      7 days — visible and confirmable before it scrolls away.</p></div>
+  </div>
+  <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes, ownership,
+  LLM hypothesis, error type, stack trace) plus the editable fields the human owns — <b>causing person</b>,
+  <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
+  AI suggestion. Every action is stamped with the acting <code>actor</code>.</p>
+</section>
+
+<section id="learning">
+  <h2><span class="n">4</span>Learning loop <span class="muted" style="font-size:14px">— knowledge base</span></h2>
+  <p class="lead">The human’s explanations become a growing, queryable asset — turning one-off knowledge into
+  better future predictions, with no vector database.</p>
+  <table class="kv">
+    <tr><th>Failure signature</th><td>Test identity + <b>normalized</b> error text (numbers, hex, timestamps,
+      IPs, temp paths, line numbers masked; exception type + top stack frames kept). Stored with a hash for
+      exact lookup. This single function defines what “the same failure” means.</td></tr>
+    <tr><th>Recurrence</th><td>A new failure matching a past signature surfaces <i>“this looks like the failure
+      on &lt;run/date&gt;; previous reason was …; caused by …”</i>.</td></tr>
+    <tr><th>Similarity</th><td>Exact hash match + fuzzy <code>pg_trgm</code> trigram / full-text — top-k nearest
+      historical failures, all in stock Postgres.</td></tr>
+    <tr><th>Provenance tiers</th><td>Every conclusion is weighted by how it was reached:
+      <code>AI_UNCONFIRMED</code> (weak) · <code>AI_CONFIRMED</code> · <code>HUMAN_CORRECTED</code> (strongest —
+      the AI was wrong) · <code>HUMAN_ENTERED</code>. Only validated conclusions feed prediction, so the model
+      never reinforces its own guesses.</td></tr>
+    <tr><th>RAG hypothesis</th><td>The top-k similar cases are rendered into the LLM prompt, so its one-line
+      hypothesis improves as the KB grows.</td></tr>
+  </table>
+</section>
+
+<section id="email">
+  <h2><span class="n">5</span>Alerting <span class="muted" style="font-size:14px">— email</span></h2>
+  <div class="card">
+    <p>Because every commit triggers a run, a per-run digest would be constant noise. The tool emails <b>only
+    when a processed run introduces ≥1 new failing test</b> (a regression vs the baseline). Runs with no new
+    failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
+    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. A
+    recovery notice (“back to green”) is a separate, optional toggle. Everything else stays in the dashboard.</p>
+  </div>
+</section>
+
+<section id="deploy">
+  <h2>Deployment</h2>
+  <p class="lead"><code>docker compose up</code> brings up four services from one image.</p>
+  <table class="kv">
+    <tr><th>Service</th><th>Command</th><th>Role</th></tr>
+    <tr><td><code>db</code></td><td>postgres:16</td><td>The app’s store (dev only; prod uses an external server via <code>DATABASE_URL</code>).</td></tr>
+    <tr><td><code>migrate</code></td><td><code>uta migrate</code></td><td>One-shot: brings the schema to head before the app services start (avoids a migration race).</td></tr>
+    <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for email &amp; LLM.</td></tr>
+    <tr><td><code>web</code></td><td><code>uvicorn …</code></td><td>The FastAPI/HTMX dashboard on port 8000.</td></tr>
+  </table>
+  <p class="muted" style="font-size:13px">Config is 12-factor (env → typed settings). Secrets never committed;
+  <code>.env.example</code> documents every key. Stack: Python 3.12, FastAPI, SQLAlchemy 2.x + Alembic,
+  <code>psycopg</code> (Postgres), <code>oracledb</code> thin (Oracle).</p>
+</section>
+
+<footer>
+  <p><b>Sources of truth.</b> This page is a hand-maintained summary. The authoritative documents are
+  <a href="PLAN.md">docs/PLAN.md</a> (what the tool outputs, §0–§5),
+  <a href="IMPLEMENTATION-PLAN.md">docs/IMPLEMENTATION-PLAN.md</a> (how/in what order),
+  <a href="PROGRESS.md">docs/PROGRESS.md</a> (status), and the repo <a href="../CLAUDE.md">CLAUDE.md</a>
+  (invariants). When those and this page disagree, they win — and this page should be updated.</p>
+  <p class="muted">Kept in sync by the <code>docs-overview-maintainer</code> agent — see CLAUDE.md.</p>
+</footer>
+
+</div>
+</body>
+</html>

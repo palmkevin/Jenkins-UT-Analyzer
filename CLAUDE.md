@@ -10,9 +10,23 @@ captures only the invariants and conventions that are easy to get wrong or re-de
 - [docs/NEXT-PHASE-REQUIREMENTS.md](docs/NEXT-PHASE-REQUIREMENTS.md) — the **inputs** the build needs.
 - [docs/PROGRESS.md](docs/PROGRESS.md) — the **durable status checklist** (done / in-progress / open).
   **Update it as part of every change** — it is the source of truth for status and diffs in PRs.
+- [docs/OVERVIEW.html](docs/OVERVIEW.html) — the **hand-maintained concept/architecture overview**
+  (purpose, the parts involved — Jenkins, Oracle `ut_ref`, the containers, PostgreSQL, LLM, email —
+  and the ingest → analysis → triage → learning → alert workflows), with a schematic system map.
+  The reader-facing "what is this and how does it fit together" page.
 
 The execution gate (Jenkins A1–A4, Oracle B1) is **validated against live systems** — Slice 0 is
 unblocked. Live findings live in the plan's two "RESOLVED" sections.
+
+## Keep the concept overview in sync (required, every change)
+After any change that could alter **what parts the app involves, how they communicate, or its
+workflows** — a new/removed external system or integration, a container/service change, a change to
+the ingest/analysis/triage/learning/alert flow, or a shift in what the tool outputs (PLAN §0–§5) —
+you **must invoke the [`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md)
+agent** to check whether [docs/OVERVIEW.html](docs/OVERVIEW.html) needs updating (it edits the page,
+including its system-map SVG, or reports "no update needed"). Pure bug fixes, refactors, perf work,
+and test/CI/dependency changes that leave the depicted parts, communications and workflows unchanged
+do **not** require it. When in doubt, invoke it — deciding materiality is the agent's job.
 
 ## Load-bearing invariants (silently corrupting if wrong)
 - **Clocks.** Jenkins timestamps are **epoch millis, UTC** (`timestamp`, `startTimeMillis`). Oracle
