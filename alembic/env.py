@@ -17,7 +17,9 @@ from uta.db import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False so importing app modules before migrations (e.g. the CLI's
+    # per-build timing logger) keeps working — the default True would silence them.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from uta.db import Base
@@ -26,6 +26,9 @@ class TestResult(Base, TimestampMixin):
     __tablename__ = "test_results"
     __table_args__ = (
         UniqueConstraint("run_id", "test_identity_id", "track", name="uq_run_test_track"),
+        # Composite index for the flaky `_sequence` and lifecycle age queries, which scan a
+        # single identity's results across runs — (test_identity_id, run_id) covers both.
+        Index("ix_test_results_identity_run", "test_identity_id", "run_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

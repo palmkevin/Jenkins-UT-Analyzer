@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import typer
@@ -10,6 +11,29 @@ from uta.config import get_settings
 from uta.db import assert_pg_trgm, make_engine, make_session_factory
 
 app = typer.Typer(help="Jenkins UT Analyzer CLI")
+
+
+def _configure_logging() -> None:
+    """Emit the per-build INFO timing logs to stdout.
+
+    Call this **after** ``_run_migrations()``: Alembic's ``fileConfig`` reconfigures the root
+    logger and disables pre-existing loggers, so we (re-)assert an INFO stream handler and force
+    the ``uta`` logger back on — otherwise the pipeline's per-build timing lines are swallowed.
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
+    root.setLevel(logging.INFO)
+    logging.getLogger("uta").setLevel(logging.INFO)
+    # Re-enable any uta.* logger a prior fileConfig may have disabled (defensive; the alembic env
+    # now passes disable_existing_loggers=False, but this keeps the timing logs robust regardless).
+    for name, lg in logging.root.manager.loggerDict.items():
+        if name.startswith("uta") and isinstance(lg, logging.Logger):
+            lg.disabled = False
+
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 
@@ -111,10 +135,13 @@ def _build_hypothesis_provider(settings):
 @app.command("backfill")
 def backfill(build: int, to: int | None = None) -> None:
     """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live)."""
+    from uta.analyze.flakiness import recompute_flaky_flags
+    from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
     settings = get_settings()
     _run_migrations()
+    _configure_logging()
     engine = make_engine(settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
@@ -122,7 +149,9 @@ def backfill(build: int, to: int | None = None) -> None:
     feed = _build_feed(settings)
     lookback, tolerance = _windows(settings)
     for n in range(build, (to or build) + 1):
-        # No email sender on back-fill: historical regressions must not be (re-)mailed.
+        # No email sender on back-fill: historical regressions must not be (re-)mailed. Flaky flags
+        # are display-only and derived purely from results, so defer them to a single pass after the
+        # loop rather than recomputing the whole failing set every build.
         ingest_build(
             client,
             session_factory,
@@ -135,8 +164,15 @@ def backfill(build: int, to: int | None = None) -> None:
             flaky_threshold=settings.flaky_transition_threshold,
             ingest_unittest_logs=settings.ingest_unittest_stages,
             unittest_suites=settings.unittest_suite_set,
+            recompute_flaky=False,
         )
         typer.echo(f"ingested build #{n}")
+    with session_scope(session_factory) as session:
+        recompute_flaky_flags(
+            session,
+            window_days=settings.flaky_window_days,
+            threshold=settings.flaky_transition_threshold,
+        )
 
 
 @app.command("poll")
@@ -146,6 +182,7 @@ def poll() -> None:
 
     settings = get_settings()
     _run_migrations()
+    _configure_logging()
     engine = make_engine(settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
@@ -186,11 +223,14 @@ def bootstrap(depth: int | None = None) -> None:
     no hypothesis provider — back-filled history must not be (re-)mailed. ``depth`` defaults to
     ``BACKFILL_DEPTH``.
     """
+    from uta.analyze.flakiness import recompute_flaky_flags
+    from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
     settings = get_settings()
     depth = depth if depth is not None else settings.backfill_depth
     _run_migrations()
+    _configure_logging()
     engine = make_engine(settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
@@ -203,6 +243,8 @@ def bootstrap(depth: int | None = None) -> None:
     lookback, tolerance = _windows(settings)
     start = max(1, latest - depth + 1)
     for n in range(start, latest + 1):
+        # Defer flaky flags to a single post-loop pass (see `backfill`) — they are display-only and
+        # derived purely from results, so recomputing per build is wasted work during bootstrap.
         ingest_build(
             client,
             session_factory,
@@ -215,8 +257,15 @@ def bootstrap(depth: int | None = None) -> None:
             flaky_threshold=settings.flaky_transition_threshold,
             ingest_unittest_logs=settings.ingest_unittest_stages,
             unittest_suites=settings.unittest_suite_set,
+            recompute_flaky=False,
         )
         typer.echo(f"ingested build #{n}")
+    with session_scope(session_factory) as session:
+        recompute_flaky_flags(
+            session,
+            window_days=settings.flaky_window_days,
+            threshold=settings.flaky_transition_threshold,
+        )
 
 
 if __name__ == "__main__":

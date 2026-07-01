@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.analyze.classify import classify_run
@@ -81,25 +82,44 @@ def _dedupe_cases(cases: list[TestCaseResult]) -> list[TestCaseResult]:
     return deduped
 
 
-def _get_or_create_identity(
-    session: Session, case: TestCaseResult, cache: dict[str, TestIdentity]
-) -> TestIdentity:
-    """Resolve the test-level identity for a case, creating it on first sight (idempotent)."""
-    name = case.test_id  # className.name — the canonical v1 key
-    ident = cache.get(name)
-    if ident is None:
-        ident = session.scalar(select(TestIdentity).where(TestIdentity.canonical_name == name))
-        if ident is None:
+_IDENTITY_CHUNK = 1000
+
+
+def _resolve_identities(session: Session, cases: list[TestCaseResult]) -> dict[str, TestIdentity]:
+    """Preload/create every case's identity in bulk (was one SELECT per case — the N+1 hot spot).
+
+    Existing identities are fetched with a chunked ``canonical_name IN (...)`` query; the missing
+    ones are created and added to the dict, then flushed once so their ids exist before results
+    reference them. Descriptive attributes (suite/class/method/owner) are refreshed from the latest
+    case, exactly as the per-case path did.
+    """
+    names = {case.test_id for case in cases}
+    identities: dict[str, TestIdentity] = {}
+    name_list = list(names)
+    for start in range(0, len(name_list), _IDENTITY_CHUNK):
+        chunk = name_list[start : start + _IDENTITY_CHUNK]
+        for ident in session.scalars(
+            select(TestIdentity).where(TestIdentity.canonical_name.in_(chunk))
+        ).all():
+            identities[ident.canonical_name] = ident
+    for name in names:
+        if name not in identities:
             ident = TestIdentity(canonical_name=name)
             session.add(ident)
-        cache[name] = ident
-    # Keep the descriptive attributes fresh from the latest report.
-    ident.suite = case.suite_name
-    ident.class_name = case.class_name
-    ident.method = case.name
-    if case.owner_initials:
-        ident.owner_initials = case.owner_initials
-    return ident
+            identities[name] = ident
+
+    # Refresh descriptive attributes from the latest case for each name (last case wins, matching
+    # the loop-order the per-case path applied).
+    for case in cases:
+        ident = identities[case.test_id]
+        ident.suite = case.suite_name
+        ident.class_name = case.class_name
+        ident.method = case.name
+        if case.owner_initials:
+            ident.owner_initials = case.owner_initials
+
+    session.flush()  # new identities need ids before the bulk TestResult insert references them
+    return identities
 
 
 def ingest_build(
@@ -121,6 +141,7 @@ def ingest_build(
     kb_similarity_cutoff: float = 0.3,
     ingest_unittest_logs: bool = False,
     unittest_suites: frozenset[str] | set[str] | None = None,
+    recompute_flaky: bool = True,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
@@ -141,28 +162,41 @@ def ingest_build(
     track) results, so they share the JUnit tests' identity/lifecycle/classification path. Off by
     default, so the devUTs-only ingest is unchanged unless the caller opts in.
     """
+    t_total = time.perf_counter()
+
+    t = time.perf_counter()
     meta = client.build_meta(build)
     wfapi_payload = client.wfapi(build)
-    timing = parse_wfapi(wfapi_payload)
-    report = parse_test_report(client.test_report(build))
-    change_sets = parse_change_sets(client.change_sets(build))
-    win_start, win_end = timing.window
-
-    cases: list[TestCaseResult] = list(report.cases)
+    report_payload = client.test_report(build)
+    change_sets_payload = client.change_sets(build)
+    stage_logs: list[tuple[object, str]] = []  # (stage, log text) — fetched before parse timing
     if ingest_unittest_logs:
         suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
         for stage in find_unittest_stages(wfapi_payload, suites):
             # The console text is on the stage's Shell Script step node, not the stage node itself.
             describe = client.stage_describe(build, stage.node_id)
             step_id = find_log_step_node(describe) or stage.node_id
-            log = client.stage_log(build, step_id)
-            cases.extend(parse_unittest_log(log, track=stage.track, suite_name=stage.suite))
+            stage_logs.append((stage, client.stage_log(build, step_id)))
+    t_fetch = time.perf_counter() - t
+
+    t = time.perf_counter()
+    timing = parse_wfapi(wfapi_payload)
+    report = parse_test_report(report_payload)
+    change_sets = parse_change_sets(change_sets_payload)
+    win_start, win_end = timing.window
+
+    cases: list[TestCaseResult] = list(report.cases)
+    for stage, log in stage_logs:
+        cases.extend(parse_unittest_log(log, track=stage.track, suite_name=stage.suite))
 
     # The two ingest sources overlap on a few tests (nose2 also collects some console-log modules),
     # so collapse duplicate (test_id, track) results before persist — JUnit (listed first) wins.
     cases = _dedupe_cases(cases)
+    t_parse = time.perf_counter() - t
 
+    t_persist = t_signatures = t_lifecycle = t_classify = t_flaky = 0.0
     with session_scope(session_factory) as session:
+        t = time.perf_counter()
         run = session.scalar(select(Run).where(Run.build_number == build))
         if run is None:
             run = Run(build_number=build)
@@ -193,25 +227,30 @@ def ingest_build(
                 )
             )
 
-        identities: dict[str, TestIdentity] = {}
-        for case in cases:
-            ident = _get_or_create_identity(session, case, identities)
-            run.results.append(
-                TestResult(
-                    identity=ident,
-                    track=case.track,
-                    status=case.status,
-                    duration=case.duration,
-                    file_path=case.file_path,
-                    line=case.line,
-                    owner_initials=case.owner_initials,
-                    error_type=derive_error_type(
-                        case.status, case.error_details, case.error_stack_trace
-                    ),
-                    error_details=case.error_details,
-                    error_stack_trace=case.error_stack_trace,
-                )
-            )
+        # Resolve every identity in bulk, then flush so run.id + identity ids exist for the Core
+        # bulk insert of results (25k+ rows/run — far cheaper than per-row ORM appends).
+        identities = _resolve_identities(session, cases)
+        session.flush()  # run.id must exist before result rows reference it
+        result_rows = [
+            {
+                "run_id": run.id,
+                "test_identity_id": identities[case.test_id].id,
+                "track": case.track,
+                "status": case.status,
+                "duration": case.duration,
+                "file_path": case.file_path,
+                "line": case.line,
+                "owner_initials": case.owner_initials,
+                "error_type": derive_error_type(
+                    case.status, case.error_details, case.error_stack_trace
+                ),
+                "error_details": case.error_details,
+                "error_stack_trace": case.error_stack_trace,
+            }
+            for case in cases
+        ]
+        if result_rows:
+            session.execute(insert(TestResult), result_rows)
 
         for change in change_sets.changes:
             run.code_changes.append(
@@ -247,13 +286,20 @@ def ingest_build(
                 )
 
         session.flush()  # candidates + results must be visible to the KB store and classifier
+        t_persist = time.perf_counter() - t
 
         # KB: a normalized failure signature per failing result (recurrence key, §4). Recorded for
         # any run (the signatures are facts about the failures), idempotent on re-ingest.
+        t = time.perf_counter()
         record_signatures_for_run(session, run)
+        t_signatures = time.perf_counter() - t
 
         if run.complete:
+            t = time.perf_counter()
             analysis = apply_run(session, run)
+            t_lifecycle = time.perf_counter() - t
+
+            t = time.perf_counter()
             classify_run(session, run, analysis.opened_episodes)
             hypothesize_run(
                 session,
@@ -263,7 +309,14 @@ def ingest_build(
                 top_k=kb_top_k,
                 cutoff=kb_similarity_cutoff,
             )
-            recompute_flaky_flags(session, window_days=flaky_window_days, threshold=flaky_threshold)
+            t_classify = time.perf_counter() - t
+
+            if recompute_flaky:
+                t = time.perf_counter()
+                recompute_flaky_flags(
+                    session, window_days=flaky_window_days, threshold=flaky_threshold
+                )
+                t_flaky = time.perf_counter() - t
             maybe_notify(
                 session,
                 run,
@@ -272,6 +325,20 @@ def ingest_build(
                 recovery_notice=email_recovery_notice,
             )
 
+    total = time.perf_counter() - t_total
+    logger.info(
+        "build #%d ingested in %.1fs (fetch=%.1f parse=%.1f persist=%.1f signatures=%.1f "
+        "lifecycle=%.1f classify=%.1f flaky=%.1f)",
+        build,
+        total,
+        t_fetch,
+        t_parse,
+        t_persist,
+        t_signatures,
+        t_lifecycle,
+        t_classify,
+        t_flaky,
+    )
     return build
 
 
