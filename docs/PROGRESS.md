@@ -54,6 +54,11 @@ _Last updated: 2026-07-01 (Post-v1: ingest performance — batched N+1s, bulk in
         drops the upstream image's broken Yarn apt source (rotated signing key → `apt-get update`
         failed signature verification → the docker-outside-of-docker feature aborted and the
         container never came up). We don't use Yarn; removing the source lets features build.
+  - [x] Fix (2026-07-02): `postCreateCommand` now sets a container-local git `insteadOf` rewrite
+        (`git@github.com:` → `https://github.com/`) in `~/.gitconfig` — not the bind-mounted `.git`.
+        The container has no forwarded SSH agent, so plain `git push`/`fetch` failed; the rewrite
+        routes them through VS Code's forwarded HTTPS credential helper. The repo's `origin` stays
+        SSH, so the host (VM) checkout is unaffected. Survives rebuilds via `postCreateCommand`.
 - [x] **Live end-to-end verified** (2026-06-27): `docker compose up`, `uta backfill 1702` ingested
       **25,592** results (counts match source), run window UTC-normalized (17:08→18:41Z),
       `/runs/1702` renders. **`V_TRACKING` tz proven**: latest change naive-local 15:46 → 13:46Z;

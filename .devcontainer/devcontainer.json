@@ -29,8 +29,11 @@
   // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
   "forwardPorts": [8000, 8088],
 
-  // Match CI's install exactly (.github/workflows/ci.yml), then bring the schema to head against `db`.
-  "postCreateCommand": "pip install -e '.[dev]' && uta migrate",
+  // First: rewrite git's github SSH URLs to HTTPS *container-locally* (~/.gitconfig, not the
+  // bind-mounted .git) so plain git push/fetch use VS Code's forwarded HTTPS credential helper —
+  // the container has no forwarded SSH agent. The repo's origin stays SSH, so the host is unaffected.
+  // Then match CI's install exactly (.github/workflows/ci.yml) and bring the schema to head vs `db`.
+  "postCreateCommand": "git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate",
 
   "customizations": {
     "vscode": {
