@@ -50,6 +50,10 @@ _Last updated: 2026-07-01 (Post-v1: ingest performance — batched N+1s, bulk in
       compose project `jenkins-ut-analyzer-dev` so it never touches a running deployment. Runs on the
       VM via Remote-SSH (keeps Jenkins/Oracle reach); docker-outside-of-docker feature enables the
       full stack from inside. `postCreateCommand`: `pip install -e '.[dev]'` (CI parity) + `uta migrate`.
+  - [x] Fix (2026-07-02): the `dev` service now builds from a thin `.devcontainer/Dockerfile` that
+        drops the upstream image's broken Yarn apt source (rotated signing key → `apt-get update`
+        failed signature verification → the docker-outside-of-docker feature aborted and the
+        container never came up). We don't use Yarn; removing the source lets features build.
 - [x] **Live end-to-end verified** (2026-06-27): `docker compose up`, `uta backfill 1702` ingested
       **25,592** results (counts match source), run window UTC-normalized (17:08→18:41Z),
       `/runs/1702` renders. **`V_TRACKING` tz proven**: latest change naive-local 15:46 → 13:46Z;
