@@ -13,9 +13,15 @@
 name: jenkins-ut-analyzer-dev
 services:
   dev:
-    # Prebuilt devcontainer image: Python 3.12 + git + build tools + non-root `vscode` user + tzdata.
-    # No custom Dockerfile needed; dev-only deps come from postCreateCommand (`pip install -e '.[dev]'`).
-    image: mcr.microsoft.com/devcontainers/python:1-3.12-bookworm
+    # Devcontainer base: Python 3.12 + git + build tools + non-root `vscode` user + tzdata.
+    # A thin Dockerfile wraps the upstream image only to drop a broken Yarn apt source that
+    # would otherwise fail `apt-get update` and break the docker-outside-of-docker feature
+    # (see .devcontainer/Dockerfile). Context is scoped to .devcontainer (the repo-root
+    # .dockerignore excludes .devcontainer, so it can't be the build context). Dev-only deps
+    # still come from postCreateCommand (`pip install -e '.[dev]'`).
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
     volumes:
       - .:/workspaces/Jenkins-UT-Analyzer:cached
     command: sleep infinity
