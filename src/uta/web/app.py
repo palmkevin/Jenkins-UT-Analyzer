@@ -29,6 +29,16 @@ from uta.web.identity import ACTOR_COOKIE, current_actor
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _expanded(request: Request) -> list[str]:
+    """Sections the reader asked to render in full — the ``?expand=a,b`` query param (issue #19).
+
+    A capped section's "Load all N Tests" link points back with its key added here, so the same
+    page re-renders that one bucket in full while the rest stay capped.
+    """
+    raw = request.query_params.get("expand", "")
+    return [s for s in raw.split(",") if s]
+
+
 def create_app(session_factory=None) -> FastAPI:
     startup_engine = None
     if session_factory is None:
@@ -53,6 +63,8 @@ def create_app(session_factory=None) -> FastAPI:
             "actor": current_actor(request),
             "jira_base_url": cfg.jira_base_url,
             "fisheye_changelog_url": cfg.fisheye_changelog_url,
+            "expand": _expanded(request),
+            "row_limit": cfg.ui_row_limit,
         }
         return _TEMPLATES.TemplateResponse(request, template, context)
 
@@ -67,9 +79,14 @@ def create_app(session_factory=None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def triage(request: Request):
-        days = get_settings().recently_fixed_days
+        cfg = get_settings()
         with session_scope(session_factory) as s:
-            queue = views.triage_queue(s, recently_fixed_days=days)
+            queue = views.triage_queue(
+                s,
+                recently_fixed_days=cfg.recently_fixed_days,
+                limit=cfg.ui_row_limit,
+                expand=_expanded(request),
+            )
         return render(request, "triage.html", {"queue": queue})
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
@@ -88,8 +105,11 @@ def create_app(session_factory=None) -> FastAPI:
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
     def run_view(request: Request, build: int):
+        cfg = get_settings()
         with session_scope(session_factory) as s:
-            run = views.run_summary(s, build)
+            run = views.run_summary(
+                s, build, limit=cfg.ui_row_limit, expand=_expanded(request)
+            )
         return render(request, "run.html", {"run": run, "build": build})
 
     @app.get("/flaky", response_class=HTMLResponse)

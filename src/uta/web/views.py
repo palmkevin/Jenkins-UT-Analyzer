@@ -9,6 +9,7 @@ bookkeeping exists to drift.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
@@ -31,9 +32,27 @@ from uta.models import (
 )
 from uta.models.enums import LifecycleState
 
+# Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
+# Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
+# directly (tests, CLI). A limit of 0 disables the cap.
+DEFAULT_ROW_LIMIT = 100
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _cap(rows: Sequence, section: str, *, limit: int, expand: Collection[str]) -> list:
+    """Truncate a section's rows to ``limit`` unless the caller asked to ``expand`` it.
+
+    Returns a plain list (a slice, so the original is untouched). ``limit <= 0`` disables the cap.
+    Callers keep the pre-cap length around as the section total so the template can render the
+    "Load all N Tests" hint (issue #19 — long lists were rendered in full and hurt responsiveness).
+    """
+    rows = list(rows)
+    if limit <= 0 or section in expand or len(rows) <= limit:
+        return rows
+    return rows[:limit]
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -103,7 +122,13 @@ def _row(session: Session, lc: TestLifecycle) -> dict:
     }
 
 
-def triage_queue(session: Session, *, recently_fixed_days: int = 7) -> dict:
+def triage_queue(
+    session: Session,
+    *,
+    recently_fixed_days: int = 7,
+    limit: int = DEFAULT_ROW_LIMIT,
+    expand: Collection[str] = (),
+) -> dict:
     """The §0 three-bucket queue: new-unacknowledged / still-failing(+removed) / recently-fixed.
 
     Buckets are a projection of lifecycle ``state`` and the orthogonal ``acknowledged`` attribute:
@@ -112,6 +137,10 @@ def triage_queue(session: Session, *, recently_fixed_days: int = 7) -> dict:
     2. **Still failing** — ``FAILING`` and acknowledged, plus ``REMOVED`` tests with an open
        episode surfaced with a Removed flag (disappeared ≠ fixed).
     3. **Recently fixed** — ``FIXED`` within the configured window (default 7 days).
+
+    Each bucket is capped at ``limit`` rows for rendering (long lists hurt UI responsiveness —
+    issue #19); ``counts`` stays the full, pre-cap size, and a section named in ``expand`` renders
+    in full. ``truncated`` reports, per bucket, whether rows were dropped.
     """
     lifecycles = session.scalars(
         select(TestLifecycle).join(TestIdentity, TestLifecycle.identity)
@@ -139,14 +168,24 @@ def triage_queue(session: Session, *, recently_fixed_days: int = 7) -> dict:
     still_failing.sort(key=lambda r: (r.get("removed", False), r["age_days"] or 0), reverse=True)
     recently_fixed.sort(key=lambda r: (r["fixed_at"] is not None, r["fixed_at"]), reverse=True)
 
+    counts = {
+        "new": len(new),
+        "still_failing": len(still_failing),
+        "recently_fixed": len(recently_fixed),
+    }
+    new = _cap(new, "new", limit=limit, expand=expand)
+    still_failing = _cap(still_failing, "still_failing", limit=limit, expand=expand)
+    recently_fixed = _cap(recently_fixed, "recently_fixed", limit=limit, expand=expand)
+
     return {
         "new": new,
         "still_failing": still_failing,
         "recently_fixed": recently_fixed,
-        "counts": {
-            "new": len(new),
-            "still_failing": len(still_failing),
-            "recently_fixed": len(recently_fixed),
+        "counts": counts,
+        "truncated": {
+            "new": len(new) < counts["new"],
+            "still_failing": len(still_failing) < counts["still_failing"],
+            "recently_fixed": len(recently_fixed) < counts["recently_fixed"],
         },
     }
 
@@ -354,8 +393,19 @@ def kb_search(
     return {"query": query, "results": results}
 
 
-def run_summary(session: Session, build: int) -> dict | None:
-    """The §2 run summary: build/timing/totals, per-shard timing, baseline + diff, and results."""
+def run_summary(
+    session: Session,
+    build: int,
+    *,
+    limit: int = DEFAULT_ROW_LIMIT,
+    expand: Collection[str] = (),
+) -> dict | None:
+    """The §2 run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
+
+    The results table is the ~25k-row surface behind issue #19: it is capped at ``limit`` rows
+    (unless ``"results"`` is in ``expand``) *before* projection, so the expensive per-row work is
+    skipped too. ``results_total`` carries the full count for the "Load all N Tests" hint.
+    """
     run = session.scalar(select(Run).where(Run.build_number == build))
     if run is None:
         return None
@@ -382,6 +432,9 @@ def run_summary(session: Session, build: int) -> dict | None:
         .where(TestResult.run_id == run.id)
         .order_by(TestResult.status, TestResult.test_identity_id)
     ).all()
+    results_total = len(results)
+    # Cap before projecting — the per-row identity name is a lazy load, so this skips the work too.
+    visible_results = _cap(results, "results", limit=limit, expand=expand)
 
     return {
         "build": run.build_number,
@@ -422,6 +475,7 @@ def run_summary(session: Session, build: int) -> dict | None:
                 "file_path": r.file_path,
                 "line": r.line,
             }
-            for r in results
+            for r in visible_results
         ],
+        "results_total": results_total,
     }
