@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     recently_fixed_days: int = 7
     # Max test rows rendered per dashboard section before it is capped with a "Load all N Tests"
     # link (keeps huge lists — the ~25k run-results table — responsive). 0 disables the cap.
-    ui_row_limit: int = 100
+    ui_row_limit: int = 50
     # Cold-start back-fill: on an empty store, ingest the last N completed builds oldest-first
     # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
     # not try to ingest every historical build from #1.
