@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Read(//opt/ls/Jenkins-UT-Analyzer/**)",
-      "Edit(//opt/ls/Jenkins-UT-Analyzer/**)",
-      "Write(//opt/ls/Jenkins-UT-Analyzer/**)",
+      "Read(//workspaces/Jenkins-UT-Analyzer/**)",
+      "Edit(//workspaces/Jenkins-UT-Analyzer/**)",
+      "Write(//workspaces/Jenkins-UT-Analyzer/**)",
       "Bash(git *)",
       "Bash(gh *)",
       "Bash(ssh -T git@github.com)",
@@ -11,7 +11,6 @@
       "Bash(python3.12 *)",
       "Bash(pip *)",
       "Bash(pip3 *)",
-      "Bash(.venv/bin/*)",
       "Bash(pytest *)",
       "Bash(ruff *)",
       "Bash(alembic *)",
@@ -19,7 +18,6 @@
       "Bash(mypy *)",
       "Bash(pre-commit *)",
       "Bash(docker *)",
-      "Bash(docker compose *)",
       "Bash(docker-compose *)",
       "Bash(curl *)",
       "Bash(jq *)",
@@ -48,17 +46,11 @@
       "Bash(cp *)",
       "Bash(mv *)",
       "Bash(ps *)",
-      "Bash(export DATABASE_URL=\"postgresql+psycopg://uta:uta@localhost:55432/uta\")",
-      "Bash(DATABASE_URL=\"postgresql+psycopg://uta:uta@localhost:55432/uta\" .venv/bin/python -m pytest -m \"not live\" -q)",
-      "Skill(run)",
-      "Skill(run:*)",
       "Bash(getent *)",
-      "Bash(gh repo *)",
-      "Bash(git checkout *)",
-      "Bash(gh label *)",
-      "Bash(gh api *)",
-      "Bash(gh issue *)",
-      "Bash(git rm *)"
+      "Bash(export DATABASE_URL=\"postgresql+psycopg://uta:uta@localhost:55432/uta\")",
+      "Bash(DATABASE_URL=\"postgresql+psycopg://uta:uta@localhost:55432/uta\" python3 -m pytest -m \"not live\" -q)",
+      "Skill(run)",
+      "Skill(run:*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
