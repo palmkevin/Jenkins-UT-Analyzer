@@ -347,3 +347,57 @@ The **Execution gate** inputs (A1–A4, B1) are validated against the live syste
 unblocked.** First concrete action: scaffold the compose skeleton (`web`/`poller`/`db`) and ingest
 build **#1702** end-to-end (JUnit report + SVN changeSets + per-shard timing + `V_TRACKING` window)
 into one read-only view, proving the parsers and the UTC ↔ `Europe/Luxembourg` clock model.
+
+## Notes / decisions discovered during build
+_Relocated from the retired `PROGRESS.md` (status now lives in GitHub Issues). These are durable
+design decisions, not status._
+
+- **Data-change correlation needs a lookback window**, not just the run's own start/finish — the
+  #1702 run window (19:01–20:41 local) contained **zero** `V_TRACKING` rows; the day's changes were
+  earlier (latest 15:46 local). `data_change_window()` defaults to a 12h lookback (provisional).
+- **Clock confirmed empirically**: Oracle `SYSDATE` returns local time while `DBTIMEZONE=+00:00`
+  → `CREDATIM` is naive `Europe/Luxembourg`. Tests pin summer(+2)/winter(+1)/DST.
+- Offline DB tests use **in-memory SQLite**; the web test needs `StaticPool` + a shared connection
+  so the request thread sees the same in-memory DB.
+- **Lifecycle is computed vs the baseline, not vs the stored state** (M2). Deriving transitions from
+  two fixed facts (baseline + current results) makes re-ingest idempotent and keeps episodes stable
+  across re-runs (so M2 classifications and future M3 human input attached to an episode survive).
+  Only **complete** runs advance lifecycle — an incomplete run's missing shard would otherwise read
+  as a mass `REMOVED`. Both follow directly from PLAN §2 ("baseline = most recent complete run").
+- **Both-signal classification is `UNKNOWN`, not a guess** (M2). Most runs carry a commit, so when a
+  `ut_ref` change *also* falls in the window the cause is genuinely ambiguous; with no KB to rank yet
+  (confidence deferred), we attach both candidate sets as evidence and let the human attribute.
+- **M4 needed no migration** — the full KB/flaky schema landed in M1 (signatures + trigram GIN,
+  `signature_id` FKs, lifecycle `flaky`), so the milestone is pure logic/surfaces/delivery.
+- **Signature collapses tracks** (M4): the normalizer strips the `…/release/<track>/` path prefix so
+  the same failure in `permanent` and `permanent_py39` hashes to **one** signature — consistent with
+  test-level identity (track is an attribute). Occurrence/first-last-seen are **recomputed from live
+  result links**, not incremented, so re-ingest stays idempotent.
+- **KB similarity has a dialect fallback** (M4): `pg_trgm similarity()` on Postgres, a `difflib`
+  ratio offline — same top-k/cutoff/ranking contract, so the offline gate exercises retrieval logic
+  without `pg_trgm`. `pgvector` remains a later drop-in behind the same interface.
+- **Email idempotency is by caller, not a DB flag** (M4): only the **poller** passes an
+  `EmailSender` and it ingests each build at most once (high-water mark), so a regression alert is
+  never re-sent; **back-fill passes no sender**, so re-processing history never emails. This avoided
+  a `runs.notified_at` column and the migration it would need.
+- **Flaky ≠ high fail-rate** (M4, PLAN §3): because every run is commit-triggered, "fails then
+  passes" is never "no change"; flakiness is **oscillation** (`transitions ÷ runs`) gated on a
+  fail-rate strictly between 0 and 1. Gaps (absent/incomplete) are missing data points, never flips.
+- **LLM hypothesis is enrichment, not analysis** (M5): the model call is a separate, optional,
+  side-effecting step (`hypothesize_run`) *after* the pure `classify_run`, never inside it — so
+  classification stays deterministic/idempotent/offline and the offline gate keeps running with zero
+  network. The deterministic `predicted_cause` is authoritative; the hypothesis is the readable
+  "why". `NoopHypothesisProvider` is the default, so the feature is purely additive (no key ⇒ no
+  behavior change). **No vector DB** — RAG is the existing `pg_trgm`/difflib retrieval pasted into
+  the prompt. Two interchangeable providers (Anthropic Claude, OpenAI) sit behind the one Protocol,
+  chosen by `LLM_PROVIDER`; the prompt is provider-agnostic. Each API key is a Platform/Console
+  (pay-as-you-go) credential, **distinct from any Claude.ai or ChatGPT subscription**, and only the
+  live poller path ever calls the model.
+- **Console-log ingest reuses the JUnit shape, doesn't fork it** (Post-v1): `unittest_log.py` emits
+  the same `TestCaseResult` as the JUnit parser, so the pipeline appends both into one `cases` list
+  before persistence and everything downstream (identity, lifecycle, episodes, classification,
+  signatures, flakiness) is untouched. The console-log stages are **not** devUTs shards, so run
+  **completeness** still keys off the 2 devUTs tracks only — an UNSTABLE unittest stage adds failing
+  tests without making the run "incomplete". Suite **allowlist** (not a generic `… - permanent`
+  regex) keeps non-test stages (Clean logs, devUTs) out. Default-off in the function signature keeps
+  the existing golden tests exact; `INGEST_UNITTEST_STAGES` (default on) turns it on for live runs.

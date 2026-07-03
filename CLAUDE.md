@@ -8,8 +8,10 @@ captures only the invariants and conventions that are easy to get wrong or re-de
 - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — **how / in what order** it gets built
   (phased: Slice 0 spike → Milestones 1–5). Start here for sequencing.
 - [docs/NEXT-PHASE-REQUIREMENTS.md](docs/NEXT-PHASE-REQUIREMENTS.md) — the **inputs** the build needs.
-- [docs/PROGRESS.md](docs/PROGRESS.md) — the **durable status checklist** (done / in-progress / open).
-  **Update it as part of every change** — it is the source of truth for status and diffs in PRs.
+- **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — the **source of
+  truth for status** (open todos, in-progress work) and, once closed, the record of completed changes.
+  Every change is a branch + PR that `Closes #N`; see **Task workflow** below. (The old
+  `docs/PROGRESS.md` checklist is retired — its design-rationale notes moved to IMPLEMENTATION-PLAN.md.)
 - [docs/OVERVIEW.html](docs/OVERVIEW.html) — the **hand-maintained concept/architecture overview**
   (purpose, the parts involved — Jenkins, Oracle `ut_ref`, the containers, PostgreSQL, LLM, email —
   and the ingest → analysis → triage → learning → alert workflows), with a schematic system map.
@@ -17,6 +19,26 @@ captures only the invariants and conventions that are easy to get wrong or re-de
 
 The execution gate (Jenkins A1–A4, Oracle B1) is **validated against live systems** — Slice 0 is
 unblocked. Live findings live in the plan's two "RESOLVED" sections.
+
+## Task workflow (GitHub Issues + PR)
+Work is tracked in **GitHub Issues**, driven conversationally via `gh` (available and authed in the
+devcontainer — see Conventions). There is **no status doc** to hand-maintain; the issue *is* the unit
+of work and the closed issue + merged PR *is* the record.
+- **One issue = one shippable unit.** Imperative title; body states intent + an acceptance check.
+  Big efforts get a `Tracking:` issue listing children. Label with a `type:*` (feat/fix/perf/chore/
+  test) and an `area:*` (ingest/analysis/dashboard/flakiness/kb/email/llm/infra/docs).
+- **Branch = Conventional prefix + issue number:** `feat/42-…`, `fix/57-…`, `docs/…`, `chore/…`,
+  `perf/…`, off `main`.
+- **PR body must contain `Closes #N`** (or `Refs #N` for partial) so the merge auto-closes the issue.
+  Merge with `gh pr merge` once CI is green (`main` requires the CI `test` check; it's `strict`, so
+  rebase/update the branch first). `enforce_admins` is off — a direct-push hotfix escape hatch exists.
+- **Interaction verbs I honor directly:** "open an issue for …" → `gh issue create`; "start #N" →
+  branch off `main`; "update #N …" → `gh issue edit`/comment; "close #N" → PR that `Closes #N`, or
+  `gh issue close` for non-code items.
+- **Public repo hygiene:** issue titles/bodies are world-readable — no LIMS / `MODDATA` / patient
+  strings and no secrets, same discipline as the fixtures.
+- Parallel **git worktrees** are deferred (single checkout for now); revisit when parallel work is
+  wanted (each worktree needs its own `.venv` + copied `.env`).
 
 ## Keep the concept overview in sync (required, every change)
 After any change that could alter **what parts the app involves, how they communicate, or its

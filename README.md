@@ -8,7 +8,9 @@ base**, regression-only **email** alerts, and an optional **LLM root-cause hypot
 > **Source of truth for behaviour and status** lives in [`docs/`](docs/) and [`CLAUDE.md`](CLAUDE.md):
 > - [docs/PLAN.md](docs/PLAN.md) — *what* the tool outputs (the §0–§5 views).
 > - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — *how / in what order* it was built.
-> - [docs/PROGRESS.md](docs/PROGRESS.md) — durable status checklist (Milestones 1–5 done).
+> - **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — status source of
+>   truth (open todos + closed-issue/PR history). Milestones 1–5 are done; see `CLAUDE.md` → *Task
+>   workflow* for the branch + `Closes #N` convention.
 > - [CLAUDE.md](CLAUDE.md) — load-bearing invariants (clocks, test identity, medical-data handling)
 >   and the testing contract.
 
