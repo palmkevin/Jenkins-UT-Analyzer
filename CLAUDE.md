@@ -20,6 +20,17 @@ captures only the invariants and conventions that are easy to get wrong or re-de
 The execution gate (Jenkins A1–A4, Oracle B1) is **validated against live systems** — Slice 0 is
 unblocked. Live findings live in the plan's two "RESOLVED" sections.
 
+## Live demo (public, synthetic)
+A public, fully-synthetic **demo** is hosted on Render: **<https://jenkins-ut-analyzer-demo.onrender.com>**.
+It runs the `uta.demo.app:app` entrypoint — an **ephemeral in-memory SQLite** store seeded on startup
+from `src/uta/demo/` (fake Jenkins + `ut_ref` payloads fed through the *real* `ingest_build`
+pipeline), with **no** connection to Jenkins/Oracle/FishEye/Jira/SMTP/LLM and **no** real data
+(never LIMS/patient/`MODDATA`/real names — same discipline as the fixtures). Deploy is via
+[`render.yaml`](render.yaml): Render auto-deploys `main` on every push, and because `main` is a
+protected branch requiring the CI `test` check, deploys are test-gated by construction. The free
+instance sleeps after ~15 min idle (cold start ~30–50 s). Locally: `uta demo` (or
+`uvicorn uta.demo.app:app`). The store is stateless — a restart rebuilds the same dataset.
+
 ## Task workflow (GitHub Issues + PR)
 Work is tracked in **GitHub Issues**, driven conversationally via `gh` (available and authed in the
 devcontainer — see Conventions). There is **no status doc** to hand-maintain; the issue *is* the unit
