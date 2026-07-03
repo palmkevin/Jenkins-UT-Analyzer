@@ -4,7 +4,7 @@ The **durable, committed checklist** of what's done and what's open. Source of t
 update it as part of every change (it diffs in PRs). The phased plan lives in
 [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md); this file tracks execution against it.
 
-_Last updated: 2026-07-01 (Post-v1: ingest performance — batched N+1s, bulk insert, deferred flaky recompute, timing logs)_
+_Last updated: 2026-07-03 (gh CLI active in devcontainer; branch protection on `main` — CI `test` required)_
 
 ## Legend
 `[x]` done & verified · `[~]` in progress · `[ ]` not started
@@ -59,21 +59,26 @@ _Last updated: 2026-07-01 (Post-v1: ingest performance — batched N+1s, bulk in
         The container has no forwarded SSH agent, so plain `git push`/`fetch` failed; the rewrite
         routes them through VS Code's forwarded HTTPS credential helper. The repo's `origin` stays
         SSH, so the host (VM) checkout is unaffected. Survives rebuilds via `postCreateCommand`.
-  - [~] Add (2026-07-03): GitHub CLI (`gh`) via the `github-cli` devcontainer feature (baked into the
+  - [x] Add (2026-07-03): GitHub CLI (`gh`) via the `github-cli` devcontainer feature (baked into the
         image, not hand-installed), to drive PRs / branch protection from the terminal. `gh` uses its
         own auth store (`~/.config/gh`), not git's credential helper — so a `gh-config` named volume
         + a Dockerfile dir-seed persist the token across rebuilds (same pattern as `claude-code-config`).
-        **Pending:** container rebuild + one-time `gh auth login` to activate; then supersedes the
-        "no `gh` CLI on this host" note in CLAUDE.md (which was true only for the bare VM).
+        **Active (2026-07-03):** rebuilt + authed as `palmkevin` (`gh auth status` ✓); the CLAUDE.md
+        "no `gh` CLI on this host" note is updated to scope it to the bare VM.
 - [x] **Live end-to-end verified** (2026-06-27): `docker compose up`, `uta backfill 1702` ingested
       **25,592** results (counts match source), run window UTC-normalized (17:08→18:41Z),
       `/runs/1702` renders. **`V_TRACKING` tz proven**: latest change naive-local 15:46 → 13:46Z;
       436 candidates in the lookback window. Captured as `live`-marked tests in `tests/live/`.
 
-### Open
-- [ ] Make CI a **required status on protected `main`** (needs GitHub web UI or `gh` — branch
-      protection; can't be done from code alone).
-- [ ] First **branch + PR**.
+### Done (cont.)
+- [x] First **branch + PR** — done long ago via the web-URL flow (Slice 0 = PR #2 `slice-0-spike`;
+      every milestone since shipped on its own branch + PR). Now also driven from the terminal via
+      `gh` (this change is the first `gh pr create`).
+- [x] Make CI a **required status on protected `main`** (2026-07-03, via `gh api
+      …/branches/main/protection`): the CI job **`test`** is a required status check (strict /
+      up-to-date-before-merge). `enforce_admins` is **off** — the owner keeps a direct-push hotfix
+      path; non-admin merges must be green. No required reviews (solo). Editable/removable via the
+      same endpoint.
 
 ---
 

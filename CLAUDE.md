@@ -81,8 +81,11 @@ Two tiers — see the plan's "Hosting & testing strategy":
   [--depth N]` does the same on demand. Once the store is non-empty, selection is incremental above
   the high-water mark.
 - Secrets never committed. Don't add a `live` dependency to the default test path.
-- **No `gh` CLI on this host** (and no `hub`). Don't attempt GitHub PR operations via `gh` — push
-  the branch and merge locally (`git merge --no-ff`), or open the PR via the web URL git prints.
+- **`gh` CLI is available in the devcontainer** (the `github-cli` devcontainer feature, authed as
+  `palmkevin` via a persisted `gh-config` volume) — use it for GitHub PR / branch-protection work
+  (`gh pr create`, `gh api …/branches/main/protection`). Note the **bare VM host still has no `gh`**:
+  if you're not in the devcontainer, fall back to pushing the branch and merging locally
+  (`git merge --no-ff`) or opening the PR via the web URL git prints.
 
 ## Shell-command hygiene (avoid needless permission prompts)
 The allow-list uses **prefix rules** (`Bash(docker *)`, `Bash(curl *)`, …). A prefix rule only
