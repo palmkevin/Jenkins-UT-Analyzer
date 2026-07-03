@@ -107,9 +107,7 @@ def create_app(session_factory=None) -> FastAPI:
     def run_view(request: Request, build: int):
         cfg = get_settings()
         with session_scope(session_factory) as s:
-            run = views.run_summary(
-                s, build, limit=cfg.ui_row_limit, expand=_expanded(request)
-            )
+            run = views.run_summary(s, build, limit=cfg.ui_row_limit, expand=_expanded(request))
         return render(request, "run.html", {"run": run, "build": build})
 
     @app.get("/flaky", response_class=HTMLResponse)
