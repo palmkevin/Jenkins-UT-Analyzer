@@ -1,0 +1,27 @@
+# Render Blueprint — the public, online **demo** deployment (Issue #25).
+#
+# This hosts the app with NO external systems: no Jenkins, no Oracle ut_ref, no FishEye/Jira, no
+# SMTP, no LLM, no external Postgres. On startup the demo entrypoint (`uta.demo.app:app`) builds a
+# throwaway SQLite database and seeds it with a fully synthetic run history (`uta.demo.dataset`), so
+# every dashboard surface is populated. The store is ephemeral — a restart wipes any demo edits and
+# rebuilds the same dataset.
+#
+# Deploys are test-gated by construction: `main` is a protected branch that requires the CI `test`
+# check (ruff + `pytest -m "not live"`, which now includes the demo integration tests) to be green
+# before a PR can merge, and Render auto-deploys only what lands on `main`.
+#
+# First-time setup (once): in the Render dashboard → New → Blueprint → pick this repo → Apply.
+# Render reads this file, creates the free web service, and auto-deploys `main` on every push.
+services:
+  - type: web
+    name: jenkins-ut-analyzer-demo
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    # Override the image's default CMD (which expects Postgres): run the self-seeding demo app on the
+    # port Render provides. No env vars needed — the demo reaches nothing external.
+    dockerCommand: sh -c "uvicorn uta.demo.app:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    autoDeploy: true

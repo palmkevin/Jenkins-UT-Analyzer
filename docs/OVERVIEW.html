@@ -437,6 +437,18 @@
   <p class="muted" style="font-size:13px">Config is 12-factor (env → typed settings). Secrets never committed;
   <code>.env.example</code> documents every key. Stack: Python 3.12, FastAPI, SQLAlchemy 2.x + Alembic,
   <code>psycopg</code> (Postgres), <code>oracledb</code> thin (Oracle).</p>
+
+  <h3>Public demo</h3>
+  <div class="card">
+    <p>A second, parallel deployment — <code>uta.demo.app:app</code> — hosts a <b>fully synthetic, offline</b>
+    copy of the dashboard for anyone to try, with <b>no connection to Jenkins, Oracle <code>ut_ref</code>,
+    FishEye/Jira, SMTP or an LLM</b>. A fake Jenkins/tracking-feed pair (<code>uta.demo.dataset</code>) is fed
+    through the <i>real</i> ingest + analysis pipeline (<code>uta.demo.seed</code>) into an ephemeral,
+    in-process SQLite store — same code paths, invented data. <code>uta demo</code> serves it locally;
+    <code>uta seed-demo</code> seeds a persistent store instead. <a href="../render.yaml">render.yaml</a>
+    auto-deploys this image to a free Render web service on every push to <code>main</code>, gated by the
+    same CI check that protects the branch — it is not part of the production system map above.</p>
+  </div>
 </section>
 
 <footer>
