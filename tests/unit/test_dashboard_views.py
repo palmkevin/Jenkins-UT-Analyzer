@@ -79,6 +79,51 @@ def test_recently_fixed_window_includes_recent_excludes_old(session_factory):
         assert "old" not in names
 
 
+# ── §0 long-list capping (issue #19) ─────────────────────────────────────────────
+
+
+def test_triage_new_bucket_capped_with_full_count(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "FAILED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        q = views.triage_queue(s, limit=2)
+        # Rows are capped to the limit, but the count reports the true total.
+        assert len(q["new"]) == 2
+        assert q["counts"]["new"] == 5
+        assert q["truncated"]["new"] is True
+
+
+def test_triage_expand_renders_bucket_in_full(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "FAILED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        q = views.triage_queue(s, limit=2, expand=["new"])
+        assert len(q["new"]) == 5
+        assert q["truncated"]["new"] is False
+
+
+def test_triage_limit_zero_disables_cap(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "FAILED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        q = views.triage_queue(s, limit=0)
+        assert len(q["new"]) == 5
+        assert q["truncated"]["new"] is False
+
+
+def test_run_results_capped_with_full_total(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        # 5 tests × 2 tracks = 10 result rows.
+        summary = views.run_summary(s, 1, limit=3)
+        assert len(summary["results"]) == 3
+        assert summary["results_total"] == 10
+        # Expanding renders every row.
+        full = views.run_summary(s, 1, limit=3, expand=["results"])
+        assert len(full["results"]) == 10
+
+
 # ── §1 per-test record ─────────────────────────────────────────────────────────
 
 

@@ -162,3 +162,32 @@ def test_unknown_test_record_is_graceful(client):
     resp = client.get("/tests/99999")
     assert resp.status_code == 200
     assert "No record" in resp.text
+
+
+# ── long-list capping (issue #19) ──────────────────────────────────────────────
+
+
+@pytest.fixture
+def many_failures_client(session_factory, monkeypatch):
+    """A store with 150 new failing tests, and the UI capped at 100 rows per section."""
+    monkeypatch.setenv("UI_ROW_LIMIT", "100")
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:04d}": "FAILED" for i in range(150)})
+        apply_run(s, r1, baseline=None)
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_caps_at_limit_and_shows_load_all_hint(many_failures_client):
+    page = many_failures_client.get("/").text
+    # The count reflects all 150, but the hint offers to load the rest.
+    assert "not yet acknowledged (150)" in page
+    assert "Load all 150 Tests" in page
+    # Only the first 100 rows are rendered (each links to /tests/<id>).
+    assert page.count('href="/tests/') == 100
+
+
+def test_triage_expand_renders_every_row(many_failures_client):
+    page = many_failures_client.get("/?expand=new").text
+    assert page.count('href="/tests/') == 150
+    # Fully expanded → no residual hint.
+    assert "Load all 150 Tests" not in page

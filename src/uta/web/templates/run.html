@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Run #{{ run.build if run else build }} — UT Analyzer{% endblock %}
 
 {% macro diff_list(rows) -%}
@@ -44,7 +45,7 @@
   </tbody>
 </table>
 
-<h2>Results ({{ run.results|length }})</h2>
+<h2 id="results">Results ({{ run.results_total }})</h2>
 <table>
   <thead>
     <tr><th>Status</th><th>Track</th><th>Test</th><th>Owner</th><th>Duration</th><th>Location</th></tr>
@@ -62,5 +63,6 @@
     {% endfor %}
   </tbody>
 </table>
+{{ ui.more_hint("results", run.results_total, run.results|length, expand) }}
 {% endif %}
 {% endblock %}
