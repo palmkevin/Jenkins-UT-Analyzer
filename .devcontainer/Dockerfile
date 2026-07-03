@@ -22,3 +22,8 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list
 # root-owned volume is not re-seeded: remove it with `docker volume rm
 # jenkins-ut-analyzer-dev_claude-code-config`, or chown it once inside the container.)
 RUN mkdir -p /home/vscode/.claude && chown vscode:vscode /home/vscode/.claude
+
+# Same treatment for the gh-config named volume (mounts at ~/.config/gh): pre-create the dir
+# vscode-owned so a freshly created volume seeds with the right ownership and `gh auth login`
+# can persist its token. (~/.config itself must exist and be vscode-owned too.)
+RUN mkdir -p /home/vscode/.config/gh && chown -R vscode:vscode /home/vscode/.config

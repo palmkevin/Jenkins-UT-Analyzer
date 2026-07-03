@@ -14,14 +14,21 @@
     // Installs the Claude Code CLI in the container (native binary, on PATH) + registers the
     // extension. The VS Code panel bundles its own CLI, but this makes `claude` work in the
     // integrated terminal too. Auto-updates by default.
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    // Installs the GitHub CLI (`gh`) into the image so PRs / branch-protection can be driven from
+    // the terminal. Binary only — `gh` has its own auth store (not git's credential helper), so
+    // authenticate once per persisted home with `gh auth login`.
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
   // Persist Claude Code's login/settings/history across container rebuilds. The base image runs as
   // user `vscode` (home /home/vscode); without this, ~/.claude is discarded and you re-sign-in each
   // rebuild. First run: `claude` in a terminal to authenticate (browser flow).
+  // Second volume: `gh` keeps its auth token in ~/.config/gh (its own store, not git's), which would
+  // otherwise be discarded on rebuild — persist it so `gh auth login` is a one-time step.
   "mounts": [
-    "source=claude-code-config,target=/home/vscode/.claude,type=volume"
+    "source=claude-code-config,target=/home/vscode/.claude,type=volume",
+    "source=gh-config,target=/home/vscode/.config/gh,type=volume"
   ],
 
   "remoteEnv": { "TZ": "Europe/Luxembourg" },
