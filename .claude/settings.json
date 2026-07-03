@@ -52,7 +52,9 @@
       "Bash(DATABASE_URL=\"postgresql+psycopg://uta:uta@localhost:55432/uta\" .venv/bin/python -m pytest -m \"not live\" -q)",
       "Skill(run)",
       "Skill(run:*)",
-      "Bash(getent *)"
+      "Bash(getent *)",
+      "Bash(gh repo *)",
+      "Bash(git checkout *)"
     ],
     "deny": [
       "Bash(rm -rf /)",
