@@ -12,8 +12,9 @@
 {% if not board.rows %}
   <p class="empty">No oscillating tests in the window.</p>
 {% else %}
-<table>
-  <thead>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle bg-white">
+  <thead class="table-light">
     <tr>
       <th>Test</th><th>Owner</th><th>Score</th><th>Transitions</th><th>Runs</th>
       <th>Fail rate</th><th>Fails (window / all)</th><th>Last failed</th><th>Pattern</th>
@@ -39,5 +40,6 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 {% endblock %}

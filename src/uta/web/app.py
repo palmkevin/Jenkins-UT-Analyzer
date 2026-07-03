@@ -19,6 +19,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from uta.config import get_settings
@@ -26,7 +27,9 @@ from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_sc
 from uta.web import actions, views
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_WEB_DIR = Path(__file__).parent
+_TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+_STATIC_DIR = _WEB_DIR / "static"
 
 
 def _expanded(request: Request) -> list[str]:
@@ -55,6 +58,10 @@ def create_app(session_factory=None) -> FastAPI:
         yield
 
     app = FastAPI(title="Jenkins UT Analyzer", lifespan=lifespan)
+
+    # Vendored front-end assets (Bootstrap CSS). Served locally — no CDN / runtime network
+    # dependency, in keeping with the self-contained, offline-first design.
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     def render(request: Request, template: str, context: dict) -> HTMLResponse:
         cfg = get_settings()

@@ -35,7 +35,7 @@
     <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> at {{ lc.acknowledged_at }}.</p>
   {% elif lc.state == "FAILING" %}
     <form method="post" action="/tests/{{ record.identity_id }}/acknowledge">
-      <button type="submit">Acknowledge</button>
+      <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
     </form>
   {% endif %}
   {% endif %}
@@ -70,7 +70,7 @@
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
     {% if (ep.suggested_contact or ep.llm_hypothesis) %}
     <form method="post" action="/episodes/{{ ep.id }}/confirm">
-      <button type="submit">Confirm AI suggestion</button>
+      <button class="btn btn-sm btn-success" type="submit">Confirm AI suggestion</button>
     </form>
     {% endif %}
 
@@ -81,20 +81,20 @@
       {% if ep.validated_by %}<br>Validated by {{ ep.validated_by }} at {{ ep.validated_at }}{% endif %}
     </p>
 
-    <form method="post" action="/episodes/{{ ep.id }}/attribute">
-      <label>Causing person</label>
-      <input type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
-      <label>Reason for failure</label>
-      <textarea name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
-      <label>Jira ticket</label>
-      <input type="text" name="jira_ticket" value="{{ ep.jira_ticket or '' }}" placeholder="e.g. ABC-123">
-      <label>Triage status</label>
-      <select name="triage_status">
+    <form class="mt-3" style="max-width: 34rem" method="post" action="/episodes/{{ ep.id }}/attribute">
+      <label class="form-label mb-1">Causing person</label>
+      <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
+      <label class="form-label mb-1">Reason for failure</label>
+      <textarea class="form-control form-control-sm mb-2" name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
+      <label class="form-label mb-1">Jira ticket</label>
+      <input class="form-control form-control-sm mb-2" type="text" name="jira_ticket" value="{{ ep.jira_ticket or '' }}" placeholder="e.g. ABC-123">
+      <label class="form-label mb-1">Triage status</label>
+      <select class="form-select form-select-sm mb-3" name="triage_status">
         {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}
         <option value="{{ s }}"{% if ep.triage_status == s %} selected{% endif %}>{{ s }}</option>
         {% endfor %}
       </select>
-      <p><button type="submit">Save</button></p>
+      <p><button class="btn btn-sm btn-primary" type="submit">Save</button></p>
     </form>
   </div>
   {% else %}
@@ -134,8 +134,9 @@
   </p>
   {% if rec.similar %}
   <h3 style="font-size:0.92rem">Similar past cases</h3>
-  <table>
-    <thead><tr><th>Test</th><th>Similarity</th><th>Reason</th><th>Caused by</th><th>Provenance</th></tr></thead>
+  <div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light"><tr><th>Test</th><th>Similarity</th><th>Reason</th><th>Caused by</th><th>Provenance</th></tr></thead>
     <tbody>
       {% for c in rec.similar %}
       <tr>
@@ -148,6 +149,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty">No similar past failures yet.</p>
   {% endif %}
@@ -166,7 +168,7 @@
     {% if lf.run and lf.run.url %}<br><a href="{{ lf.run.url }}">Jenkins run</a>{% endif %}
   </p>
   {% if lf.error_details %}<p><strong>{{ lf.error_details }}</strong></p>{% endif %}
-  {% if lf.error_stack_trace %}<pre><code>{{ lf.error_stack_trace }}</code></pre>{% endif %}
+  {% if lf.error_stack_trace %}<pre class="p-3 bg-light border rounded small"><code>{{ lf.error_stack_trace }}</code></pre>{% endif %}
 </details>
 {% endif %}
 
@@ -176,8 +178,9 @@
   <summary>Candidate changes in the failure window</summary>
   {% if cand.code %}
   <h3 style="font-size:0.92rem">Code changes (SVN)</h3>
-  <table>
-    <thead><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th></tr></thead>
+  <div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light"><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th></tr></thead>
     <tbody>
       {% for c in cand.code %}
       <tr><td>{% if c.revision %}<a href="{{ fisheye_changelog_url }}?cs={{ c.revision }}"><code>{{ c.revision }}</code></a>{% else %}—{% endif %}</td>
@@ -186,11 +189,13 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
   {% if cand.data %}
   <h3 style="font-size:0.92rem">Data changes (ut_ref)</h3>
-  <table>
-    <thead><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th></tr></thead>
+  <div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light"><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th></tr></thead>
     <tbody>
       {% for d in cand.data %}
       <tr><td><code>{{ d.entity }}</code>{% if d.pk %} ({{ d.pk }}){% endif %}</td>
@@ -198,6 +203,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
 </details>
 {% endif %}

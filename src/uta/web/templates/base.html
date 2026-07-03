@@ -4,64 +4,56 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}UT Analyzer{% endblock %}</title>
+  <link rel="stylesheet" href="/static/bootstrap.min.css">
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; color: #1a1a1a; background: #fafafa; }
-    header { display: flex; align-items: baseline; gap: 1.2rem; padding: 0.8rem 1.6rem;
-             background: #1f2933; color: #fff; }
-    header a { color: #cfe3ff; text-decoration: none; }
-    header a:hover { text-decoration: underline; }
-    header .brand { font-weight: 700; color: #fff; }
-    header .spacer { flex: 1; }
-    header form { display: inline; }
-    header input { font-size: 0.8rem; padding: 0.15rem 0.3rem; }
-    main { margin: 1.6rem; }
-    h1 { font-size: 1.3rem; }
-    h2 { font-size: 1.05rem; margin-top: 1.6rem; }
-    .meta { color: #555; margin-bottom: 1rem; }
-    table { border-collapse: collapse; width: 100%; font-size: 0.88rem; background: #fff; }
-    th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #eee; }
-    th { background: #f0f2f5; }
-    code { font-size: 0.82rem; color: #444; }
+    /* Domain-specific accents layered on top of Bootstrap (loaded first, so these win). */
+    body { background: #f5f6f8; }
+    main { margin: 1.6rem auto; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.15rem; margin-top: 1.6rem; }
+    .meta { color: #6c757d; margin-bottom: 1rem; }
+    .empty { color: #868e96; font-style: italic; }
+    code { font-size: 0.85em; }
+
+    /* Test-status colouring (applied to cells / inline spans by status name). */
     .FAILED, .REGRESSION, .FAILING { color: #b00020; font-weight: 600; }
-    .PASSED, .FIXED { color: #137333; }
-    .SKIPPED, .REMOVED { color: #999; }
-    .badge { display: inline-block; font-size: 0.72rem; padding: 0.05rem 0.4rem; border-radius: 3px;
-             background: #e6eaf0; color: #333; }
+    .PASSED, .FIXED { color: #137333; font-weight: 600; }
+    .SKIPPED, .REMOVED { color: #868e96; }
+
+    /* Badges: keep the single-class call sites working on top of Bootstrap's .badge base. */
+    .badge { background: #e6eaf0; color: #333; font-weight: 600; vertical-align: middle; }
     .badge.removed { background: #fde2e2; color: #b00020; }
     .badge.flaky { background: #fff3cd; color: #8a6d00; }
-    .count { font-weight: 700; }
-    .empty { color: #888; font-style: italic; }
-    .more { color: #555; font-size: 0.85rem; margin: 0.4rem 0 1rem; }
-    .more a { color: #1a5fb4; font-weight: 600; }
-    button { font-size: 0.8rem; cursor: pointer; }
-    .card { background: #fff; border: 1px solid #e5e5e5; border-radius: 5px; padding: 0.8rem 1rem;
-            margin-bottom: 1rem; }
-    /* Collapsible sections (native <details>/<summary>). A <summary> reads like the old <h2>. */
-    details { margin-bottom: 1rem; }
-    summary { font-size: 1.05rem; font-weight: 600; cursor: pointer; }
+
+    /* Collapsible sections (native <details>/<summary>) styled as cards. */
+    .card { display: block; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    details.episodes { margin-bottom: 1rem; }
+    summary { font-size: 1.1rem; font-weight: 600; cursor: pointer; }
     summary:hover { color: #000; }
     details.card > summary { margin: 0; }
     details.card[open] > summary { margin-bottom: 0.8rem; }
-    details.episodes > summary { font-size: 1.05rem; margin: 1.6rem 0 0.8rem; }
-    label { font-size: 0.82rem; color: #444; display: block; margin: 0.4rem 0 0.1rem; }
-    input[type=text], textarea, select { width: 100%; max-width: 32rem; font-size: 0.85rem;
-            padding: 0.25rem; box-sizing: border-box; }
+    details.episodes > summary { font-size: 1.15rem; margin: 1.6rem 0 0.8rem; }
+
+    .count { font-weight: 700; }
+    .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
   </style>
 </head>
 <body>
-  <header>
-    <span class="brand">UT Analyzer</span>
-    <a href="/">Triage</a>
-    <a href="/flaky">Flaky</a>
-    <a href="/kb">Knowledge base</a>
-    <span class="spacer"></span>
-    <form method="post" action="/identity">
-      <span>acting as</span>
-      <input type="text" name="actor" value="{{ actor }}" aria-label="acting user">
-      <button type="submit">set</button>
+  <nav class="navbar navbar-expand navbar-dark bg-dark px-3">
+    <span class="navbar-brand fw-bold">UT Analyzer</span>
+    <ul class="navbar-nav me-auto">
+      <li class="nav-item"><a class="nav-link" href="/">Triage</a></li>
+      <li class="nav-item"><a class="nav-link" href="/flaky">Flaky</a></li>
+      <li class="nav-item"><a class="nav-link" href="/kb">Knowledge base</a></li>
+    </ul>
+    <form class="d-flex align-items-center gap-2" method="post" action="/identity">
+      <span class="navbar-text small">acting as</span>
+      <input class="form-control form-control-sm" style="width: 10rem" type="text" name="actor"
+             value="{{ actor }}" aria-label="acting user">
+      <button class="btn btn-sm btn-outline-light" type="submit">set</button>
     </form>
-  </header>
-  <main>
+  </nav>
+  <main class="container-fluid px-4">
     {% block content %}{% endblock %}
   </main>
 </body>

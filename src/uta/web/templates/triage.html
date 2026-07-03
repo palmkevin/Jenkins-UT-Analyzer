@@ -24,8 +24,9 @@
 {% if not queue.new %}
   <p class="empty">Nothing waiting — the action queue is empty.</p>
 {% else %}
-<table>
-  <thead><tr><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle bg-white">
+  <thead class="table-light"><tr><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
   <tbody>
     {% for row in queue.new %}
     <tr>
@@ -35,13 +36,14 @@
       <td>{{ row.predicted_cause or "—" }}</td>
       <td>
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
-          <button type="submit">Acknowledge</button>
+          <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
         </form>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {{ ui.more_hint("new", queue.counts.new, queue.new|length, expand) }}
 {% endif %}
 
@@ -49,8 +51,9 @@
 {% if not queue.still_failing %}
   <p class="empty">No acknowledged failures in flight.</p>
 {% else %}
-<table>
-  <thead><tr><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle bg-white">
+  <thead class="table-light"><tr><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
   <tbody>
     {% for row in queue.still_failing %}
     <tr>
@@ -66,6 +69,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {{ ui.more_hint("still_failing", queue.counts.still_failing, queue.still_failing|length, expand) }}
 {% endif %}
 
@@ -73,8 +77,9 @@
 {% if not queue.recently_fixed %}
   <p class="empty">No fixes in the recent window.</p>
 {% else %}
-<table>
-  <thead><tr><th>Test</th><th>Fixed in</th><th>When</th><th>Reason</th></tr></thead>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle bg-white">
+  <thead class="table-light"><tr><th>Test</th><th>Fixed in</th><th>When</th><th>Reason</th></tr></thead>
   <tbody>
     {% for row in queue.recently_fixed %}
     <tr>
@@ -86,6 +91,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {{ ui.more_hint("recently_fixed", queue.counts.recently_fixed, queue.recently_fixed|length, expand) }}
 {% endif %}
 {% endblock %}
