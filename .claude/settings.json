@@ -54,7 +54,11 @@
       "Skill(run:*)",
       "Bash(getent *)",
       "Bash(gh repo *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(gh label *)",
+      "Bash(gh api *)",
+      "Bash(gh issue *)",
+      "Bash(git rm *)"
     ],
     "deny": [
       "Bash(rm -rf /)",
