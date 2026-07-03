@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient
@@ -61,3 +62,34 @@ def test_poll_once_is_idempotent(session_factory):
 
 def test_no_completed_build_yields_nothing(session_factory):
     assert builds_to_ingest(_MultiBuildFake(last_completed=None), session_factory) == []
+
+
+class _Rotated404Fake(_MultiBuildFake):
+    """Serves the fixtures for every build except ``missing``, whose detail endpoint 404s.
+
+    Models a build whose ``lastCompletedBuild`` pointer outlived its retention window: the number
+    is valid but ``/<n>/api/json`` is gone.
+    """
+
+    def __init__(self, last_completed: int, missing: int) -> None:
+        super().__init__(last_completed=last_completed)
+        self._missing = missing
+
+    def build_meta(self, build: int) -> dict:
+        if build == self._missing:
+            request = httpx.Request("GET", f"http://jenkins/{build}/api/json")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Not Found", request=request, response=response)
+        return super().build_meta(build)
+
+
+def test_poll_once_skips_build_with_404_detail(session_factory):
+    # Build #2's detail endpoint 404s; #1 and #3 still ingest, and no error propagates.
+    client = _Rotated404Fake(last_completed=3, missing=2)
+    assert poll_once(client, session_factory) == [1, 3]
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(func.count()).select_from(Run)) == 2
+    # The vanished build left no high-water mark; a later build advanced it past the gap.
+    assert highest_ingested_build(session_factory) == 3
+    # A subsequent tick with nothing new above the mark is a no-op (no retry of #2).
+    assert poll_once(client, session_factory) == []
