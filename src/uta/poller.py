@@ -9,8 +9,10 @@ same state.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,6 +22,8 @@ from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
+
+logger = logging.getLogger(__name__)
 
 
 def highest_ingested_build(session_factory: sessionmaker[Session]) -> int:
@@ -79,25 +83,39 @@ def poll_once(
     """
     processed: list[int] = []
     for build in builds_to_ingest(client, session_factory, backfill_depth=backfill_depth):
-        ingest_build(
-            client,
-            session_factory,
-            build,
-            expected_shards=expected_shards,
-            feed=feed,
-            data_change_lookback=data_change_lookback,
-            data_change_tolerance=data_change_tolerance,
-            flaky_window_days=flaky_window_days,
-            flaky_threshold=flaky_threshold,
-            email_sender=email_sender,
-            email_recipients=email_recipients,
-            email_recovery_notice=email_recovery_notice,
-            hypothesis_provider=hypothesis_provider,
-            kb_top_k=kb_top_k,
-            kb_similarity_cutoff=kb_similarity_cutoff,
-            ingest_unittest_logs=ingest_unittest_logs,
-            unittest_suites=unittest_suites,
-        )
+        try:
+            ingest_build(
+                client,
+                session_factory,
+                build,
+                expected_shards=expected_shards,
+                feed=feed,
+                data_change_lookback=data_change_lookback,
+                data_change_tolerance=data_change_tolerance,
+                flaky_window_days=flaky_window_days,
+                flaky_threshold=flaky_threshold,
+                email_sender=email_sender,
+                email_recipients=email_recipients,
+                email_recovery_notice=email_recovery_notice,
+                hypothesis_provider=hypothesis_provider,
+                kb_top_k=kb_top_k,
+                kb_similarity_cutoff=kb_similarity_cutoff,
+                ingest_unittest_logs=ingest_unittest_logs,
+                unittest_suites=unittest_suites,
+            )
+        except httpx.HTTPStatusError as exc:
+            # A build's pointer can outlive its detail endpoint: Jenkins rotates old builds out
+            # of retention while ``lastCompletedBuild`` still names them, so a detail fetch 404s.
+            # That's an expected gap, not a fault — skip the build and keep polling. Persisting no
+            # Run for it leaves the high-water mark unadvanced *for this build*; a later successful
+            # build advances it past the gap, so the vanished build is never retried (gone for
+            # good). Any other HTTP error is a real fault and propagates.
+            if exc.response.status_code != 404:
+                raise
+            logger.warning(
+                "skipping build #%d: detail endpoint returned 404 (%s)", build, exc.request.url
+            )
+            continue
         processed.append(build)
     return processed
 
