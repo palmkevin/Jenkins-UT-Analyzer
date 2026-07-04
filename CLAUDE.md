@@ -105,22 +105,19 @@ Two tiers — see the plan's "Hosting & testing strategy":
 - Secrets never committed. Don't add a `live` dependency to the default test path.
 - **`gh` CLI is available in the devcontainer** (the `github-cli` devcontainer feature, authed as
   `palmkevin` via a persisted `gh-config` volume) — use it for GitHub PR / branch-protection work
-  (`gh pr create`, `gh api …/branches/main/protection`). Note the **bare VM host still has no `gh`**:
-  if you're not in the devcontainer, fall back to pushing the branch and merging locally
-  (`git merge --no-ff`) or opening the PR via the web URL git prints.
+  (`gh pr create`, `gh api …/branches/main/protection`). The **bare VM host is deployment-only** (it
+  runs the deployed stack; it has no `gh` and no baked permission config) — see below.
 
-## Shell-command hygiene (avoid needless permission prompts)
-The allow-list uses **prefix rules** (`Bash(docker *)`, `Bash(curl *)`, …). A prefix rule only
-auto-approves a command Claude Code can prove is a **single, simple invocation**. Any shell-control
-character makes the command "complex" and it will prompt **even though the prefix matches**:
-- pipes `|`, chains `;` `&&` `||`, redirections (`2>&1`, `2>/dev/null`, `>`);
-- subshell/glob characters `(` `)` `*` — **even inside quotes** (e.g. a `count(*)` in piped SQL).
-
-So prefer **one bare command at a time**:
-- Don't append `2>&1 | tail`/`| grep`/`| head` to trim output — the harness truncates already; run
-  the bare command (`docker compose logs web`, `docker compose build web`).
-- Avoid glob/paren metacharacters in arguments when a plain form exists (`count(1)` not `count(*)`).
-- Chain only when every segment is independently allow-listed — and expect it may still prompt.
-- Hand-editing `.claude/settings.json` mid-session may **not** hot-reload; add live rules via the
-  prompt's "always allow" option or `/permissions`, not a manual file edit.
+## Development happens only in the devcontainer
+All development runs **inside the devcontainer**, never on the bare VM host. The devcontainer image
+bakes `bypassPermissions` into `/etc/claude-code/managed-settings.json` (the Linux *managed-settings*
+path — highest precedence, and **not** shadowed by the workspace bind mount or the `~/.claude` named
+volume, unlike those paths), so Claude Code runs **prompt-free**. Consequences:
+- **There is no `permissions.allow` list to maintain** in `.claude/settings.json` — it is
+  intentionally empty. Don't re-add prefix rules; the managed mode already covers everything.
+- The `deny` rules (`rm -rf /`, `git push --force`) and the built-in `rm -rf /` / `rm -rf ~`
+  circuit-breakers **still apply** even under bypass.
+- The mode is baked at **build** time, so a **Rebuild Container** is needed after changing it.
+- **Don't develop on the bare VM host**: it has no managed-settings file (so it would prompt) and no
+  `gh`. It exists to run the deployed `web`/`poller`/`db` stack, not to author changes.
 </content>
