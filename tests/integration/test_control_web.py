@@ -45,6 +45,14 @@ def test_control_page_renders(client):
     assert "Poller health" in resp.text
 
 
+def test_demo_seeds_control_panel_state(client):
+    """The seed populates all three panels so the Render showcase isn't half-empty (issue #16)."""
+    text = client.get("/control").text
+    assert "has not reported a tick yet" not in text  # heartbeat is seeded
+    assert "override(s) active" in text  # the seeded kb_top_k override lights the badge
+    assert "done" in text and "error" in text  # both seeded ingest jobs are listed
+
+
 def test_set_and_revert_override_roundtrips(client, factory):
     # Set an override.
     resp = client.post(
