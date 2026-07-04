@@ -47,8 +47,20 @@ of work and the closed issue + merged PR *is* the record.
   `gh issue close` for non-code items.
 - **Public repo hygiene:** issue titles/bodies are world-readable — no LIMS / `MODDATA` / patient
   strings and no secrets, same discipline as the fixtures.
-- Parallel **git worktrees** are deferred (single checkout for now); revisit when parallel work is
-  wanted (each worktree needs its own `.venv` + copied `.env`).
+- Parallel **git worktrees** (in-container, single devcontainer): run multiple sessions/branches at
+  once with `make worktree name=<x>` (teardown: `make worktree-rm name=<x>`; `scripts/worktree.sh`
+  does the work). Each worktree lives under `.worktrees/<x>` (gitignored; inside the bind mount, so
+  it persists on the host and shares the one `.git` — no mount change, no rebuild), gets its **own
+  `.venv`** (the editable install pins a single source path, so worktrees can't share one) and its
+  **own throwaway `uta_<x>` database** on the shared compose `db` server. `source
+  .worktrees/<x>/.venv/bin/activate` activates the venv **and** exports that worktree's
+  `DATABASE_URL` (needed because the devcontainer exports a container-wide `DATABASE_URL` that
+  outranks the `.env` file in pydantic-settings). Per-worktree DBs let concurrent `pytest -m "not
+  live"` runs — including the destructive migration test — proceed without contention; the
+  in-memory-SQLite tests never contended anyway. Set a distinct `WEB_PORT` only when running two
+  live `web`/`poller` stacks at once. A **container-per-task** model is deferred (it would also need
+  the hardcoded `name: jenkins-ut-analyzer-dev` and the published ports in
+  `.devcontainer/docker-compose.dev.yml` parametrized).
 
 ## Keep the concept overview in sync (required, every change)
 After any change that could alter **what parts the app involves, how they communicate, or its
