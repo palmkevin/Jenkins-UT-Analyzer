@@ -176,9 +176,7 @@ def create_app(session_factory=None) -> FastAPI:
         return RedirectResponse("/control", status_code=303)
 
     @app.post("/control/ingest")
-    def trigger_ingest(
-        request: Request, build_start: int = Form(...), build_end: str = Form("")
-    ):
+    def trigger_ingest(request: Request, build_start: int = Form(...), build_end: str = Form("")):
         try:
             end = int(build_end) if build_end.strip() else build_start
         except ValueError:

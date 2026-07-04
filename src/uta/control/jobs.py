@@ -157,6 +157,4 @@ def recent_jobs(session: Session, *, limit: int = 20) -> list[IngestJob]:
     """The most-recent ingest jobs, newest first (for the control-panel history)."""
     from sqlalchemy import select
 
-    return list(
-        session.scalars(select(IngestJob).order_by(IngestJob.id.desc()).limit(limit)).all()
-    )
+    return list(session.scalars(select(IngestJob).order_by(IngestJob.id.desc()).limit(limit)).all())
