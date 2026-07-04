@@ -11,7 +11,7 @@ from enum import StrEnum
 
 
 class LifecycleState(StrEnum):
-    """About the test *result* — orthogonal to acknowledgement (see PLAN §1)."""
+    """About the test *result* — orthogonal to acknowledgement."""
 
     FAILING = "FAILING"
     FIXED = "FIXED"
@@ -41,7 +41,7 @@ class PredictedCause(StrEnum):
 
 
 class Provenance(StrEnum):
-    """How a cause/reason was reached — weights KB retrieval (PLAN §4)."""
+    """How a cause/reason was reached — weights KB retrieval."""
 
     AI_UNCONFIRMED = "AI_UNCONFIRMED"
     AI_CONFIRMED = "AI_CONFIRMED"
@@ -67,7 +67,7 @@ class ChangeType(StrEnum):
 
 
 class ErrorType(StrEnum):
-    """Derived from result + stack trace (PLAN §1 'Error type')."""
+    """Derived from result + stack trace."""
 
     ASSERTION = "ASSERTION"
     EXCEPTION = "EXCEPTION"

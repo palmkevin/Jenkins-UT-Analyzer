@@ -189,7 +189,7 @@ def test_data_change_window_looks_back_with_tolerance():
 
 
 def test_ingest_records_failure_signatures(session_factory):
-    """Every failing result gets a KB signature linked (§4); re-ingest doesn't double-count."""
+    """Every failing result gets a KB signature linked; re-ingest doesn't double-count."""
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     with session_scope(session_factory) as s:
         sigs = s.scalars(select(FailureSignature)).all()
@@ -225,7 +225,7 @@ def test_ingest_emails_on_regression_only_via_sender(session_factory):
 
 
 def test_ingest_fills_llm_hypothesis_with_provider(session_factory):
-    """A real provider fills the hypothesis for every newly-classified episode (§4)."""
+    """A real provider fills the hypothesis for every newly-classified episode."""
     from tests.fakes.llm import StubHypothesisProvider
 
     ingest_build(

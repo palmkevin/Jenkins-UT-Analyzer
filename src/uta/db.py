@@ -23,7 +23,7 @@ class MissingExtensionError(RuntimeError):
 
 
 def assert_pg_trgm(engine: Engine) -> None:
-    """Assert the ``pg_trgm`` extension is present (KB fuzzy similarity, §4).
+    """Assert the ``pg_trgm`` extension is present (KB fuzzy similarity).
 
     Created by an Alembic migration; this guards against a DB that skipped migrations. A no-op on
     non-Postgres engines (SQLite offline tests have no extensions and don't need this check).

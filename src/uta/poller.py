@@ -1,4 +1,4 @@
-"""Scheduled Jenkins poll (PLAN §"Trigger"): detect new completed builds and ingest them.
+"""Scheduled Jenkins poll: detect new completed builds and ingest them.
 
 The poller is a thin driver over :func:`uta.ingest.pipeline.ingest_build`. Its only real logic is
 **which** builds to process: everything above the highest build already in our store, up to the
@@ -80,8 +80,8 @@ def poll_once(
     """Ingest every new completed build once. Returns the build numbers processed.
 
     The poller is the **live** path, so it forwards the email sender and the LLM hypothesis provider
-    — each newly-processed build that introduces a regression triggers the §5 alert and (with a real
-    provider) the §4 hypothesis. Each build is ingested at most once (the high-water mark), so
+    — each newly-processed build that introduces a regression triggers the email alert and (with a
+    real provider) the LLM hypothesis. Each build is ingested at most once (the high-water mark), so
     neither is re-done.
     """
     processed: list[int] = []

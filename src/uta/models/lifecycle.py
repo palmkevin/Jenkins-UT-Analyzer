@@ -1,6 +1,6 @@
 """Lifecycle state + failure episodes (Information model: 'Test lifecycle', 'Failure episodes').
 
-Two things are deliberately separated (PLAN §1): the **lifecycle state** (about the result:
+Two things are deliberately separated: the **lifecycle state** (about the result:
 FAILING/FIXED/REMOVED + a FLAKY flag) and **acknowledgement** (an orthogonal flag + actor +
 timestamp that splits the New vs Still-failing buckets, *not* a state). Episodes make regressions
 first-class: one row per fail→fix cycle so history accumulates instead of being overwritten.
@@ -42,7 +42,7 @@ class TestLifecycle(Base, TimestampMixin):
     flaky: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     reopen_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Acknowledgement — orthogonal attribute, cleared on reopen (PLAN §1).
+    # Acknowledgement — orthogonal attribute, cleared on reopen.
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     acknowledged_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

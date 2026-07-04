@@ -1,4 +1,4 @@
-"""Oscillation-based flakiness (PLAN §3).
+"""Oscillation-based flakiness.
 
 Because **every** run is triggered by a trunk commit, "fails then passes" is never "no change" —
 there is always a change in play. So flakiness is **not** measured as a fail-rate; it is measured as
@@ -117,7 +117,7 @@ def compute_stats(
     threshold: float = 0.3,
     now: datetime | None = None,
 ) -> FlakinessStats:
-    """Flakiness + failure-history stats for one test (PLAN §3 — answers the ★ questions)."""
+    """Flakiness + failure-history stats for one test."""
     now = now or _now()
     cutoff = now - timedelta(days=window_days)
     seq = _sequence(session, identity_id)
@@ -137,7 +137,7 @@ def compute_stats(
     flaky = 0.0 < fail_rate < 1.0 and score >= threshold
 
     # Shard-correlated: among the failing runs, do the failures cluster in ONE track while the other
-    # track passes? A consistent single-track failure is a strong infra/flaky tell (PLAN §3).
+    # track passes? A consistent single-track failure is a strong infra/flaky tell.
     single_track_fails = sum(
         1 for p in window if p.failed and p.pass_tracks and len(p.fail_tracks) == 1
     )
@@ -188,7 +188,7 @@ def leaderboard(
     limit: int = 50,
     now: datetime | None = None,
 ) -> list[dict]:
-    """The flaky-leaderboard rows (PLAN §3): most-unstable tests first, score then transitions."""
+    """The flaky-leaderboard rows: most-unstable tests first, score then transitions."""
     from uta.models import TestIdentity
 
     now = now or _now()

@@ -1,7 +1,7 @@
 """Per-run test results (Information model: 'Test results per run').
 
 Keyed by ``(run, test_identity, track)`` — the same test runs in both tracks. Across runs these
-rows ARE the failure-history feed (counts, last-failed, fail-rate windows in §3); no separate
+rows ARE the failure-history feed (counts, last-failed, fail-rate windows); no separate
 table is needed, hence the ``(test_identity_id, status)`` and ``run_id`` indexes.
 """
 

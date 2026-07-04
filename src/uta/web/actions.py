@@ -1,7 +1,7 @@
-"""Write-side dashboard actions (PLAN §1): acknowledge, confirm, attribute.
+"""Write-side dashboard actions: acknowledge, confirm, attribute.
 
-Every action is stamped with the acting user (Phase-1 self-declared string, §"Users & identity").
-Conclusions carry **provenance** — *how* they were reached — because the KB (§4) weights entries by
+Every action is stamped with the acting user (Phase-1 self-declared string).
+Conclusions carry **provenance** — *how* they were reached — because the KB weights entries by
 validation, not text:
 
 - **Confirm** an AI suggestion → ``AI_CONFIRMED`` (strong positive signal).
@@ -37,7 +37,7 @@ def _episode_signature_id(session: Session, episode: FailureEpisode) -> int | No
     """The failure signature for an episode — the latest failing result of its test that has one.
 
     Links the human conclusion to the KB signature so confirmed/entered reasons feed recurrence
-    retrieval (§4): a future failure with the same signature surfaces "previous reason was …".
+    retrieval: a future failure with the same signature surfaces "previous reason was …".
     """
     return session.scalar(
         select(TestResult.signature_id)

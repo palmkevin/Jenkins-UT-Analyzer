@@ -1,4 +1,4 @@
-"""Knowledge-base retrieval (PLAN §4) — exact recurrence + fuzzy similar cases, on stock Postgres.
+"""Knowledge-base retrieval — exact recurrence + fuzzy similar cases, on stock Postgres.
 
 Two cheap layers, no vector store:
 
@@ -11,7 +11,7 @@ Two cheap layers, no vector store:
 
 Both layers are **provenance-weighted**: each match carries the strongest *validated* human
 conclusion attached to that signature, and near-equal matches are ordered so confirmed/corrected
-knowledge ranks above unvalidated AI guesses (PLAN §4: validation is what teaches).
+knowledge ranks above unvalidated AI guesses (validation is what teaches).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from uta.kb.signature import NormalizedSignature, compute_hash
 from uta.models import Attribution, FailureSignature, TestIdentity
 from uta.models.enums import Provenance
 
-# How strongly a conclusion teaches the KB — validation, not authorship (PLAN §4). Unconfirmed AI
+# How strongly a conclusion teaches the KB — validation, not authorship. Unconfirmed AI
 # guesses are weak hints (weight 0), human corrections the most informative.
 PROVENANCE_WEIGHT: dict[str, int] = {
     Provenance.HUMAN_CORRECTED: 4,

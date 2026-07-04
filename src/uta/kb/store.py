@@ -1,4 +1,4 @@
-"""Persist failure signatures at ingest and link results to them (PLAN §4).
+"""Persist failure signatures at ingest and link results to them.
 
 For every **failing** result in a run we compute its normalized signature (``kb.signature``), upsert
 a :class:`~uta.models.kb.FailureSignature` keyed by hash, and set ``result.signature_id``. Across

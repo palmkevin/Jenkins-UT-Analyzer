@@ -1,4 +1,4 @@
-"""A fake email sender — records messages instead of opening a socket (offline gate, §5)."""
+"""A fake email sender — records messages instead of opening a socket (offline gate)."""
 
 from __future__ import annotations
 

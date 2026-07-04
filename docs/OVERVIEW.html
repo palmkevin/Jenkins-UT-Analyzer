@@ -94,6 +94,7 @@
     <a href="#triage">Human triage</a>
     <a href="#learning">Learning loop</a>
     <a href="#email">Alerting</a>
+    <a href="#reference">Reference</a>
     <a href="#deploy">Deployment</a>
   </div>
 </nav>
@@ -285,7 +286,7 @@
       <rect class="box" x="330" y="380" width="200" height="70" fill="#12233d" stroke="#5aa0ff"/>
       <text class="lbl" x="352" y="408">web container</text>
       <text class="sub" x="352" y="428">FastAPI + HTMX dashboard</text>
-      <text class="sub" x="352" y="443">§0 triage · records · KB</text>
+      <text class="sub" x="352" y="443">triage · records · KB</text>
 
       <!-- Human -->
       <rect class="box" x="690" y="384" width="190" height="62" fill="#2a2410" stroke="#f5c451"/>
@@ -399,7 +400,7 @@
 
 <section id="triage">
   <h2><span class="n">3</span>Human triage <span class="muted" style="font-size:14px">— web dashboard</span></h2>
-  <p class="lead">The dashboard opens on the <b>daily triage queue (§0)</b> — the primary landing surface —
+  <p class="lead">The dashboard opens on the <b>daily triage queue</b> — the primary landing surface —
   organized into the three buckets the monitor thinks in.</p>
   <div class="grid g3">
     <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. The action
@@ -448,6 +449,60 @@
   </div>
 </section>
 
+<section id="reference">
+  <h2>Reference — data model &amp; invariants</h2>
+  <p class="lead">The internals a contributor needs: what the store persists to produce the views above,
+  and the facts that <b>silently corrupt the output if they’re gotten wrong</b>. The repo
+  <a href="../CLAUDE.md">CLAUDE.md</a> is the operating contract; this is the reader-facing companion.</p>
+
+  <h3>Information model — what is persisted</h3>
+  <table class="kv">
+    <tr><th>Runs</th><td>Build #, links, SVN revision(s), overall + per-shard start/finish, totals, and the
+      completeness / baseline flag.</td></tr>
+    <tr><th>Test results per run</th><td>Identity, status, duration, track/shard, failure message, stack trace.
+      These rows <b>are</b> the failure-history feed (counts, last-failed, fail-rate windows) — no separate table.</td></tr>
+    <tr><th>Test identity &amp; aliases</th><td>Canonical fully-qualified name + optional <code>alias_of</code> pointer
+      so renames/moves keep their history (suggested vs human-confirmed).</td></tr>
+    <tr><th>Test lifecycle</th><td>Lifecycle state (<code>FAILING</code> / <code>FIXED</code> / <code>REMOVED</code>),
+      the <code>FLAKY</code> flag, <code>reopen_count</code>, and the <b>acknowledgement</b> attribute (flag +
+      acknowledger + timestamp) as a field separate from state.</td></tr>
+    <tr><th>Failure episodes</th><td>One row per fail→fix cycle (first-failure run, fixed-in run — set only when it
+      passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
+    <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
+      <code>V_TRACKING</code>), infra indicators, ownership — each linked to the failure that generated it.</td></tr>
+    <tr><th>Classifications</th><td>Predicted cause, suggested contact, and the LLM hypothesis.</td></tr>
+    <tr><th>Human input</th><td>Causing person, reason text, triage status, Jira ticket, acknowledger; every
+      conclusion carries a <b>provenance tier</b> (<code>AI_UNCONFIRMED</code> / <code>AI_CONFIRMED</code> /
+      <code>HUMAN_CORRECTED</code> / <code>HUMAN_ENTERED</code>), the original AI value when corrected, and who/when.</td></tr>
+    <tr><th>Users</th><td>An <code>actor</code> string on every human action (self-declared name in Phase 1, default
+      <code>test-user</code>; Keycloak principal in Phase 2 — no data-model change).</td></tr>
+    <tr><th>Knowledge base</th><td>Failure signatures (normalized error text + its hash for exact lookup, with a
+      <code>pg_trgm</code> GIN index for fuzzy similarity) ↔ entered reasons/causes. All in Postgres, no vector store.</td></tr>
+  </table>
+
+  <h3>Invariants that silently corrupt if wrong</h3>
+  <div class="note"><b>Clocks.</b> Jenkins timestamps are <b>epoch millis, UTC</b>. Oracle <code>ut_ref</code>
+    <code>CREDATIM</code>/<code>UPDDATIM</code> are <b>naive local wall-clock</b> (server OS is UTC+2) — normalize
+    them via the named zone <code>Europe/Luxembourg</code> (DST-aware), <b>never</b> a fixed <code>+2</code>.
+    Data-change attribution rests entirely on these timestamps.</div>
+  <table class="kv">
+    <tr><th>Test identity is test-level</th><td>One lifecycle per <code>suite/class/method</code>. The <b>track</b>
+      (<code>permanent</code> / <code>permanent_py39</code>) is an <b>attribute</b>, not a separate identity — a
+      result is keyed by <code>(run, test, track)</code> and the track comes from the JUnit suite’s
+      <code>enclosingBlockNames</code>.</td></tr>
+    <tr><th>Ingest scope</th><td>The primary source is <b>devUTs (nose2) JUnit</b> via
+      <code>/&lt;n&gt;/testReport/api/json</code> (the authoritative ~25k-test surface). The unittest
+      <b>console-log</b> stages are ingested behind the same interface, gated by <code>INGEST_UNITTEST_STAGES</code>
+      with a <code>UNITTEST_SUITES</code> allowlist.</td></tr>
+    <tr><th>Data-change feed</th><td>The Oracle <code>V_TRACKING</code> view as-is (author already resolved as
+      <code>USRCODE</code>). Correlation needs a <b>lookback window</b> — changes precede the run — not just the
+      run’s own start/finish window.</td></tr>
+    <tr><th>Medical data</th><td>LIMS error text, stack traces, and especially <code>MODDATA</code> may contain
+      patient data. Golden fixtures are anonymized/redacted before commit and <b>raw <code>MODDATA</code> is never
+      committed</b> — structure preserved, values redacted.</td></tr>
+  </table>
+</section>
+
 <section id="deploy">
   <h2>Deployment</h2>
   <p class="lead"><code>docker compose up</code> brings up four services from one image.</p>
@@ -476,12 +531,12 @@
 </section>
 
 <footer>
-  <p><b>Sources of truth.</b> This page is a hand-maintained summary. The authoritative documents are
-  <a href="PLAN.md">docs/PLAN.md</a> (what the tool outputs, §0–§5),
-  <a href="IMPLEMENTATION-PLAN.md">docs/IMPLEMENTATION-PLAN.md</a> (how/in what order),
-  <a href="https://github.com/palmkevin/Jenkins-UT-Analyzer/issues">GitHub Issues</a> (status), and the
-  repo <a href="../CLAUDE.md">CLAUDE.md</a>
-  (invariants). When those and this page disagree, they win — and this page should be updated.</p>
+  <p><b>Sources of truth.</b> This page is the authoritative concept/architecture overview — what the tool
+  does, the parts involved, the workflows, and the reference model above. The repo
+  <a href="../CLAUDE.md">CLAUDE.md</a> is the operating contract (conventions + invariants), and
+  <a href="https://github.com/palmkevin/Jenkins-UT-Analyzer/issues">GitHub Issues</a> are the source of truth for
+  status and the record of completed changes. When this page and the running code disagree, the code wins —
+  and this page should be updated.</p>
   <p class="muted">Kept in sync by the <code>docs-overview-maintainer</code> agent — see CLAUDE.md.</p>
 </footer>
 

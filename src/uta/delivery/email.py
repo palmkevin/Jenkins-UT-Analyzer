@@ -1,4 +1,4 @@
-"""Regression-only email (PLAN §5).
+"""Regression-only email.
 
 Every commit triggers a run, so a per-run digest would be constant noise. The tool emails **only
 when a processed run introduces ≥1 new failing test** (a regression vs the baseline). Runs with no

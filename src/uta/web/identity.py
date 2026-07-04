@@ -1,4 +1,4 @@
-"""Phase-1 self-declared identity (PLAN §"Users & identity").
+"""Phase-1 self-declared identity (self-declared name, default ``test-user``).
 
 No authentication: the acting user is a plain string read from a browser cookie (``uta_actor``),
 falling back to the configured default (``test-user``). Every human action — acknowledge, confirm,

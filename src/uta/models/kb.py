@@ -2,7 +2,7 @@
 
 A signature = **test identity + normalized error text**. We store the normalized text and its
 **hash** for instant exact-recurrence lookup, plus a ``pg_trgm`` GIN index on the normalized text
-for fuzzy "similar past cases" (§4) — all in stock Postgres, no vector store. The raw error text is
+for fuzzy "similar past cases" — all in stock Postgres, no vector store. The raw error text is
 **not** stored here (medical-data invariant); only the normalized/redacted form.
 
 The GIN+``gin_trgm_ops`` index is Postgres-only; on SQLite (offline tests) the dialect kwargs are
@@ -47,7 +47,7 @@ class FailureSignature(Base, TimestampMixin):
     attributions: Mapped[list[Attribution]] = relationship(back_populates="signature")
 
 
-# Fuzzy "similar past cases" — trigram GIN over the normalized text (PLAN §4). Postgres-only ops;
+# Fuzzy "similar past cases" — trigram GIN over the normalized text. Postgres-only ops;
 # degrades to a plain index on SQLite.
 Index(
     "ix_failure_signatures_normalized_text_trgm",

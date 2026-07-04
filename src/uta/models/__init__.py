@@ -1,4 +1,4 @@
-"""The full Information model (PLAN.md §"Information model").
+"""The full Information model.
 
 One module per concern; everything is re-exported here so callers can ``from uta.models import X``
 and so importing this package registers every mapper on ``Base.metadata`` (Alembic autogenerate and
@@ -8,7 +8,7 @@ and so importing this package registers every mapper on ``Base.metadata`` (Alemb
 - **actor** is a plain string on every human action (acknowledged_by / validated_by / entered_by /
   causing_person) — Phase-1 self-declared, Phase-2 Keycloak swaps the value with no model change;
   there is intentionally no ``users`` table.
-- **Failure history** (§3) is the ``test_results`` rows across runs, not a separate table.
+- **Failure history** is the ``test_results`` rows across runs, not a separate table.
 - Candidate **signals** are run-windowed (link to a run), not per-test, in v1.
 """
 

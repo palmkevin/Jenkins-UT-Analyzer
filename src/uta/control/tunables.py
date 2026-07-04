@@ -64,7 +64,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "float",
         0.0,
         1.0,
-        "Oscillation score above which a test is flagged flaky (§3).",
+        "Oscillation score above which a test is flagged flaky.",
     ),
     Tunable(
         "flaky_window_days",
@@ -73,7 +73,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "int",
         1,
         365,
-        "How far back the flaky oscillation score looks (§3).",
+        "How far back the flaky oscillation score looks.",
     ),
     Tunable(
         "pgtrgm_similarity_cutoff",
@@ -82,7 +82,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "float",
         0.0,
         1.0,
-        "Minimum trigram similarity for a KB match to surface (§4).",
+        "Minimum trigram similarity for a KB match to surface.",
     ),
     Tunable(
         "kb_top_k",
@@ -91,7 +91,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "int",
         1,
         50,
-        "How many similar past cases to surface per failure (§4).",
+        "How many similar past cases to surface per failure.",
     ),
     Tunable(
         "recently_fixed_days",
@@ -100,7 +100,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "int",
         1,
         90,
-        "How long a fix stays in the §0 recently-fixed bucket.",
+        "How long a fix stays in the recently-fixed bucket.",
     ),
     Tunable(
         "ui_row_limit",
