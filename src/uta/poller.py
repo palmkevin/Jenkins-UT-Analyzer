@@ -16,6 +16,9 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from uta.config import Settings
+from uta.control.heartbeat import record_heartbeat
+from uta.control.tunables import effective_settings, load_overrides
 from uta.db import session_scope
 from uta.delivery.email import EmailSender
 from uta.ingest.jenkins import JenkinsClient
@@ -120,53 +123,87 @@ def poll_once(
     return processed
 
 
+def poll_tick(
+    client: JenkinsClient,
+    session_factory: sessionmaker[Session],
+    base_settings: Settings,
+    *,
+    feed: TrackingFeed | None = None,
+    email_sender: EmailSender | None = None,
+    email_recipients: tuple[str, ...] = (),
+    hypothesis_provider: HypothesisProvider | None = None,
+) -> list[int]:
+    """One scheduled poll: resolve live overrides, ingest new builds, record the heartbeat.
+
+    The tunable thresholds are re-read from the DB **every tick** (merged onto the env settings), so
+    a control-panel override takes effect on the next poll with no restart (issue #16). Secrets and
+    URLs are not tunable, so the pre-built ``client`` / ``feed`` / ``email_sender`` /
+    ``hypothesis_provider`` are reused. Any failure is caught, recorded on the heartbeat, and
+    swallowed so a single bad tick never kills the long-lived scheduler.
+    """
+    with session_scope(session_factory) as session:
+        cfg = effective_settings(base_settings, load_overrides(session))
+
+    try:
+        processed = poll_once(
+            client,
+            session_factory,
+            expected_shards=cfg.expected_shards,
+            feed=feed,
+            data_change_lookback=timedelta(hours=cfg.data_change_lookback_hours),
+            data_change_tolerance=timedelta(minutes=cfg.data_change_tolerance_minutes),
+            flaky_window_days=cfg.flaky_window_days,
+            flaky_threshold=cfg.flaky_transition_threshold,
+            email_sender=email_sender,
+            email_recipients=email_recipients,
+            email_recovery_notice=cfg.email_recovery_notice,
+            hypothesis_provider=hypothesis_provider,
+            kb_top_k=cfg.kb_top_k,
+            kb_similarity_cutoff=cfg.pgtrgm_similarity_cutoff,
+            ingest_unittest_logs=cfg.ingest_unittest_stages,
+            unittest_suites=cfg.unittest_suite_set,
+            backfill_depth=cfg.backfill_depth,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface on the heartbeat, keep the scheduler alive
+        logger.exception("poll tick failed")
+        record_heartbeat(session_factory, processed=[], error=repr(exc))
+        return []
+    record_heartbeat(session_factory, processed=processed, error=None)
+    return processed
+
+
 def run_scheduler(
     client: JenkinsClient,
     session_factory: sessionmaker[Session],
+    base_settings: Settings,
     *,
-    interval_seconds: int,
-    expected_shards: int = 2,
     feed: TrackingFeed | None = None,
-    data_change_lookback: timedelta = timedelta(hours=12),
-    data_change_tolerance: timedelta = timedelta(minutes=5),
-    flaky_window_days: int = 30,
-    flaky_threshold: float = 0.3,
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
-    email_recovery_notice: bool = False,
     hypothesis_provider: HypothesisProvider | None = None,
-    kb_top_k: int = 5,
-    kb_similarity_cutoff: float = 0.3,
-    ingest_unittest_logs: bool = False,
-    unittest_suites: frozenset[str] | set[str] | None = None,
-    backfill_depth: int = 10,
 ) -> None:
-    """Block forever, polling on a fixed interval (the ``uta poll`` entrypoint)."""
+    """Block forever, polling on the configured interval (the ``uta poll`` entrypoint).
+
+    Each tick goes through :func:`poll_tick`, which re-resolves runtime overrides and stamps the
+    heartbeat, so both live-tuning and poller-health surface without a restart.
+    """
     from apscheduler.schedulers.blocking import BlockingScheduler
 
     def _tick() -> list[int]:
-        return poll_once(
+        return poll_tick(
             client,
             session_factory,
-            expected_shards=expected_shards,
+            base_settings,
             feed=feed,
-            data_change_lookback=data_change_lookback,
-            data_change_tolerance=data_change_tolerance,
-            flaky_window_days=flaky_window_days,
-            flaky_threshold=flaky_threshold,
             email_sender=email_sender,
             email_recipients=email_recipients,
-            email_recovery_notice=email_recovery_notice,
             hypothesis_provider=hypothesis_provider,
-            kb_top_k=kb_top_k,
-            kb_similarity_cutoff=kb_similarity_cutoff,
-            ingest_unittest_logs=ingest_unittest_logs,
-            unittest_suites=unittest_suites,
-            backfill_depth=backfill_depth,
         )
 
     scheduler = BlockingScheduler()
-    scheduler.add_job(_tick, "interval", seconds=interval_seconds, next_run_time=None)
+    scheduler.add_job(
+        _tick, "interval", seconds=base_settings.poll_interval_seconds, next_run_time=None
+    )
     # Run an immediate pass on startup so a fresh poller doesn't idle until the first interval.
     _tick()
     scheduler.start()

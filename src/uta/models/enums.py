@@ -49,6 +49,15 @@ class Provenance(StrEnum):
     HUMAN_ENTERED = "HUMAN_ENTERED"
 
 
+class IngestJobStatus(StrEnum):
+    """Lifecycle of an on-demand ingest / re-analysis job (in-app control panel, issue #16)."""
+
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    ERROR = "ERROR"
+
+
 class ChangeType(StrEnum):
     """Normalized ``V_TRACKING.TYPE`` (data-change feed)."""
 

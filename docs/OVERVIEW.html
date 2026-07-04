@@ -159,19 +159,27 @@
         <h4>PostgreSQL <span class="pill">the app’s own store</span></h4>
         <p>All run history, test lifecycle, failure episodes, flakiness, and the knowledge base live here.
         Similarity search uses stock <b><code>pg_trgm</code></b> / full-text — <b>no vector database</b>.
-        Reached only via <code>DATABASE_URL</code> (“container now, external later”).</p>
+        Reached only via <code>DATABASE_URL</code> (“container now, external later”). Also holds a small
+        <b>operational</b> state — not part of the failure model: <code>setting_overrides</code> (runtime
+        threshold tuning), <code>ingest_jobs</code> (on-demand ingest requests) and <code>poller_heartbeats</code>
+        (poller health).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>poller</code> container <span class="pill">ingest</span></h4>
         <p>Runs <code>uta poll</code>: on a fixed interval, detects new completed builds above the DB
         high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also sends email
-        and fills LLM hypotheses.</p>
+        and fills LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
+        (so a tuning change applies with no restart) and stamps a heartbeat row with the tick time, build
+        count and last error.</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
         <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, per-test
         records, flaky leaderboard, and knowledge-base search. Where the human confirms causes and enters
-        reasons.</p>
+        reasons. Also serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds
+        (flaky/KB/triage/ingest knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build
+        or range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller
+        health (last poll, high-water mark, last error).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>migrate</code> + <code>db</code> <span class="pill">infra</span></h4>
@@ -198,7 +206,8 @@
   <h2>System map</h2>
   <p class="lead">How data and notifications flow between the parts. The <code>poller</code> pulls from Jenkins
   and Oracle, writes to Postgres, and fans out to email + LLM; the <code>web</code> app reads Postgres and the
-  human writes back through it.</p>
+  human writes back through it. The <code>web</code> app's <b>control panel</b> also has a direct, on-demand
+  path to Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM).</p>
 
   <div class="legend">
     <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
@@ -208,6 +217,7 @@
     <span><i class="dot" style="background:var(--llm)"></i> LLM</span>
     <span><i class="dot" style="background:var(--mail)"></i> Email</span>
     <span><i class="dot" style="background:var(--human)"></i> Human</span>
+    <span><i class="dot" style="background:var(--warn)"></i> Control panel (on-demand)</span>
   </div>
 
   <div class="diagram">
@@ -219,12 +229,16 @@
         <marker id="arrA" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
           <path d="M0,0 L8,3 L0,6 Z" fill="#7ee0c0"/>
         </marker>
+        <marker id="arrW" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#f0774b"/>
+        </marker>
         <style>
           .box{rx:12;stroke-width:1.5}
           .lbl{fill:#e8edf6;font:13px system-ui;font-weight:600}
           .sub{fill:#9fb0cc;font:11px system-ui}
           .edge{stroke:#9fb0cc;stroke-width:1.6;fill:none}
           .edgeA{stroke:#7ee0c0;stroke-width:1.8;fill:none}
+          .edgeW{stroke:#f0774b;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
           .etxt{fill:#9fb0cc;font:11px system-ui}
         </style>
       </defs>
@@ -306,10 +320,18 @@
       <!-- email -> human (dashed feel) -->
       <path class="edge" d="M785,204 L785,382" marker-end="url(#arr)"/>
       <text class="etxt" x="792" y="300">alert</text>
+      <!-- web control panel -> Jenkins / Oracle (on-demand ingest, bypasses poller) -->
+      <path class="edgeW" d="M330,392 C270,392 240,300 240,180 C240,140 220,110 202,100" marker-end="url(#arrW)"/>
+      <path class="edgeW" d="M330,408 C270,408 235,340 235,260 C235,220 215,205 202,198" marker-end="url(#arrW)"/>
+      <text class="etxt" x="204" y="270" style="fill:#f0774b">on-demand ingest</text>
+      <text class="etxt" x="204" y="283" style="fill:#f0774b">(control panel,</text>
+      <text class="etxt" x="204" y="296" style="fill:#f0774b">no email/LLM)</text>
     </svg>
   </div>
   <p class="muted" style="font-size:13px">Green arrows are write-backs / results returning to a producer.
-  The same Docker image runs as both <code>poller</code> and <code>web</code>; only the command differs.</p>
+  Dashed orange arrows are the manual, on-demand path triggered from the control panel — same
+  fetch/parse/persist as the poller, but always back-fill semantics. The same Docker image runs as both
+  <code>poller</code> and <code>web</code>; only the command differs.</p>
 </section>
 
 <section id="ingest">
@@ -317,7 +339,9 @@
   <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 300 s). On an empty store
   it back-fills the last <code>BACKFILL_DEPTH</code> builds oldest-first; then it runs purely incrementally
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
-  hand.</p>
+  hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
+  thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
+  so a re-ingest never re-mails a historical regression.</p>
   <ol class="flow">
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
       <code>lastCompletedBuild</code>. The cursor is the DB itself — restart-safe, no separate state.</small></li>

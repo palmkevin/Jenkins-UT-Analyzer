@@ -16,15 +16,18 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from uta.config import get_settings
+from uta.config import Settings, get_settings
+from uta.control import jobs
+from uta.control.tunables import clear_override, effective_settings, load_overrides, set_override
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
-from uta.web import actions, views
+from uta.web import actions, control, views
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
 _WEB_DIR = Path(__file__).parent
@@ -63,8 +66,14 @@ def create_app(session_factory=None) -> FastAPI:
     # dependency, in keeping with the self-contained, offline-first design.
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-    def render(request: Request, template: str, context: dict) -> HTMLResponse:
-        cfg = get_settings()
+    def effective(s) -> Settings:
+        """Env settings with the DB threshold overrides applied — the live view of the tunables."""
+        return effective_settings(get_settings(), load_overrides(s))
+
+    def render(
+        request: Request, template: str, context: dict, *, cfg: Settings | None = None
+    ) -> HTMLResponse:
+        cfg = cfg or get_settings()
         context = {
             **context,
             "actor": current_actor(request),
@@ -86,20 +95,20 @@ def create_app(session_factory=None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def triage(request: Request):
-        cfg = get_settings()
         with session_scope(session_factory) as s:
+            cfg = effective(s)
             queue = views.triage_queue(
                 s,
                 recently_fixed_days=cfg.recently_fixed_days,
                 limit=cfg.ui_row_limit,
                 expand=_expanded(request),
             )
-        return render(request, "triage.html", {"queue": queue})
+        return render(request, "triage.html", {"queue": queue}, cfg=cfg)
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
     def test_record(request: Request, identity_id: int):
-        cfg = get_settings()
         with session_scope(session_factory) as s:
+            cfg = effective(s)
             record = views.test_record(
                 s,
                 identity_id,
@@ -108,32 +117,84 @@ def create_app(session_factory=None) -> FastAPI:
                 kb_top_k=cfg.kb_top_k,
                 kb_cutoff=cfg.pgtrgm_similarity_cutoff,
             )
-        return render(request, "test_record.html", {"record": record, "identity_id": identity_id})
+        return render(
+            request, "test_record.html", {"record": record, "identity_id": identity_id}, cfg=cfg
+        )
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
     def run_view(request: Request, build: int):
-        cfg = get_settings()
         with session_scope(session_factory) as s:
+            cfg = effective(s)
             run = views.run_summary(s, build, limit=cfg.ui_row_limit, expand=_expanded(request))
-        return render(request, "run.html", {"run": run, "build": build})
+        return render(request, "run.html", {"run": run, "build": build}, cfg=cfg)
 
     @app.get("/flaky", response_class=HTMLResponse)
     def flaky_view(request: Request):
-        cfg = get_settings()
         with session_scope(session_factory) as s:
+            cfg = effective(s)
             board = views.flaky_leaderboard(
                 s,
                 window_days=cfg.flaky_window_days,
                 threshold=cfg.flaky_transition_threshold,
             )
-        return render(request, "flaky.html", {"board": board})
+        return render(request, "flaky.html", {"board": board}, cfg=cfg)
 
     @app.get("/kb", response_class=HTMLResponse)
     def kb_view(request: Request, q: str = ""):
-        cfg = get_settings()
         with session_scope(session_factory) as s:
+            cfg = effective(s)
             results = views.kb_search(s, q, cutoff=cfg.pgtrgm_similarity_cutoff)
-        return render(request, "kb.html", {"kb": results})
+        return render(request, "kb.html", {"kb": results}, cfg=cfg)
+
+    # ── Control panel (issue #16) ────────────────────────────────────────────
+    # Access is deliberately open for now (honesty system, no auth anywhere yet). These handlers are
+    # the single choke point to gate once auth lands — guard them here, not per-call.
+    @app.get("/control", response_class=HTMLResponse)
+    def control_view(request: Request, error: str = ""):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+            panel = control.control_panel(s, get_settings(), error=error or None)
+        return render(request, "control.html", {"panel": panel}, cfg=cfg)
+
+    @app.post("/control/settings")
+    def set_setting(request: Request, key: str = Form(...), value: str = Form("")):
+        # Empty value ⇒ revert to the env default; a value ⇒ validated override.
+        try:
+            with session_scope(session_factory) as s:
+                if value.strip() == "":
+                    clear_override(s, key)
+                else:
+                    set_override(s, key, value, actor=current_actor(request))
+        except ValueError as exc:
+            return RedirectResponse(f"/control?error={quote(str(exc))}", status_code=303)
+        return RedirectResponse("/control", status_code=303)
+
+    @app.post("/control/settings/{key}/reset")
+    def reset_setting(request: Request, key: str):
+        with session_scope(session_factory) as s:
+            clear_override(s, key)
+        return RedirectResponse("/control", status_code=303)
+
+    @app.post("/control/ingest")
+    def trigger_ingest(
+        request: Request, build_start: int = Form(...), build_end: str = Form("")
+    ):
+        try:
+            end = int(build_end) if build_end.strip() else build_start
+        except ValueError:
+            return RedirectResponse(
+                f"/control?error={quote('Build range must be numeric')}", status_code=303
+            )
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+        jobs.trigger_ingest(
+            session_factory,
+            build_start=build_start,
+            build_end=end,
+            settings=cfg,
+            actor=current_actor(request),
+        )
+        return RedirectResponse("/control", status_code=303)
 
     # ── Actions (Post/Redirect/Get) ──────────────────────────────────────────
     @app.post("/identity")
