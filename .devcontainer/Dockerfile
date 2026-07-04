@@ -27,3 +27,20 @@ RUN mkdir -p /home/vscode/.claude && chown vscode:vscode /home/vscode/.claude
 # vscode-owned so a freshly created volume seeds with the right ownership and `gh auth login`
 # can persist its token. (~/.config itself must exist and be vscode-owned too.)
 RUN mkdir -p /home/vscode/.config/gh && chown -R vscode:vscode /home/vscode/.config
+
+# Bake Claude Code's permission mode into the image so the devcontainer runs prompt-free.
+# /etc/claude-code/managed-settings.json is the Linux MANAGED-settings path — highest precedence,
+# and (unlike ~/.claude or the workspace) NOT shadowed by any bind mount or named volume, so the
+# image copy is what's read at runtime. bypassPermissions is sanctioned precisely for isolated
+# containers like this one; `rm -rf /`/`~` and the repo's `deny` rules still prompt/block as a
+# circuit-breaker. This lives ONLY inside the image (never on the host tree, never committed as a
+# loose file), so it supersedes the need for a hand-maintained `permissions.allow` list in
+# .claude/settings.json for devcontainer work.
+RUN mkdir -p /etc/claude-code \
+ && printf '%s\n' \
+      '{' \
+      '  "permissions": {' \
+      '    "defaultMode": "bypassPermissions"' \
+      '  }' \
+      '}' \
+      > /etc/claude-code/managed-settings.json
