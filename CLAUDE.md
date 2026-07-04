@@ -1,24 +1,23 @@
 # CLAUDE.md — Jenkins UT Analyzer
 
-Operating contract for this repo. The **plan documents are the source of truth**; this file
-captures only the invariants and conventions that are easy to get wrong or re-derive.
+Operating contract for this repo. [docs/OVERVIEW.html](docs/OVERVIEW.html) is the source-of-truth
+concept/architecture doc; this file captures the invariants and conventions that are easy to get
+wrong or re-derive.
 
 ## Read these first
-- [docs/PLAN.md](docs/PLAN.md) — **what** the tool outputs (information model, the §0–§5 views).
-- [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — **how / in what order** it gets built
-  (phased: Slice 0 spike → Milestones 1–5). Start here for sequencing.
-- [docs/NEXT-PHASE-REQUIREMENTS.md](docs/NEXT-PHASE-REQUIREMENTS.md) — the **inputs** the build needs.
+- [docs/OVERVIEW.html](docs/OVERVIEW.html) — the **authoritative concept/architecture overview**:
+  purpose, the parts involved (Jenkins, Oracle `ut_ref`, the containers, PostgreSQL, LLM, email), the
+  ingest → analysis → triage → learning → alert workflows with a schematic system map, and a
+  **Reference** section (the persisted information model + the load-bearing invariants). Start here for
+  "what is this and how does it fit together," and for what the tool outputs.
 - **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — the **source of
   truth for status** (open todos, in-progress work) and, once closed, the record of completed changes.
-  Every change is a branch + PR that `Closes #N`; see **Task workflow** below. (The old
-  `docs/PROGRESS.md` checklist is retired — its design-rationale notes moved to IMPLEMENTATION-PLAN.md.)
-- [docs/OVERVIEW.html](docs/OVERVIEW.html) — the **hand-maintained concept/architecture overview**
-  (purpose, the parts involved — Jenkins, Oracle `ut_ref`, the containers, PostgreSQL, LLM, email —
-  and the ingest → analysis → triage → learning → alert workflows), with a schematic system map.
-  The reader-facing "what is this and how does it fit together" page.
+  Every change is a branch + PR that `Closes #N`; see **Task workflow** below.
 
-The execution gate (Jenkins A1–A4, Oracle B1) is **validated against live systems** — Slice 0 is
-unblocked. Live findings live in the plan's two "RESOLVED" sections.
+The original planning docs (`PLAN.md` / `IMPLEMENTATION-PLAN.md` / `NEXT-PHASE-REQUIREMENTS.md`) were
+the pre-build requirements. The tool is built, so they've been retired — their durable content lives
+in OVERVIEW.html's **Reference** section and in the invariants below, and the full history remains in
+git.
 
 ## Live demo (public, synthetic)
 A public, fully-synthetic **demo** is hosted on Render: **<https://jenkins-ut-analyzer-demo.onrender.com>**.
@@ -54,7 +53,8 @@ of work and the closed issue + merged PR *is* the record.
 ## Keep the concept overview in sync (required, every change)
 After any change that could alter **what parts the app involves, how they communicate, or its
 workflows** — a new/removed external system or integration, a container/service change, a change to
-the ingest/analysis/triage/learning/alert flow, or a shift in what the tool outputs (PLAN §0–§5) —
+the ingest/analysis/triage/learning/alert flow, or a shift in what the tool outputs (the triage
+queue, per-test record, run summary, flakiness, knowledge base, or email surfaces) —
 you **must invoke the [`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md)
 agent** to check whether [docs/OVERVIEW.html](docs/OVERVIEW.html) needs updating (it edits the page,
 including its system-map SVG, or reports "no update needed"). Pure bug fixes, refactors, perf work,
@@ -86,7 +86,7 @@ do **not** require it. When in doubt, invoke it — deciding materiality is the 
   classes, ZEPHYR owner initials) preserved because the parser needs it.
 
 ## Testing contract (the merge gate)
-Two tiers — see the plan's "Hosting & testing strategy":
+Two tiers — offline (the gate) and `live` (local-only):
 - **Offline suite is the default and the gate.** `pytest -m "not live"` must be green with **zero**
   access to Jenkins, Oracle, or a real Postgres. Parsers test against committed golden fixtures;
   external clients (Jenkins/Oracle/LLM/SMTP) sit behind interfaces and are exercised with fakes.

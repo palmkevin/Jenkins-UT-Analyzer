@@ -1,7 +1,7 @@
 """Human input + provenance per failure episode (Information model: 'Human input').
 
 The causing person + reason are entered/confirmed by a human; each conclusion carries *how it was
-reached* (provenance tier) because the KB (§4) weights entries by validation, not just text. When
+reached* (provenance tier) because the KB weights entries by validation, not just text. When
 the AI was corrected, the **original AI value** is retained alongside the correction (the strongest
 learning signal). ``actor`` columns are plain strings (see lifecycle.py).
 """
@@ -47,7 +47,7 @@ class Attribution(Base, TimestampMixin):
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     entered_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    # KB hook: confirmed/entered reasons attach to a signature for recurrence retrieval (§4).
+    # KB hook: confirmed/entered reasons attach to a signature for recurrence retrieval.
     signature_id: Mapped[int | None] = mapped_column(
         ForeignKey("failure_signatures.id"), nullable=True, index=True
     )

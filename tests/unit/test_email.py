@@ -1,4 +1,4 @@
-"""Regression-only email (PLAN §5).
+"""Regression-only email.
 
 The contract: a message goes out **only** when a processed run introduces ≥1 new failing test;
 otherwise silence (unless the recovery-notice toggle is on and the run is back to green).

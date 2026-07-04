@@ -147,13 +147,13 @@ def ingest_build(
 
     Persists the run, its per-(test, track) results (with derived error type), per-shard timing and
     the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied),
-    and records a normalized **failure signature** per failing result (the KB recurrence key, §4).
+    and records a normalized **failure signature** per failing result (the KB recurrence key).
     For a
     **complete** run it then drives the lifecycle/episodes, the baseline diff, the deterministic
-    classification of new regressions, refreshes the oscillation **flaky** flags (§3), and — when an
-    ``email_sender`` is supplied — sends the regression-only alert (§5). When a real
-    ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode
-    (§4); the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
+    classification of new regressions, refreshes the oscillation **flaky** flags, and — when an
+    ``email_sender`` is supplied — sends the regression-only alert. When a real
+    ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode;
+    the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
     sender and no provider, so history is never re-mailed or re-hypothesised.
 
     When ``ingest_unittest_logs`` is set, the deferred **unittest console-log** UT stages (``LXS``,
@@ -288,7 +288,7 @@ def ingest_build(
         session.flush()  # candidates + results must be visible to the KB store and classifier
         t_persist = time.perf_counter() - t
 
-        # KB: a normalized failure signature per failing result (recurrence key, §4). Recorded for
+        # KB: a normalized failure signature per failing result (recurrence key). Recorded for
         # any run (the signatures are facts about the failures), idempotent on re-ingest.
         t = time.perf_counter()
         record_signatures_for_run(session, run)

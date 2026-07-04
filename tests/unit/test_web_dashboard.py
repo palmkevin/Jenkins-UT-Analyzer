@@ -1,7 +1,7 @@
 """HTTP-level tests of the dashboard routes (FastAPI TestClient, injected SQLite session factory).
 
-Covers the §0/§1/§2 pages, the Phase-1 identity cookie, and the Post/Redirect/Get actions actually
-mutating state through the app (not just the service functions).
+Covers the triage-queue / per-test-record / run-summary pages, the Phase-1 identity cookie, and the
+Post/Redirect/Get actions actually mutating state through the app (not just the service functions).
 """
 
 from __future__ import annotations

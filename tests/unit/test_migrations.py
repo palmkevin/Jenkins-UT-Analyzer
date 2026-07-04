@@ -86,7 +86,7 @@ def test_upgrade_builds_full_schema_with_pg_trgm(pg_engine):
             .find("gin")
             != -1
         )
-        # The fuzzy similarity the KB (§4) relies on is actually usable.
+        # The fuzzy similarity the KB relies on is actually usable.
         sim = conn.scalar(
             text("SELECT similarity('expected <NUM>', 'expected <NUM> but was <NUM>')")
         )

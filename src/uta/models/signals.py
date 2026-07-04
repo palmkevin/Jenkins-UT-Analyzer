@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class CodeChangeCandidate(Base, TimestampMixin):
-    """An SVN-update revision in the run's window (PLAN §1 'Candidate code changes')."""
+    """An SVN-update revision in the run's window (a candidate code change)."""
 
     __tablename__ = "code_change_candidates"
 
@@ -42,7 +42,7 @@ class CodeChangeCandidate(Base, TimestampMixin):
 
 
 class DataChangeCandidate(Base, TimestampMixin):
-    """A ``ut_ref`` ``V_TRACKING`` change in the run's (lookback) window (PLAN §1)."""
+    """A candidate ``ut_ref`` ``V_TRACKING`` data change in the run's (lookback) window."""
 
     __tablename__ = "data_change_candidates"
 

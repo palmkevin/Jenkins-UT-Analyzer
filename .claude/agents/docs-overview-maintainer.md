@@ -5,7 +5,7 @@ description: >-
   Invoke it after any change that could alter the app's parts, their communications, or its
   workflows — new/removed external system or integration (Jenkins, Oracle ut_ref, LLM, SMTP,
   FishEye/Jira, a new data source), a container/service change, a change to the ingest→analysis→
-  triage→learning→alert flow, or a shift in what the tool outputs (PLAN §0–§5). It decides whether
+  triage→learning→alert flow, or a shift in what the tool outputs. It decides whether
   the change is material, and if so edits OVERVIEW.html to match — otherwise reports "no update
   needed". Read-then-decide; it does not touch application code.
 tools: Read, Edit, Write, Grep, Glob, Bash
@@ -25,10 +25,10 @@ what's wrong. In priority order:
 1. The source code under [src/uta/](../../src/uta/) and [docker-compose.yml](../../docker-compose.yml)
    / [src/uta/config.py](../../src/uta/config.py) — ground truth for parts, containers, config keys,
    and communications.
-2. [docs/PLAN.md](../../docs/PLAN.md) — what the tool outputs (§0–§5 information model).
-3. [docs/IMPLEMENTATION-PLAN.md](../../docs/IMPLEMENTATION-PLAN.md) and
-   [docs/PROGRESS.md](../../docs/PROGRESS.md) — sequencing and status.
-4. [CLAUDE.md](../../CLAUDE.md) — load-bearing invariants (clocks, test identity, ingest scope, …).
+2. [CLAUDE.md](../../CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test
+   identity, ingest scope, …) and conventions.
+3. [GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues) — status and the record
+   of completed changes.
 
 # What counts as "material" (update the page)
 
@@ -41,7 +41,7 @@ Update OVERVIEW.html when the change touches any of these — the things the pag
   or a new/removed endpoint or protocol (e.g. a new Jenkins endpoint, a new Oracle view, a switch
   away from SMTP). The **system-map SVG** and the "system map" prose must still match.
 - **A workflow changes**: the ingest loop, the analysis steps (lifecycle/episodes, baseline diff,
-  classification, flakiness), the human triage buckets (§0), the learning loop / knowledge base, or
+  classification, flakiness), the human triage buckets, the learning loop / knowledge base, or
   the email-alert policy. Also the trigger/cadence, backfill behaviour, or completeness rules.
 - **A load-bearing invariant changes**: clocks/timezones, test identity/track model, ingest scope,
   provenance tiers, "no vector DB", "email only on regression", etc.
@@ -73,6 +73,5 @@ detail the sources don't support.
 5. **Sanity-check.** The page must remain a faithful, schematic overview a newcomer can read to
    understand what the app is for, its parts, and its workflows.
 6. **Report** what you changed (or that no change was needed) in a few lines, citing the source that
-   justified it. Do not edit application code, PLAN/IMPLEMENTATION/PROGRESS docs, or CLAUDE.md — you
-   only own OVERVIEW.html. If the *authoritative* docs themselves look stale, flag it rather than
-   fixing them.
+   justified it. Do not edit application code or CLAUDE.md — you only own OVERVIEW.html. If the
+   *authoritative* sources themselves look stale, flag it rather than fixing them.

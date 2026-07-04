@@ -224,7 +224,7 @@ def test_identity_alias_self_reference(session_factory):
 
 
 def test_failure_history_is_results_across_runs(session_factory):
-    """§3 failure history = test_results across runs, no separate table."""
+    """Failure history = test_results across runs, no separate table."""
     with session_scope(session_factory) as s:
         ident = TestIdentity(canonical_name="a.B.t")
         s.add(ident)

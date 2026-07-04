@@ -5,14 +5,15 @@ across runs, correlates regressions with **code** (SVN) and **reference-data** (
 changes, and surfaces it all in a triage dashboard — with flakiness detection, a failure **knowledge
 base**, regression-only **email** alerts, and an optional **LLM root-cause hypothesis**.
 
-> **Source of truth for behaviour and status** lives in [`docs/`](docs/) and [`CLAUDE.md`](CLAUDE.md):
-> - [docs/PLAN.md](docs/PLAN.md) — *what* the tool outputs (the §0–§5 views).
-> - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — *how / in what order* it was built.
+> **Source of truth for behaviour and status:**
+> - [docs/OVERVIEW.html](docs/OVERVIEW.html) — the authoritative concept/architecture overview: what
+>   the tool outputs, the parts involved, the workflows, and a **Reference** section (the persisted
+>   information model + load-bearing invariants).
 > - **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — status source of
->   truth (open todos + closed-issue/PR history). Milestones 1–5 are done; see `CLAUDE.md` → *Task
->   workflow* for the branch + `Closes #N` convention.
-> - [CLAUDE.md](CLAUDE.md) — load-bearing invariants (clocks, test identity, medical-data handling)
->   and the testing contract.
+>   truth (open todos + closed-issue/PR history). See `CLAUDE.md` → *Task workflow* for the branch +
+>   `Closes #N` convention.
+> - [CLAUDE.md](CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test identity,
+>   medical-data handling) and the testing contract.
 
 ## Stack
 Python 3.12 · FastAPI + HTMX/Jinja · SQLAlchemy 2.x + Alembic · PostgreSQL (`psycopg`, with
@@ -136,7 +137,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `DATABASE_URL` | `postgresql+psycopg://uta:uta@db:5432/uta` | The **only** way the app reaches Postgres. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `uta` / `uta` / `uta` | **Compose-only** — initialise the `db` container (not read by the app). |
 
-### Email (regression-only alert, §5)
+### Email (regression-only alert)
 | Variable | Default | Purpose |
 |---|---|---|
 | `SMTP_HOST` | *(empty)* | SMTP server. **Email is enabled only when host *and* recipients are set.** |
@@ -146,7 +147,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Reserved — not yet used by `SmtpEmailSender` (no auth wired today). |
 | `EMAIL_RECOVERY_NOTICE` | `false` | Also send a "back-to-green" notice when a run recovers. |
 
-### LLM hypothesis (§4 — optional)
+### LLM hypothesis (optional)
 | Variable | Default | Purpose |
 |---|---|---|
 | `LLM_PROVIDER` | *(empty)* | `anthropic`, `openai`, or empty to **auto-pick** whichever key is set (Anthropic wins if both). |
@@ -162,11 +163,11 @@ chosen provider with no key falls back to a no-op. Only the live `uta poll` path
 | Variable | Default | Purpose |
 |---|---|---|
 | `APP_DEFAULT_ACTOR` | `test-user` | Default acting user (phase-1 self-declared identity via the `uta_actor` cookie). |
-| `FLAKY_TRANSITION_THRESHOLD` | `0.3` | Oscillation score (`transitions ÷ runs`) at/above which a test is flagged **flaky** (§3). |
+| `FLAKY_TRANSITION_THRESHOLD` | `0.3` | Oscillation score (`transitions ÷ runs`) at/above which a test is flagged **flaky**. |
 | `FLAKY_WINDOW_DAYS` | `30` | Window for the flaky score and failure-history counts. |
-| `PGTRGM_SIMILARITY_CUTOFF` | `0.3` | Minimum trigram similarity for KB "similar past cases" (§4). |
+| `PGTRGM_SIMILARITY_CUTOFF` | `0.3` | Minimum trigram similarity for KB "similar past cases". |
 | `KB_TOP_K` | `5` | How many similar past cases to surface per failure. |
-| `RECENTLY_FIXED_DAYS` | `7` | How long a fixed test stays in the §0 "recently fixed" bucket. |
+| `RECENTLY_FIXED_DAYS` | `7` | How long a fixed test stays in the "recently fixed" bucket. |
 
 ### Ingest / correlation windows
 | Variable | Default | Purpose |
@@ -185,11 +186,11 @@ chosen provider with no key falls back to a no-op. Only the live `uta poll` path
 > committed or sent to an LLM. See [CLAUDE.md](CLAUDE.md) before touching ingest.
 
 ## Dashboard surfaces
-- `/` — §0 triage queue (New / Still-failing / Recently-fixed).
-- `/tests/{id}` — §1 per-test record: lifecycle, episodes, latest error, candidate changes,
+- `/` — triage queue (New / Still-failing / Recently-fixed).
+- `/tests/{id}` — per-test record: lifecycle, episodes, latest error, candidate changes,
   flakiness & history, KB matches, and the predicted cause + LLM hypothesis.
-- `/runs/{build}` — §2 run summary: totals, per-shard timing, baseline diff, results.
-- `/flaky` — flaky leaderboard (§3). `/kb?q=` — knowledge-base search (§4).
+- `/runs/{build}` — run summary: totals, per-shard timing, baseline diff, results.
+- `/flaky` — flaky leaderboard. `/kb?q=` — knowledge-base search.
 
 ## Testing
 Two tiers (see the testing contract in [CLAUDE.md](CLAUDE.md)):

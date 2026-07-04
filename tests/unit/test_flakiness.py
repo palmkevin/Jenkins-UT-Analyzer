@@ -1,4 +1,4 @@
-"""Oscillation flakiness (PLAN §3).
+"""Oscillation flakiness.
 
 Pins the definition that makes this pipeline-correct: flakiness is *oscillation*, not fail-rate;
 gaps are missing data (never flips); a solidly-failing test is a regression, not flaky.

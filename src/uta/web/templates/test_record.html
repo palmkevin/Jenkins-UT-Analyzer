@@ -105,7 +105,7 @@
 {% set fl = record.flakiness %}
 {% if fl %}
 <details class="card">
-  <summary>Flakiness &amp; history (§3)</summary>
+  <summary>Flakiness &amp; history</summary>
   <p>
     {% if fl.flaky %}<span class="badge flaky">flaky</span>{% endif %}
     {% if fl.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
@@ -125,7 +125,7 @@
 {% set rec = record.recurrence %}
 {% if rec %}
 <details class="card">
-  <summary>Knowledge base (§4)</summary>
+  <summary>Knowledge base</summary>
   <p class="meta">
     This exact failure signature has been seen <strong>{{ rec.occurrence_count }}×</strong>
     {% if rec.exception_type %} ({{ rec.exception_type }}){% endif %};

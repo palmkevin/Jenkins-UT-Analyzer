@@ -1,9 +1,9 @@
-"""Dashboard web app (PLAN §5) — opens on the §0 triage queue.
+"""Dashboard web app — opens on the triage queue.
 
 Surfaces:
-- ``GET /``                         the daily triage queue (§0), the primary landing view.
-- ``GET /tests/{identity_id}``      the per-test record (§1) with the full evidence + actions.
-- ``GET /runs/{build}``             the run-level summary (§2): totals, shards, baseline + diff.
+- ``GET /``                         the daily triage queue, the primary landing view.
+- ``GET /tests/{identity_id}``      the per-test record with the full evidence + actions.
+- ``GET /runs/{build}``             the run-level summary: totals, shards, baseline + diff.
 - action POSTs (acknowledge / confirm / attribute / identity) → redirect back (PRG).
 
 Route handlers stay thin: read-side projections live in :mod:`uta.web.views`, write-side mutations

@@ -1,4 +1,4 @@
-"""Deterministic cause classification (PLAN §1 'Predicted cause').
+"""Deterministic cause classification (the predicted cause).
 
 v1 is **windowing, not ranking**: the pipeline has already persisted the code-change candidates
 (SVN-update revisions in the run window) and data-change candidates (`ut_ref` changes in the
@@ -14,7 +14,7 @@ Rule (ordered, documented because it is the whole v1 commitment):
 3. **DATA_CHANGE** if data candidates are present and code candidates are not.
 4. **UNKNOWN** otherwise — both kinds present (genuinely ambiguous; both attached as evidence) or
    neither. There is deliberately **no confidence number**: with no knowledge base to rank against
-   on day one it would be fabricated (deferred to §4 / Milestone 4).
+   on day one it would be fabricated (deferred to the knowledge-base learning loop).
 """
 
 from __future__ import annotations

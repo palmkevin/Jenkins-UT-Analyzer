@@ -1,4 +1,4 @@
-"""Signature normalization (PLAN §4 — the load-bearing mask set).
+"""Signature normalization (the load-bearing mask set).
 
 The whole learning loop dies if the same bug doesn't hash to itself across runs, and collapses if
 distinct bugs collide. These tests pin both directions: same-bug variants normalize identically;

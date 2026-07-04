@@ -1,7 +1,7 @@
 """Dashboard read-side projections (uta.web.views) and write-side actions (uta.web.actions).
 
 Exercised against hand-built run sequences (via the lifecycle state machine) on in-memory SQLite —
-no Jenkins/Oracle/Postgres. Covers the §0 buckets, the §1 record, the §2 diff, and the
+no Jenkins/Oracle/Postgres. Covers the triage buckets, the per-test record, the run diff, and the
 acknowledge/confirm/attribute provenance logic.
 """
 
@@ -24,7 +24,7 @@ def _lc(session, name):
     return session.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident.id))
 
 
-# ── §0 triage queue ──────────────────────────────────────────────────────────
+# ── triage queue ──────────────────────────────────────────────────────────
 
 
 def test_new_bucket_holds_unacknowledged_failures(session_factory):
@@ -79,7 +79,7 @@ def test_recently_fixed_window_includes_recent_excludes_old(session_factory):
         assert "old" not in names
 
 
-# ── §0 long-list capping (issue #19) ─────────────────────────────────────────────
+# ── long-list capping (issue #19) ─────────────────────────────────────────────
 
 
 def test_triage_new_bucket_capped_with_full_count(session_factory):
@@ -124,7 +124,7 @@ def test_run_results_capped_with_full_total(session_factory):
         assert len(full["results"]) == 10
 
 
-# ── §1 per-test record ─────────────────────────────────────────────────────────
+# ── per-test record ─────────────────────────────────────────────────────────
 
 
 def test_test_record_exposes_lifecycle_and_episode(session_factory):
@@ -145,7 +145,7 @@ def test_test_record_missing_identity_is_none(session_factory):
         assert views.test_record(s, 9999) is None
 
 
-# ── §2 run summary ──────────────────────────────────────────────────────────────
+# ── run summary ──────────────────────────────────────────────────────────────
 
 
 def test_run_summary_diff_against_baseline(session_factory):

@@ -1,4 +1,4 @@
-"""Knowledge base: signature store + retrieval (PLAN §4).
+"""Knowledge base: signature store + retrieval.
 
 Covers the offline (SQLite/difflib) path of the recurrence engine: upsert + idempotent occurrence
 counting, exact recurrence by hash, fuzzy similar-case retrieval, and provenance weighting.

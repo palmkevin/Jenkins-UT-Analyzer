@@ -1,8 +1,8 @@
-"""Read-side view builders for the dashboard (PLAN §0/§1/§2).
+"""Read-side view builders for the dashboard (triage queue, per-test record, run summary).
 
 Every function takes a live session and returns **plain detached dicts** so Jinja templates never
 touch a closed session (the Slice-0 pattern). Nothing here mutates state — the buckets are a pure
-**projection** of lifecycle state + the orthogonal acknowledgement attribute (§0), so no separate
+**projection** of lifecycle state + the orthogonal acknowledgement attribute, so no separate
 bookkeeping exists to drift.
 """
 
@@ -129,7 +129,7 @@ def triage_queue(
     limit: int = DEFAULT_ROW_LIMIT,
     expand: Collection[str] = (),
 ) -> dict:
-    """The §0 three-bucket queue: new-unacknowledged / still-failing(+removed) / recently-fixed.
+    """The three-bucket triage queue: new-unacknowledged / still-failing(+removed) / recently-fixed.
 
     Buckets are a projection of lifecycle ``state`` and the orthogonal ``acknowledged`` attribute:
 
@@ -229,7 +229,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
 
 
 def _latest_failing_result(session: Session, identity_id: int) -> TestResult | None:
-    """The most recent failing result for a test — its error text/stack/location and links (§1)."""
+    """The most recent failing result for a test — its error text/stack/location and links."""
     return session.scalar(
         select(TestResult)
         .join(Run, Run.id == TestResult.run_id)
@@ -243,7 +243,7 @@ def _latest_failing_result(session: Session, identity_id: int) -> TestResult | N
 
 
 def _candidates_for_run(session: Session, run_id: int | None) -> dict:
-    """Candidate code/data changes in the run's window (PLAN §1), presented chronologically."""
+    """Candidate code/data changes in the run's window, presented chronologically."""
     if run_id is None:
         return {"code": [], "data": []}
     run = session.get(Run, run_id)
@@ -275,7 +275,7 @@ def _candidates_for_run(session: Session, run_id: int | None) -> dict:
 def _recurrence(
     session: Session, latest: TestResult | None, *, k: int, cutoff: float
 ) -> dict | None:
-    """KB recurrence for the latest failure (§4): exact occurrence stats + similar past cases."""
+    """KB recurrence for the latest failure: exact occurrence stats + similar past cases."""
     if latest is None or latest.signature_id is None:
         return None
     sig = session.get(FailureSignature, latest.signature_id)
@@ -304,7 +304,7 @@ def test_record(
     kb_top_k: int = 5,
     kb_cutoff: float = 0.3,
 ) -> dict | None:
-    """The §1 per-test record: identity, lifecycle, every episode, evidence and context links."""
+    """The per-test record: identity, lifecycle, every episode, evidence and context links."""
     ident = session.get(TestIdentity, identity_id)
     if ident is None:
         return None
@@ -369,7 +369,7 @@ def flaky_leaderboard(
     threshold: float = 0.3,
     limit: int = 50,
 ) -> dict:
-    """The §3 flaky-leaderboard view: most-unstable tests ranked by oscillation."""
+    """The flaky-leaderboard view: most-unstable tests ranked by oscillation."""
     rows = _leaderboard(session, window_days=window_days, threshold=threshold, limit=limit)
     return {"rows": rows, "window_days": window_days}
 
@@ -381,7 +381,7 @@ def kb_search(
     k: int = 20,
     cutoff: float = 0.3,
 ) -> dict:
-    """The §4 knowledge-base search: free-text → most-similar past failure signatures.
+    """The knowledge-base search: free-text → most-similar past failure signatures.
 
     Matches against the normalized signature text (the same space the KB keys on), provenance-
     weighted so confirmed/corrected human knowledge surfaces among near-equal matches.
@@ -400,7 +400,7 @@ def run_summary(
     limit: int = DEFAULT_ROW_LIMIT,
     expand: Collection[str] = (),
 ) -> dict | None:
-    """The §2 run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
+    """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
     The results table is the ~25k-row surface behind issue #19: it is capped at ``limit`` rows
     (unless ``"results"`` is in ``expand``) *before* projection, so the expensive per-row work is

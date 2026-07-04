@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+psycopg://uta:uta@db:5432/uta"
 
-    # ── Email (regression-only alert, §5) ────────────────────────────────────
+    # ── Email (regression-only alert) ────────────────────────────────────
     smtp_host: str = ""
     smtp_port: int = 25
     smtp_from: str = ""
@@ -41,10 +41,10 @@ class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────────────
     app_default_actor: str = "test-user"
     flaky_transition_threshold: float = 0.3
-    flaky_window_days: int = 30  # oscillation window for the flaky score (§3)
+    flaky_window_days: int = 30  # oscillation window for the flaky score
     pgtrgm_similarity_cutoff: float = 0.3
-    kb_top_k: int = 5  # similar past cases surfaced per failure (§4)
-    # §0 "recently fixed" bucket window — a fix stays visible/confirmable this long (PLAN §0).
+    kb_top_k: int = 5  # similar past cases surfaced per failure
+    # "recently fixed" bucket window — a fix stays visible/confirmable this long.
     recently_fixed_days: int = 7
     # Max test rows rendered per dashboard section before it is capped with a "Load all N Tests"
     # link (keeps huge lists — the ~25k run-results table — responsive). 0 disables the cap.
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # FishEye changelog for SVN revisions: {fisheye_changelog_url}?cs=<revision>.
     fisheye_changelog_url: str = "https://fisheye.labsolution.lu/changelog/LS_TRUNK"
 
-    # ── LLM hypothesis (§4 / Milestone 5) ────────────────────────────────────
+    # ── LLM hypothesis ────────────────────────────────────
     # Provider: "anthropic", "openai", or "" to auto-pick from whichever key is set (Anthropic wins
     # when both are). A chosen provider with no key ⇒ NoopHypothesisProvider (no model call;
     # llm_hypothesis stays NULL). Both keys are Platform/Console keys (pay-as-you-go), separate from

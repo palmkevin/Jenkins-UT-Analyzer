@@ -1,3 +1,3 @@
-"""Delivery surfaces beyond the dashboard (PLAN §5). Currently: regression-only email."""
+"""Delivery surfaces beyond the dashboard. Currently: regression-only email."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Derive the per-result **error type** (PLAN §1 'Error type') from status + stack trace.
+"""Derive the per-result **error type** from status + stack trace.
 
 A small, ordered set of substring/regex checks over the JUnit ``errorDetails`` and
 ``errorStackTrace``. It distinguishes the four buckets the monitor cares about — an assertion

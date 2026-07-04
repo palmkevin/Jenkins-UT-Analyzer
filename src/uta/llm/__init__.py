@@ -1,4 +1,4 @@
-"""LLM hypothesis provider (PLAN §4 / Milestone 5).
+"""LLM hypothesis provider.
 
 A failing test's *predicted cause* is derived deterministically (``analyze/classify.py``); the LLM
 adds a **human-readable hypothesis** — one sentence naming the most likely root cause — grounded in

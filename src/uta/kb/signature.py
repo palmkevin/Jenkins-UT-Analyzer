@@ -1,4 +1,4 @@
-"""Failure-signature normalization (PLAN §4 — the load-bearing component).
+"""Failure-signature normalization (the load-bearing component).
 
 Two runs of the *same* bug almost never produce byte-identical error text: line numbers,
 timestamps, object ids, temp paths, addresses and other dynamic values differ every time. If the
@@ -9,8 +9,8 @@ of our own code**.
 
 The signature = ``test identity + normalized text``; we also store a sha256 **hash** of it for
 instant, index-backed exact-recurrence lookup. This module is deliberately small, ordered and
-**unit-tested** because it single-handedly defines "the same failure" for recurrence (§4),
-prediction (§1) and flakiness grouping (§3). The exact mask set is tunable (PLAN Open questions):
+**unit-tested** because it single-handedly defines "the same failure" for recurrence,
+prediction and flakiness grouping. The exact mask set is tunable:
 too aggressive and distinct bugs collide; too timid and the same bug never recurs.
 
 Medical-data invariant: only this normalized/redacted form is persisted — never the raw text.

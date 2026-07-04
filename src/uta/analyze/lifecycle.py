@@ -1,22 +1,22 @@
-"""Lifecycle state machine + failure episodes (PLAN §1).
+"""Lifecycle state machine + failure episodes.
 
 Driven once per **complete** run, comparing each test identity's collapsed status in this run
 against the **baseline** (the previous complete run). Working only from those two persisted facts —
 never from the stored lifecycle state — makes re-running the analysis for an already-processed run
 **idempotent**: the same (baseline, run) pair always yields the same transitions.
 
-Transitions (lifecycle state is *about the result*; acknowledgement is orthogonal, §1):
+Transitions (lifecycle state is *about the result*; acknowledgement is orthogonal):
 
 - not-failing → **FAILING** (regression): open a new episode. If the test had a prior (closed)
   episode this is a *reopen* — bump ``reopen_count`` and clear acknowledgement so it re-enters the
-  New bucket (§0).
+  New bucket.
 - FAILING → FAILING (still failing): extend the open episode's last-failing pointer + age.
 - FAILING → **FIXED**: the test ran and **passed** again — close the open episode (set fixed-in
   run). Set only on a real pass, never on removal.
 - FAILING → **REMOVED**: the test is absent from this complete run — the episode stays open
   (disappeared ≠ fixed), surfaced with a Removed flag.
 
-Only identities that have ever failed get a lifecycle row (§1: the record exists "for every test
+Only identities that have ever failed get a lifecycle row (the record exists "for every test
 that is or has been failing"); perpetually-passing tests are left untouched.
 """
 
@@ -41,7 +41,7 @@ from uta.models.enums import LifecycleState
 
 @dataclass
 class RunAnalysis:
-    """Outcome of analysing one run — drives classification and the §2 summary."""
+    """Outcome of analysing one run — drives classification and the run summary."""
 
     baseline_run_id: int | None
     diff: RunDiff

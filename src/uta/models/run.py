@@ -26,7 +26,7 @@ class Run(Base, TimestampMixin):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    # Completeness (PLAN §2): finished + all expected shards reported. Incomplete runs are stored
+    # Completeness: finished + all expected shards reported. Incomplete runs are stored
     # and shown but skipped when picking a baseline.
     complete: Mapped[bool] = mapped_column(Boolean, default=False)
     # Which complete run this run was diffed against (set by the baseline selector, M2).
@@ -52,7 +52,7 @@ class Run(Base, TimestampMixin):
 
 
 class RunShard(Base):
-    """Per-shard (track) timing & status from ``wfapi`` — drives completeness + the §2 summary."""
+    """Per-shard (track) timing & status from ``wfapi`` — drives completeness + the run summary."""
 
     __tablename__ = "run_shards"
     __table_args__ = (UniqueConstraint("run_id", "track", name="uq_run_shard_track"),)

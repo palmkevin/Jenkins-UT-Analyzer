@@ -1,4 +1,4 @@
-"""Baseline selection + run diff (PLAN §2).
+"""Baseline selection + run diff.
 
 **Baseline = the most recent *complete* run before this one** — never blindly the previous build,
 because diffing against a partial/aborted run invents phantom regressions and fixes (a test looks
@@ -63,7 +63,7 @@ def select_baseline(session: Session, run: Run) -> Run | None:
 
 @dataclass
 class RunDiff:
-    """The §2 diff of a run against its baseline, at test-identity granularity."""
+    """The diff of a run against its baseline, at test-identity granularity."""
 
     baseline_run_id: int | None
     regressions: list[int] = field(default_factory=list)  # newly failing

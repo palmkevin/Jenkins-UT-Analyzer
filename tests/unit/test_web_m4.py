@@ -1,4 +1,4 @@
-"""HTTP-level tests for the M4 surfaces: flaky leaderboard (§3) + knowledge-base search (§4).
+"""HTTP-level tests for the M4 surfaces: flaky leaderboard + knowledge-base search.
 
 Also asserts the per-test record now carries the flakiness + recurrence cards.
 """
