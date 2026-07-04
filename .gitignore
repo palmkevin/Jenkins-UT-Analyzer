@@ -14,5 +14,8 @@ venv/
 # Docker / data
 pgdata/
 
+# Parallel dev worktrees (live inside the bind-mounted workspace; share the one .git)
+.worktrees/
+
 # Editor / OS
 .DS_Store
