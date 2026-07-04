@@ -16,10 +16,12 @@ from __future__ import annotations
 
 from uta.models.attribution import Attribution
 from uta.models.classification import Classification
+from uta.models.control import IngestJob, PollerHeartbeat, SettingOverride
 from uta.models.enums import (
     AliasState,
     ChangeType,
     ErrorType,
+    IngestJobStatus,
     LifecycleState,
     PredictedCause,
     Provenance,
@@ -45,10 +47,15 @@ __all__ = [
     "CodeChangeCandidate",
     "DataChangeCandidate",
     "FailureSignature",
+    # operational (control panel, issue #16)
+    "SettingOverride",
+    "IngestJob",
+    "PollerHeartbeat",
     # enums
     "AliasState",
     "ChangeType",
     "ErrorType",
+    "IngestJobStatus",
     "LifecycleState",
     "PredictedCause",
     "Provenance",

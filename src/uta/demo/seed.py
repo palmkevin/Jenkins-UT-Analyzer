@@ -11,7 +11,7 @@ exercise identical data.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,7 +20,8 @@ from uta.analyze.flakiness import recompute_flaky_flags
 from uta.db import session_scope
 from uta.demo.dataset import SyntheticJenkins, SyntheticTrackingFeed, build_numbers
 from uta.ingest.pipeline import ingest_build
-from uta.models import TestIdentity, TestLifecycle
+from uta.models import IngestJob, PollerHeartbeat, SettingOverride, TestIdentity, TestLifecycle
+from uta.models.enums import IngestJobStatus
 from uta.web import actions
 
 # The self-declared actors that "triaged" the demo data (invented handles, not real users).
@@ -44,6 +45,57 @@ def _current_episode_id(session: Session, canonical_name: str) -> tuple[int, int
     if lc is None or lc.current_episode_id is None:
         return None
     return ident.id, lc.current_episode_id
+
+
+def _seed_control_state(
+    session_factory: sessionmaker[Session], *, anchor: datetime, builds: list[int]
+) -> None:
+    """Populate the control-panel's operational tables so the demo's ``/control`` page isn't empty.
+
+    All synthetic (same discipline as the rest of the demo): a healthy **poller heartbeat**, one
+    active **threshold override** (so the "overridden" badge + Revert button show), and two past
+    **ingest jobs** — one done, one errored — so all three panels render populated. The store is
+    ephemeral and re-seeded per process, so this is rebuilt identically on every restart.
+    """
+    last = builds[-1]
+    with session_scope(session_factory) as session:
+        session.add(
+            PollerHeartbeat(
+                id=1,
+                last_poll_at=anchor - timedelta(minutes=4),
+                last_processed_count=1,
+                last_processed=str(last),
+                last_error=None,
+            )
+        )
+        # One override in effect — demonstrates the badge/Revert without perturbing the seeded
+        # triage/flaky numbers (kb_top_k only widens how many similar KB cases a test page lists).
+        session.add(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
+        session.add(
+            IngestJob(
+                build_start=builds[0],
+                build_end=builds[3],
+                status=IngestJobStatus.DONE,
+                builds_total=4,
+                builds_done=4,
+                requested_by=_DEMO_ACTOR,
+                started_at=anchor - timedelta(hours=2),
+                finished_at=anchor - timedelta(hours=2, minutes=-3),
+            )
+        )
+        session.add(
+            IngestJob(
+                build_start=last + 50,
+                build_end=last + 50,
+                status=IngestJobStatus.ERROR,
+                builds_total=1,
+                builds_done=0,
+                error="HTTPStatusError: 404 Not Found — build detail rotated out of retention.",
+                requested_by=_DEMO_ACTOR,
+                started_at=anchor - timedelta(minutes=30),
+                finished_at=anchor - timedelta(minutes=30, seconds=-8),
+            )
+        )
 
 
 def seed_demo_data(
@@ -100,5 +152,8 @@ def seed_demo_data(
                 triage_status="in_progress",
                 jira_ticket="LX-8842",
             )
+
+    # Synthetic control-panel state so the demo's /control page renders populated (issue #16).
+    _seed_control_state(session_factory, anchor=anchor, builds=builds)
 
     return len(builds)

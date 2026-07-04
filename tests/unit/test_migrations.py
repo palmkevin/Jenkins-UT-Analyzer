@@ -33,6 +33,9 @@ _EXPECTED_TABLES = {
     "code_change_candidates",
     "data_change_candidates",
     "failure_signatures",
+    "setting_overrides",
+    "ingest_jobs",
+    "poller_heartbeats",
 }
 
 
