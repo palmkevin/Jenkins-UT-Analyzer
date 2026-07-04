@@ -1,0 +1,43 @@
+{
+  // Run with: Terminal → Run Task…  (or Ctrl+Shift+B for the default build task).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // The "recompile & restart" loop: rebuild the image and recreate web + poller.
+      // Bound as the default build task, so Ctrl+Shift+B runs it.
+      "label": "Rebuild & restart (web + poller)",
+      "type": "shell",
+      "command": "docker compose up -d --build web poller",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Up (whole stack)",
+      "type": "shell",
+      "command": "docker compose up -d --build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Stop stack",
+      "type": "shell",
+      "command": "docker compose down",
+      "problemMatcher": []
+    },
+    {
+      "label": "Tail web logs",
+      "type": "shell",
+      "command": "docker compose logs -f web",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests (offline gate)",
+      "type": "shell",
+      "command": "pytest -m \"not live\"",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}

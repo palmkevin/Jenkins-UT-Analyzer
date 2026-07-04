@@ -1,0 +1,52 @@
+{
+  // Run/Debug view → pick a config → F5.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Fastest inner loop: runs uvicorn IN the devcontainer with --reload
+      // (auto-restart on save) and full breakpoint debugging. No image rebuild.
+      // Note: needs DATABASE_URL to point at a reachable Postgres. The compose
+      // `db` host name only resolves inside the compose network, so if the
+      // devcontainer isn't on it, publish a host port for db (or run against
+      // the demo store, which needs no DB — see "Debug: demo app" below).
+      "name": "Debug: web (uvicorn --reload)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "uta.web.app:app",
+        "--host", "0.0.0.0",
+        "--port", "8088",
+        "--reload"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      // Zero-dependency loop: in-memory SQLite demo, no Jenkins/Oracle/Postgres.
+      "name": "Debug: demo app",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "uta.demo.app:app",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--reload"
+      ],
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      // Debug a CLI subcommand (change "poll" to backfill/bootstrap/migrate/…).
+      "name": "Debug: uta CLI (poll)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uta.cli",
+      "args": ["poll"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    }
+  ]
+}
