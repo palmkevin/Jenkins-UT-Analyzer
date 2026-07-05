@@ -70,6 +70,7 @@ def test_flaky_leaderboard_lists_oscillating_test(client):
     assert resp.status_code == 200
     assert "Flaky leaderboard" in resp.text
     assert "flap.test" in resp.text
+    assert 'class="sparkline"' in resp.text  # per-test recent-run sparkline (issue #53)
 
 
 def test_flaky_leaderboard_total_is_true_count_not_capped(session_factory):
@@ -109,3 +110,4 @@ def test_test_record_shows_flakiness_and_recurrence(client, seeded):
     assert "Flakiness" in resp.text
     assert "Knowledge base" in resp.text  # recurrence card heading
     assert "seen" in resp.text
+    assert 'class="sparkline"' in resp.text  # per-run pass/fail history (issue #53)
