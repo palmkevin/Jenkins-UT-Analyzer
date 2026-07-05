@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from uta.config import Settings
 from uta.control.heartbeat import read_heartbeat
 from uta.control.jobs import recent_jobs
+from uta.control.quarantine import list_quarantine
 from uta.control.tunables import TUNABLES, effective_settings, load_overrides
 from uta.models import Run
 
@@ -77,8 +78,19 @@ def _job_dict(job) -> dict:
     }
 
 
+def _quarantine_dict(row) -> dict:
+    return {
+        "build_number": row.build_number,
+        "attempts": row.attempts,
+        "last_error": row.last_error,
+        "first_failed_at": row.first_failed_at,
+        "quarantined_at": row.quarantined_at,
+        "quarantined": row.quarantined_at is not None,
+    }
+
+
 def control_panel(session: Session, base_settings: Settings, *, error: str | None = None) -> dict:
-    """The full control-panel context: tunables, poller health, ingest jobs."""
+    """The full control-panel context: tunables, poller health, quarantine, ingest jobs."""
     overrides = load_overrides(session)
     hb = read_heartbeat(session)
     high_water_mark = session.scalar(select(func.max(Run.build_number)))
@@ -87,6 +99,7 @@ def control_panel(session: Session, base_settings: Settings, *, error: str | Non
         "override_count": len(overrides),
         "poller": {
             "last_poll_at": hb.last_poll_at if hb else None,
+            "last_success_at": hb.last_success_at if hb else None,
             "last_processed_count": hb.last_processed_count if hb else None,
             "last_processed": hb.last_processed if hb else None,
             "last_error": hb.last_error if hb else None,
@@ -95,6 +108,8 @@ def control_panel(session: Session, base_settings: Settings, *, error: str | Non
             "poll_interval_seconds": base_settings.poll_interval_seconds,
             "has_run": hb is not None and hb.last_poll_at is not None,
         },
+        "quarantine": [_quarantine_dict(q) for q in list_quarantine(session)],
+        "quarantine_after_attempts": base_settings.quarantine_after_attempts,
         "jobs": [_job_dict(j) for j in recent_jobs(session)],
         "error": error,
     }

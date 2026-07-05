@@ -96,7 +96,11 @@ def test_run_summary_has_baseline_and_diff(session_factory):
 
 def test_demo_app_serves_all_views():
     client = TestClient(create_demo_app(_MEMORY))
-    assert client.get("/health").json() == {"status": "ok"}
+    health = client.get("/health")
+    assert health.status_code == 200
+    # The seeded heartbeat is fresh, so the demo reports a healthy poller.
+    assert health.json()["status"] == "ok"
+    assert health.json()["poller"] == "ok"
     for path in ("/", "/flaky", "/kb", f"/runs/{FIRST_BUILD + 11}"):
         resp = client.get(path)
         assert resp.status_code == 200, path

@@ -36,6 +36,7 @@ _EXPECTED_TABLES = {
     "setting_overrides",
     "ingest_jobs",
     "poller_heartbeats",
+    "build_quarantines",
 }
 
 

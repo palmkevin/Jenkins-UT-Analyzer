@@ -62,6 +62,7 @@ def run_ingest_job(
     is the durable record of what happened, so a background failure is never silently lost.
     """
     from uta.analyze.flakiness import recompute_flaky_flags
+    from uta.control.quarantine import clear_failure
     from uta.ingest.pipeline import ingest_build
 
     lookback, tolerance = windows(settings)
@@ -90,6 +91,9 @@ def run_ingest_job(
                 unittest_suites=settings.unittest_suite_set,
                 recompute_flaky=False,
             )
+            # An on-demand re-ingest is the recovery path for a quarantined build (issue #51):
+            # success means the cause is fixed, so drop its quarantine record.
+            clear_failure(session_factory, n)
             with session_scope(session_factory) as session:
                 job = session.get(IngestJob, job_id)
                 if job is not None:
@@ -151,6 +155,36 @@ def trigger_ingest(
     else:
         _run()
     return job_id
+
+
+def recover_orphaned_jobs(session_factory: sessionmaker[Session]) -> int:
+    """Mark jobs orphaned by a restart as ``ERROR`` — call once at web-process startup (issue #51).
+
+    Jobs run in this process's daemon threads, so a restart kills them mid-flight while their rows
+    stay ``QUEUED``/``RUNNING`` forever. Any such row found at startup can only be an orphan (no
+    thread survives the process), so it is flipped to ``ERROR`` with an explanatory message rather
+    than left lying to the control panel. Returns how many rows were recovered.
+    """
+    from sqlalchemy import select
+
+    recovered = 0
+    with session_scope(session_factory) as session:
+        stale = session.scalars(
+            select(IngestJob).where(
+                IngestJob.status.in_([IngestJobStatus.QUEUED, IngestJobStatus.RUNNING])
+            )
+        ).all()
+        for job in stale:
+            job.status = IngestJobStatus.ERROR
+            job.error = (
+                "orphaned by a restart — the job's thread did not survive; "
+                "re-run the range from the control panel"
+            )
+            job.finished_at = datetime.now(UTC)
+            recovered += 1
+    if recovered:
+        logger.warning("recovered %d orphaned ingest job(s) left QUEUED/RUNNING", recovered)
+    return recovered
 
 
 def recent_jobs(session: Session, *, limit: int = 20) -> list[IngestJob]:

@@ -19,14 +19,17 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from uta.clients import build_email_sender
 from uta.config import Settings, get_settings
 from uta.control import jobs
+from uta.control.health import check_health
 from uta.control.tunables import clear_override, effective_settings, load_overrides, set_override
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
+from uta.delivery.email import EmailSender
 from uta.web import actions, control, views
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
@@ -88,12 +91,15 @@ def _expanded(request: Request) -> list[str]:
     return [s for s in raw.split(",") if s]
 
 
-def create_app(session_factory=None) -> FastAPI:
+def create_app(session_factory=None, *, email_sender: EmailSender | None = None) -> FastAPI:
     startup_engine = None
     if session_factory is None:
         settings = get_settings()
         startup_engine = make_engine(settings.database_url)
         session_factory = make_session_factory(startup_engine)
+        # Ops alerts (/health staleness, issue #51) ride the same SMTP seam as the regression
+        # report; ``None`` when email isn't configured. Tests inject a recording sender instead.
+        email_sender = build_email_sender(settings)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -101,6 +107,10 @@ def create_app(session_factory=None) -> FastAPI:
         # (tests inject a session_factory, leaving startup_engine None, and never hit this).
         if startup_engine is not None:
             assert_pg_trgm(startup_engine)
+        # On-demand ingest jobs run in *this process's* daemon threads, so any QUEUED/RUNNING row
+        # found at startup was orphaned by a restart — flip it to ERROR instead of letting it lie
+        # to the control panel forever (issue #51).
+        jobs.recover_orphaned_jobs(session_factory)
         yield
 
     app = FastAPI(title="Jenkins UT Analyzer", lifespan=lifespan)
@@ -134,8 +144,18 @@ def create_app(session_factory=None) -> FastAPI:
         return RedirectResponse(target, status_code=303)
 
     @app.get("/health")
-    def health() -> dict:
-        return {"status": "ok"}
+    def health() -> JSONResponse:
+        # Real health (issue #51): DB ping + poller-heartbeat freshness. 503 lets an external
+        # monitor page on a dead DB or a poller with no successful tick in N intervals; a
+        # deployment that runs no poller (demo, web-only) reports poller "never" and stays 200.
+        cfg = get_settings()
+        report = check_health(
+            session_factory,
+            cfg,
+            email_sender=email_sender,
+            email_recipients=cfg.email_recipients,
+        )
+        return JSONResponse(report.payload(), status_code=200 if report.ok else 503)
 
     @app.get("/", response_class=HTMLResponse)
     def triage(request: Request):
