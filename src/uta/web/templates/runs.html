@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Job runs — UT Analyzer{% endblock %}
+
+{#- Jenkins build result → Bootstrap contextual colour: green / orange / red. -#}
+{% macro state_badge(status) -%}
+  {%- if status == "SUCCESS" -%}<span class="badge text-bg-success">{{ status }}</span>
+  {%- elif status == "UNSTABLE" -%}<span class="badge text-bg-warning">{{ status }}</span>
+  {%- elif status in ("FAILURE", "ABORTED") -%}<span class="badge text-bg-danger">{{ status }}</span>
+  {%- else -%}<span class="badge text-bg-secondary">{{ status or "—" }}</span>{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<h1>Job runs</h1>
+<p class="meta">
+  {% if runs.poller.last_poll_at %}
+    Last poll <strong>{{ runs.poller.last_poll_at|ts }}</strong>
+    · next poll
+    {% if runs.poller.next_poll_at %}<strong>{{ runs.poller.next_poll_at|ts }}</strong>{% else %}—{% endif %}
+    {% if runs.poller.poll_interval_seconds %}
+      <span class="badge">every {{ runs.poller.poll_interval_seconds|duration }}</span>
+    {% endif %}
+  {% else %}
+    The scheduled poller has not reported a tick yet.
+  {% endif %}
+</p>
+
+{% if not runs.runs %}
+  <p class="empty">No runs ingested yet.</p>
+{% else %}
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle bg-white">
+  <thead class="table-light">
+    <tr>
+      <th>Run</th>
+      <th>State</th>
+      <th>Start</th>
+      <th>Duration</th>
+      <th class="text-end">Passed</th>
+      <th class="text-end">Failed</th>
+      <th class="text-end">Skipped</th>
+      <th class="text-end">Total</th>
+      <th class="text-end">Regressions</th>
+      <th class="text-end">Newly fixed</th>
+      <th>Jenkins</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in runs.runs %}
+    <tr>
+      <td><a href="/runs/{{ r.build }}">#{{ r.build }}</a>{% if not r.complete %} <span class="badge removed">incomplete</span>{% endif %}</td>
+      <td>{{ state_badge(r.status) }}</td>
+      <td>{{ r.started_at|ts }}</td>
+      <td>{{ r.duration_seconds|duration }}</td>
+      <td class="text-end PASSED">{{ r.totals.passed }}</td>
+      <td class="text-end {% if r.totals.failed %}FAILED{% endif %}">{{ r.totals.failed }}</td>
+      <td class="text-end SKIPPED">{{ r.totals.skipped }}</td>
+      <td class="text-end">{{ r.totals.total }}</td>
+      <td class="text-end {% if r.regressions %}FAILED{% endif %}">{{ r.regressions }}</td>
+      <td class="text-end {% if r.newly_fixed %}PASSED{% endif %}">{{ r.newly_fixed }}</td>
+      <td>{% if r.url %}<a href="{{ r.url }}">Jenkins</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

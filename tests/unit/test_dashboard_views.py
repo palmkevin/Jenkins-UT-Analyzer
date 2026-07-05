@@ -14,7 +14,7 @@ from sqlalchemy import select
 from tests.builders import get_identity, make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.models import Classification, FailureEpisode, TestLifecycle
+from uta.models import Classification, FailureEpisode, PollerHeartbeat, TestLifecycle
 from uta.models.enums import PredictedCause, Provenance
 from uta.web import actions, views
 
@@ -221,6 +221,56 @@ def test_run_summary_diff_against_baseline(session_factory):
 def test_run_summary_unknown_build_is_none(session_factory):
     with session_scope(session_factory) as s:
         assert views.run_summary(s, 12345) is None
+
+
+# ── job runs (issue #37) ──────────────────────────────────────────────────────
+
+
+def test_job_runs_lists_newest_first_with_diff_counts(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"a": "FAILED", "b": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"a": "PASSED", "b": "FAILED"})
+        apply_run(s, r2, baseline=r1)
+
+        result = views.job_runs(s)
+        assert [row["build"] for row in result["runs"]] == [2, 1]  # newest first
+        newest = result["runs"][0]
+        assert newest["status"] == "SUCCESS"
+        assert newest["regressions"] == 1  # b newly failing
+        assert newest["newly_fixed"] == 1  # a fixed
+        assert newest["duration_seconds"] == 1800.0  # make_run runs are 30 min
+        # First run has no baseline: every failure is a regression, nothing newly fixed.
+        oldest = result["runs"][1]
+        assert oldest["regressions"] == 1  # a
+        assert oldest["newly_fixed"] == 0
+
+
+def test_job_runs_totals_and_poller_next(session_factory):
+    now = datetime.now(UTC)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"a": "PASSED"})
+        r1.total_passed, r1.total_failed, r1.total_skipped = 10, 2, 1
+        apply_run(s, r1, baseline=None)
+        s.add(PollerHeartbeat(id=1, last_poll_at=now, last_processed_count=1))
+        s.flush()
+
+        result = views.job_runs(s, poll_interval_seconds=300)
+        totals = result["runs"][0]["totals"]
+        assert totals == {"passed": 10, "failed": 2, "skipped": 1, "total": 13}
+        poller = result["poller"]
+        # SQLite drops tzinfo on round-trip; compare tz-normalized (as the view does downstream).
+        last = views._aware(poller["last_poll_at"])
+        assert last == now
+        assert poller["next_poll_at"] == last + timedelta(seconds=300)
+
+
+def test_job_runs_empty_store_and_no_heartbeat(session_factory):
+    with session_scope(session_factory) as s:
+        result = views.job_runs(s, poll_interval_seconds=300)
+        assert result["runs"] == []
+        assert result["poller"]["last_poll_at"] is None
+        assert result["poller"]["next_poll_at"] is None
 
 
 # ── actions: provenance ─────────────────────────────────────────────────────────

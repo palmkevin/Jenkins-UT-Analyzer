@@ -16,9 +16,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from uta.analyze.baseline import compute_diff, select_baseline
+from uta.analyze.baseline import compute_diff, identity_status_map, select_baseline
 from uta.analyze.flakiness import compute_stats
 from uta.analyze.flakiness import leaderboard_candidates as _leaderboard_candidates
+from uta.control.heartbeat import read_heartbeat
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
 from uta.models import (
@@ -88,6 +89,13 @@ def _days_between(start: datetime | None, end: datetime | None) -> int | None:
     if start is None or end is None:
         return None
     return max(0, (end - start).days)
+
+
+def _duration_seconds(start: datetime | None, end: datetime | None) -> float | None:
+    start, end = _aware(start), _aware(end)
+    if start is None or end is None:
+        return None
+    return max(0.0, (end - start).total_seconds())
 
 
 def _row(session: Session, lc: TestLifecycle) -> dict:
@@ -507,4 +515,75 @@ def run_summary(
             for r in visible_results
         ],
         "results_total": results_total,
+    }
+
+
+def job_runs(session: Session, *, poll_interval_seconds: int | None = None) -> dict:
+    """The 'Job runs' page (issue #37): every ingested run, newest-first, with status, timing,
+    test totals and the regression / newly-fixed counts of its diff vs baseline.
+
+    Each run's counts are its diff against its baseline — the most recent *complete* run before it,
+    the same baseline the run summary uses (so the two pages never disagree). Status maps are cached
+    and reused across runs (a run's baseline is typically the run just before it), so the page costs
+    roughly one lightweight ``(identity_id, status)`` scan per run rather than two.
+
+    The poller block carries the last tick time and the projected next tick (last + interval) for
+    the header banner.
+    """
+    runs = session.scalars(select(Run).order_by(Run.started_at.desc())).all()
+
+    status_cache: dict[int, dict[int, str]] = {}
+
+    def _status_map(run: Run) -> dict[int, str]:
+        if run.id not in status_cache:
+            status_cache[run.id] = identity_status_map(session, run)
+        return status_cache[run.id]
+
+    rows: list[dict] = []
+    for run in runs:
+        baseline = (
+            session.get(Run, run.baseline_run_id)
+            if run.baseline_run_id is not None
+            else select_baseline(session, run)
+        )
+        diff = compute_diff(
+            session,
+            run,
+            baseline,
+            current=_status_map(run),
+            baseline_status=_status_map(baseline) if baseline is not None else {},
+        )
+        rows.append(
+            {
+                "build": run.build_number,
+                "status": run.status,
+                "url": run.url,
+                "complete": run.complete,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+                "duration_seconds": _duration_seconds(run.started_at, run.finished_at),
+                "totals": {
+                    "passed": run.total_passed,
+                    "failed": run.total_failed,
+                    "skipped": run.total_skipped,
+                    "total": run.total_passed + run.total_failed + run.total_skipped,
+                },
+                "regressions": len(diff.regressions),
+                "newly_fixed": len(diff.newly_fixed),
+            }
+        )
+
+    hb = read_heartbeat(session)
+    last_poll_at = hb.last_poll_at if hb else None
+    next_poll_at = None
+    if last_poll_at is not None and poll_interval_seconds:
+        next_poll_at = _aware(last_poll_at) + timedelta(seconds=poll_interval_seconds)
+
+    return {
+        "runs": rows,
+        "poller": {
+            "last_poll_at": last_poll_at,
+            "next_poll_at": next_poll_at,
+            "poll_interval_seconds": poll_interval_seconds,
+        },
     }

@@ -175,12 +175,15 @@
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
-        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, per-test
-        records, flaky leaderboard, and knowledge-base search. Where the human confirms causes and enters
-        reasons. Also serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds
-        (flaky/KB/triage/ingest knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build
-        or range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller
-        health (last poll, high-water mark, last error).</p>
+        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, a
+        <b><code>/runs</code> job-runs list</b> (every ingested run newest-first — status, start time,
+        duration, test totals, and regression / newly-fixed counts vs the same baseline the run summary
+        uses, with a header banner showing the poller's last and next tick), per-test records, flaky
+        leaderboard, and knowledge-base search. Where the human confirms causes and enters reasons. Also
+        serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
+        ingest knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or range
+        directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller health
+        (last poll, high-water mark, last error).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>migrate</code> + <code>db</code> <span class="pill">infra</span></h4>

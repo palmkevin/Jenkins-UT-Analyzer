@@ -51,7 +51,31 @@ def format_ts(value: object) -> str:
     return strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_duration(value: object) -> str:
+    """Render a duration in seconds as compact ``Hh Mm Ss`` text (issue #37).
+
+    Drops leading zero units (``90`` → ``1m 30s``, ``5`` → ``5s``); ``None`` renders as ``"—"``.
+    Non-numeric values fall through to ``str`` unchanged.
+    """
+    if value is None:
+        return "—"
+    if not isinstance(value, (int, float)):
+        return str(value)
+    total = int(value)
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
 _TEMPLATES.env.filters["ts"] = format_ts
+_TEMPLATES.env.filters["duration"] = format_duration
 
 
 def _expanded(request: Request) -> list[str]:
@@ -140,6 +164,13 @@ def create_app(session_factory=None) -> FastAPI:
         return render(
             request, "test_record.html", {"record": record, "identity_id": identity_id}, cfg=cfg
         )
+
+    @app.get("/runs", response_class=HTMLResponse)
+    def runs_view(request: Request):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+            runs = views.job_runs(s, poll_interval_seconds=cfg.poll_interval_seconds)
+        return render(request, "runs.html", {"runs": runs}, cfg=cfg)
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
     def run_view(request: Request, build: int):

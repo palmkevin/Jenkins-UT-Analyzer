@@ -45,3 +45,12 @@ def test_unknown_run_is_graceful(client):
     resp = client.get("/runs/9999")
     assert resp.status_code == 200
     assert "No run ingested" in resp.text
+
+
+def test_job_runs_page_lists_the_run(client):
+    resp = client.get("/runs")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Job runs" in body
+    # The ingested build is listed and links to its detail page.
+    assert 'href="/runs/1702"' in body
