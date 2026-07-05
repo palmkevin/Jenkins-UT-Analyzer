@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     jira_base_url: str = "https://labsolution.atlassian.net"
     # FishEye changelog for SVN revisions: {fisheye_changelog_url}?cs=<revision>.
     fisheye_changelog_url: str = "https://fisheye.labsolution.lu/changelog/LS_TRUNK"
+    # ZEPHYR (Kanoah Test Management) test-case deep link: {zephyr_test_case_url_prefix}<LX-T…>.
+    zephyr_test_case_url_prefix: str = (
+        "https://labsolution.atlassian.net/projects/LX?selectedItem="
+        "com.atlassian.plugins.atlassian-connect-plugin:"
+        "com.kanoah.test-manager__main-project-page#!/v2/testCase/"
+    )
 
     # ── LLM hypothesis ────────────────────────────────────
     # Provider: "anthropic", "openai", or "" to auto-pick from whichever key is set (Anthropic wins

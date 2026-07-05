@@ -30,6 +30,15 @@ protected branch requiring the CI `test` check, deploys are test-gated by constr
 instance sleeps after ~15 min idle (cold start ~30–50 s). Locally: `uta demo` (or
 `uvicorn uta.demo.app:app`). The store is stateless — a restart rebuilds the same dataset.
 
+**Keep the demo dataset showcasing every feature (consider it, every change).** The demo is the
+public shop-window: any change that adds or alters a **user-visible signal or surface** (a new parsed
+field, a new dashboard/record element, a new deep-link, a new bucket/state) should also **seed a
+representative example** into `src/uta/demo/dataset.py` so the live demo actually exercises it —
+including edge cases worth showing (e.g. the *plural* form of something that can occur once or many
+times). The dataset is a deliberately small-but-complete story, so grow it thoughtfully rather than
+piling on. Pure refactors/bug-fixes/perf/infra work that change no visible surface don't need it.
+When in doubt, add the example — a feature the demo can't show is a feature reviewers can't see.
+
 ## Task workflow (GitHub Issues + PR)
 Work is tracked in **GitHub Issues**, driven conversationally via `gh` (available and authed in the
 devcontainer — see Conventions). There is **no status doc** to hand-maintain; the issue *is* the unit

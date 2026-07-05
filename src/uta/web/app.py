@@ -122,6 +122,7 @@ def create_app(session_factory=None) -> FastAPI:
             "actor": current_actor(request),
             "jira_base_url": cfg.jira_base_url,
             "fisheye_changelog_url": cfg.fisheye_changelog_url,
+            "zephyr_test_case_url_prefix": cfg.zephyr_test_case_url_prefix,
             "expand": _expanded(request),
             "row_limit": cfg.ui_row_limit,
         }

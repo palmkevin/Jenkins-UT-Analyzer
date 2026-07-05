@@ -199,8 +199,10 @@
       </div>
       <div class="part" style="border-color:var(--muted)">
         <h4>Deep-link targets <span class="pill">read-only links</span></h4>
-        <p><b>FishEye</b> (<code>?cs=&lt;revision&gt;</code>) for SVN revisions and <b>Jira</b>
-        (<code>/browse/&lt;TICKET&gt;</code>) for tickets — surfaced as links in the UI, not integrations.</p>
+        <p><b>FishEye</b> (<code>?cs=&lt;revision&gt;</code>) for SVN revisions, <b>Jira</b>
+        (<code>/browse/&lt;TICKET&gt;</code>) for tickets, and <b>ZEPHYR (Kanoah Test Management)</b> for the
+        test case(s) a failing test references (e.g. <code>LX-T4792</code>, parsed from its stack trace) —
+        surfaced as links in the UI, not integrations.</p>
       </div>
     </div>
   </div>
@@ -415,7 +417,8 @@
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes, ownership,
-  LLM hypothesis, error type, stack trace) plus the editable fields the human owns — <b>causing person</b>,
+  linked ZEPHYR test case(s), LLM hypothesis, error type, stack trace) plus the editable fields the human owns
+  — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
   AI suggestion. Every action is stamped with the acting <code>actor</code>.</p>
 </section>
