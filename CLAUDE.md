@@ -135,12 +135,19 @@ Two tiers — offline (the gate) and `live` (local-only):
 All development runs **inside the devcontainer**, never on the bare VM host. The devcontainer image
 bakes `bypassPermissions` into `/etc/claude-code/managed-settings.json` (the Linux *managed-settings*
 path — highest precedence, and **not** shadowed by the workspace bind mount or the `~/.claude` named
-volume, unlike those paths), so Claude Code runs **prompt-free**. Consequences:
+volume, unlike those paths), so Claude Code runs **prompt-free** — **in the terminal CLI**, which
+reads managed-settings directly. Consequences:
 - **There is no `permissions.allow` list to maintain** in `.claude/settings.json` — it is
   intentionally empty. Don't re-add prefix rules; the managed mode already covers everything.
 - The `deny` rules (`rm -rf /`, `git push --force`) and the built-in `rm -rf /` / `rm -rf ~`
   circuit-breakers **still apply** even under bypass.
 - The mode is baked at **build** time, so a **Rebuild Container** is needed after changing it.
+- **The VS Code extension needs a per-machine opt-in** — managed-settings alone does *not* make it
+  prompt-free (only the terminal CLI is). The extension has its own gate: enable **"Allow dangerously
+  skip permissions"** in VS Code Settings → Extensions → Claude Code, then either pick "Bypass
+  permissions" in the mode indicator or set `"claudeCode.initialPermissionMode": "bypassPermissions"`.
+  These are per-user VS Code settings, so the image can't bake them the way it bakes managed-settings;
+  without them the extension keeps prompting (Bash + most non-edit tools) despite the managed mode.
 - **Don't develop on the bare VM host**: it has no managed-settings file (so it would prompt) and no
   `gh`. It exists to run the deployed `web`/`poller`/`db` stack, not to author changes.
 </content>
