@@ -53,7 +53,5 @@ def test_build_client_honors_verify_tls_false_setting(monkeypatch):
 
 def test_build_client_ca_bundle_wins_over_verify_flag(monkeypatch):
     captured = _captured_verify(monkeypatch)
-    build_client(
-        Settings(jenkins_verify_tls=False, jenkins_ca_bundle="/etc/ssl/internal-ca.pem")
-    )
+    build_client(Settings(jenkins_verify_tls=False, jenkins_ca_bundle="/etc/ssl/internal-ca.pem"))
     assert captured["verify"] == "/etc/ssl/internal-ca.pem"
