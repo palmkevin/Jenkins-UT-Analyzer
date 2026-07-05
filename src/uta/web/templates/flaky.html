@@ -4,7 +4,12 @@
 {% block content %}
 <h1>Flaky leaderboard</h1>
 <p class="meta">
-  Ranked by oscillation (state transitions ÷ runs) over the last {{ board.window_days }} days.
+  <span class="count">{{ board.total }}</span> oscillating test{{ "" if board.total == 1 else "s" }}
+  over the last {{ board.window_days }} days{% if board.total > board.rows|length %}
+  (showing top {{ board.rows|length }}){% endif %}.
+</p>
+<p class="meta">
+  Ranked by oscillation (state transitions ÷ runs).
   A test is <span class="badge flaky">flaky</span> when it flip-flops; a solidly-failing test is a
   regression, not flaky.
 </p>

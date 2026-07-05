@@ -11,7 +11,12 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from tests.builders import get_identity, make_run
-from uta.analyze.flakiness import compute_stats, leaderboard, recompute_flaky_flags
+from uta.analyze.flakiness import (
+    compute_stats,
+    leaderboard,
+    leaderboard_candidates,
+    recompute_flaky_flags,
+)
 from uta.models import TestLifecycle
 
 NOW = datetime(2026, 7, 1, tzinfo=UTC)
@@ -123,3 +128,21 @@ def test_recompute_sets_flag_and_leaderboard(session_factory):
     assert n == 1
     assert lc.flaky is True
     assert board and board[0]["test_id"] == T and board[0]["flaky"] is True
+
+
+def test_leaderboard_candidates_total_is_independent_of_limit(session_factory):
+    """The full candidate count is the true total; ``limit`` only caps the displayed rows."""
+    names = [f"ut_pkg.mod.test_{i}" for i in range(3)]
+    with session_factory() as s:
+        for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
+            make_run(s, b, {n: st for n in names})
+        for n in names:
+            s.add(TestLifecycle(test_identity_id=get_identity(s, n).id))
+        s.commit()
+
+        candidates = leaderboard_candidates(s, window_days=30, threshold=0.3, now=NOW)
+        capped = leaderboard(s, window_days=30, threshold=0.3, limit=2, now=NOW)
+
+    assert len(candidates) == 3  # true count, unaffected by any display limit
+    assert len(capped) == 2  # leaderboard slices the same candidate list
+    assert capped == candidates[:2]
