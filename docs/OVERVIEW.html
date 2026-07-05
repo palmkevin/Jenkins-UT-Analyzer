@@ -170,19 +170,21 @@
         <p>Runs <code>uta poll</code>: on a fixed interval, detects new completed builds above the DB
         high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also sends email
         and fills LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
-        (so a tuning change applies with no restart) and stamps a heartbeat row with the tick time, build
-        count and last error.</p>
+        (so a tuning change applies with no restart), ends with a <b>retention/pruning pass</b> (old passing
+        results, finished ingest jobs), and stamps a heartbeat row with the tick time, build count and last
+        error.</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
-        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, a
-        <b><code>/runs</code> job-runs list</b> (every ingested run newest-first — status, start time,
-        duration, test totals, and regression / newly-fixed counts vs the same baseline the run summary
-        uses, with a header banner showing the poller's last and next tick), per-test records, flaky
+        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries (results
+        table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable), a
+        <b><code>/runs</code> job-runs list</b> (also paginated — every ingested run newest-first — status,
+        start time, duration, test totals, and regression / newly-fixed counts vs the same baseline the run
+        summary uses, with a header banner showing the poller's last and next tick), per-test records, flaky
         leaderboard, and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
-        ingest knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or range
-        directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller health
+        ingest/retention knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or
+        range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller health
         (last poll, high-water mark, last error).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
@@ -211,9 +213,10 @@
 <section id="diagram">
   <h2>System map</h2>
   <p class="lead">How data and notifications flow between the parts. The <code>poller</code> pulls from Jenkins
-  and Oracle, writes to Postgres, and fans out to email + LLM; the <code>web</code> app reads Postgres and the
-  human writes back through it. The <code>web</code> app's <b>control panel</b> also has a direct, on-demand
-  path to Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM).</p>
+  and Oracle, writes to Postgres, prunes old passing results / finished ingest jobs from Postgres at the end
+  of every tick, and fans out to email + LLM; the <code>web</code> app reads Postgres and the human writes
+  back through it. The <code>web</code> app's <b>control panel</b> also has a direct, on-demand path to
+  Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM).</p>
 
   <div class="legend">
     <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
@@ -267,7 +270,7 @@
       <text class="sub" x="352" y="108">uta poll — interval loop</text>
       <text class="sub" x="352" y="126">fetch → parse → persist</text>
       <text class="sub" x="352" y="144">→ lifecycle · classify</text>
-      <text class="sub" x="352" y="162">→ flaky · hypothesize</text>
+      <text class="sub" x="352" y="162">→ flaky · hypothesize · prune</text>
 
       <!-- Postgres -->
       <rect class="box" x="360" y="250" width="180" height="96" fill="#0f2036" stroke="#4a90d9"/>
@@ -306,7 +309,7 @@
       <text class="etxt" x="222" y="182">changes</text>
       <!-- poller -> postgres -->
       <path class="edge" d="M430,180 L440,248" marker-end="url(#arr)"/>
-      <text class="etxt" x="446" y="220">persist</text>
+      <text class="etxt" x="446" y="220">persist / prune</text>
       <!-- poller -> LLM -->
       <path class="edge" d="M530,100 C610,90 640,80 688,78" marker-end="url(#arr)"/>
       <text class="etxt" x="560" y="72">signals</text>
@@ -363,6 +366,11 @@
       <code>build_number</code> (re-ingest replaces, never duplicates).</small></li>
     <li><b>Record signatures.</b> <small>A normalized failure <b>signature</b> per failing result (the KB
       recurrence key) — for any run, complete or not.</small></li>
+    <li><b>Prune.</b> <small>Once per tick (not per build), after the builds above are processed: delete
+      passing/skipped results — never failing ones — from runs older than
+      <code>RESULT_RETENTION_DAYS</code> (default 90; 0 disables), and finished ingest jobs older than
+      <code>INGEST_JOB_RETENTION_DAYS</code> (default 30; 0 disables). Also runnable on demand via
+      <code>uta prune</code>. See the <a href="#reference">Reference</a> invariant below.</small></li>
   </ol>
   <div class="note"><b>Clock discipline is load-bearing.</b> Jenkins timestamps are epoch-millis UTC; Oracle
     <code>ut_ref</code> timestamps are naive local wall-clock (server is UTC+2), normalized via the named
@@ -466,7 +474,9 @@
     <tr><th>Runs</th><td>Build #, links, SVN revision(s), overall + per-shard start/finish, totals, and the
       completeness / baseline flag.</td></tr>
     <tr><th>Test results per run</th><td>Identity, status, duration, track/shard, failure message, stack trace.
-      These rows <b>are</b> the failure-history feed (counts, last-failed, fail-rate windows) — no separate table.</td></tr>
+      These rows <b>are</b> the failure-history feed (counts, last-failed, fail-rate windows) — no separate
+      table. <b>Passing/skipped rows are pruned</b> once their run ages past the retention window (see
+      <i>Retention</i> below); failing rows are kept forever.</td></tr>
     <tr><th>Test identity &amp; aliases</th><td>Canonical fully-qualified name + optional <code>alias_of</code> pointer
       so renames/moves keep their history (suggested vs human-confirmed).</td></tr>
     <tr><th>Test lifecycle</th><td>Lifecycle state (<code>FAILING</code> / <code>FIXED</code> / <code>REMOVED</code>),
@@ -506,6 +516,14 @@
     <tr><th>Medical data</th><td>LIMS error text, stack traces, and especially <code>MODDATA</code> may contain
       patient data. Golden fixtures are anonymized/redacted before commit and <b>raw <code>MODDATA</code> is never
       committed</b> — structure preserved, values redacted.</td></tr>
+    <tr><th>Retention</th><td>Nothing else in the store is ever deleted. Only <b>unsigned</b>
+      (<code>signature_id IS NULL</code>) passing/skipped test results from old runs, and finished ingest
+      jobs, are pruned — <b>failing results, runs, episodes, lifecycles, attributions and KB
+      signatures/aggregates are kept forever</b>, so KB occurrence counts are never corrupted. Runs' stored
+      pass/fail/skip totals stay exact forever; only the diff of a run older than the window loses its
+      “newly fixed” entries (accepted). Both windows (<code>RESULT_RETENTION_DAYS</code>,
+      <code>INGEST_JOB_RETENTION_DAYS</code>) are runtime-tunable from the control panel; <code>0</code>
+      disables either.</td></tr>
   </table>
 </section>
 

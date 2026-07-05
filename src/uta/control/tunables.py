@@ -147,6 +147,25 @@ TUNABLES: tuple[Tunable, ...] = (
         500,
         "Builds a cold-start poll ingests on an empty store.",
     ),
+    Tunable(
+        "result_retention_days",
+        "Passing-result retention (days)",
+        "Retention",
+        "int",
+        0,
+        3650,
+        "Days to keep raw passing/skipped results (failures are kept forever; 0 keeps all). "
+        "Keep it above the flaky window.",
+    ),
+    Tunable(
+        "ingest_job_retention_days",
+        "Ingest-job retention (days)",
+        "Retention",
+        "int",
+        0,
+        365,
+        "Days to keep finished (done/error) ingest jobs (0 keeps all).",
+    ),
 )
 
 TUNABLES_BY_KEY: dict[str, Tunable] = {t.key: t for t in TUNABLES}

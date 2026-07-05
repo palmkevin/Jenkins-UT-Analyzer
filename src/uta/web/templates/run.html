@@ -69,6 +69,6 @@
   </tbody>
 </table>
 </div>
-{{ ui.more_hint("results", run.results_total, run.results|length, expand) }}
+{{ ui.pager(run.page, run.pages, run.results_total, anchor="results") }}
 {% endif %}
 {% endblock %}

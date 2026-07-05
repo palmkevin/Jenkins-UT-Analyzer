@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
     # not try to ingest every historical build from #1.
     backfill_depth: int = 10
+    # Retention (issue #52): raw *passing/skipped* results are dropped once their run is older than
+    # this many days (failing results, runs, episodes, lifecycles, attributions and KB signatures
+    # are kept forever). 0 keeps everything. Keep it comfortably above FLAKY_WINDOW_DAYS so the
+    # flakiness sequence never loses in-window pass points.
+    result_retention_days: int = 90
+    # Finished (done/error) on-demand ingest jobs are dropped after this many days. 0 keeps all.
+    ingest_job_retention_days: int = 30
 
     # ── External links (read-only deep links surfaced in the UI) ──────────────
     # Jira base for ticket links: {jira_base_url}/browse/<TICKET>.

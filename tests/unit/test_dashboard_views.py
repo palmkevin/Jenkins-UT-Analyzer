@@ -111,17 +111,43 @@ def test_triage_limit_zero_disables_cap(session_factory):
         assert q["truncated"]["new"] is False
 
 
-def test_run_results_capped_with_full_total(session_factory):
+def test_run_results_paginate_with_full_total(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
         apply_run(s, r1, baseline=None)
-        # 5 tests × 2 tracks = 10 result rows.
+        # 5 tests × 2 tracks = 10 result rows → 4 pages of 3.
         summary = views.run_summary(s, 1, limit=3)
         assert len(summary["results"]) == 3
         assert summary["results_total"] == 10
-        # Expanding renders every row.
-        full = views.run_summary(s, 1, limit=3, expand=["results"])
-        assert len(full["results"]) == 10
+        assert (summary["page"], summary["pages"]) == (1, 4)
+        # The last page carries the remainder; pages don't overlap.
+        last = views.run_summary(s, 1, limit=3, page=4)
+        assert len(last["results"]) == 1
+        assert last["page"] == 4
+        seen = [
+            (r["test_id"], r["track"])
+            for p in range(1, 5)
+            for r in views.run_summary(s, 1, limit=3, page=p)["results"]
+        ]
+        assert len(seen) == 10
+        assert len(set(seen)) == 10  # stable ordering — no row repeats across pages
+
+
+def test_run_results_page_out_of_range_clamps(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        assert views.run_summary(s, 1, limit=3, page=99)["page"] == 4
+        assert views.run_summary(s, 1, limit=3, page=0)["page"] == 1
+
+
+def test_run_results_limit_zero_disables_pagination(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        summary = views.run_summary(s, 1, limit=0)
+        assert len(summary["results"]) == 10
+        assert (summary["page"], summary["pages"]) == (1, 1)
 
 
 # ── per-test record ─────────────────────────────────────────────────────────
@@ -271,6 +297,25 @@ def test_job_runs_empty_store_and_no_heartbeat(session_factory):
         assert result["runs"] == []
         assert result["poller"]["last_poll_at"] is None
         assert result["poller"]["next_poll_at"] is None
+
+
+def test_job_runs_paginates_newest_first(session_factory):
+    with session_scope(session_factory) as s:
+        prev = None
+        for build in range(1, 8):  # 7 runs, pages of 3
+            run = make_run(s, build, {"a": "PASSED"})
+            apply_run(s, run, baseline=prev)
+            prev = run
+
+        first = views.job_runs(s, limit=3)
+        assert (first["total"], first["page"], first["pages"]) == (7, 1, 3)
+        assert [r["build"] for r in first["runs"]] == [7, 6, 5]
+        # Later pages continue the newest-first order; diff counts still resolve (the page-boundary
+        # baseline of build 5 is build 4, which lives on page 2).
+        second = views.job_runs(s, limit=3, page=2)
+        assert [r["build"] for r in second["runs"]] == [4, 3, 2]
+        last = views.job_runs(s, limit=3, page=3)
+        assert [r["build"] for r in last["runs"]] == [1]
 
 
 # ── actions: provenance ─────────────────────────────────────────────────────────
