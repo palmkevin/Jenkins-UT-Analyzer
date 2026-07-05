@@ -57,6 +57,22 @@
       Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
     </p>
 
+    {% if ep.failure %}
+    {% set ef = ep.failure %}
+    <details class="card"{% if lc and ep.id == lc.current_episode_id and ep.is_open %} open{% endif %}>
+      <summary>Failure detail</summary>
+      <p class="meta">
+        Run {{ run_link(ef.run) }} · track {{ ef.track }} ·
+        status <span class="{{ ef.status }}">{{ ef.status }}</span> ·
+        error type {{ ef.error_type or "—" }}
+        {% if ef.file_path %}<br><code>{{ ef.file_path }}:{{ ef.line }}</code>{% endif %}
+        {% if ef.run and ef.run.url %}<br><a href="{{ ef.run.url }}">Jenkins run</a>{% endif %}
+      </p>
+      {% if ef.error_details %}<p><strong>{{ ef.error_details }}</strong></p>{% endif %}
+      {% if ef.error_stack_trace %}<pre class="p-3 bg-light border rounded small"><code>{{ ef.error_stack_trace }}</code></pre>{% endif %}
+    </details>
+    {% endif %}
+
     {% if ep.jira_ticket %}
     <p>Jira ticket:
       <a href="{{ jira_base_url }}/browse/{{ ep.jira_ticket }}">{{ ep.jira_ticket }}</a>
@@ -153,22 +169,6 @@
   {% else %}
   <p class="empty">No similar past failures yet.</p>
   {% endif %}
-</details>
-{% endif %}
-
-{% set lf = record.latest_failure %}
-{% if lf %}
-<details class="card" open>
-  <summary>Latest failure</summary>
-  <p class="meta">
-    Run {{ run_link(lf.run) }} · track {{ lf.track }} ·
-    status <span class="{{ lf.status }}">{{ lf.status }}</span> ·
-    error type {{ lf.error_type or "—" }}
-    {% if lf.file_path %}<br><code>{{ lf.file_path }}:{{ lf.line }}</code>{% endif %}
-    {% if lf.run and lf.run.url %}<br><a href="{{ lf.run.url }}">Jenkins run</a>{% endif %}
-  </p>
-  {% if lf.error_details %}<p><strong>{{ lf.error_details }}</strong></p>{% endif %}
-  {% if lf.error_stack_trace %}<pre class="p-3 bg-light border rounded small"><code>{{ lf.error_stack_trace }}</code></pre>{% endif %}
 </details>
 {% endif %}
 
