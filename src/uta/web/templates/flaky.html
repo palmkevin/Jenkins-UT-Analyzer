@@ -34,7 +34,7 @@
       <td>{{ r.runs_in_window }}</td>
       <td>{{ "%.2f"|format(r.fail_rate) }}</td>
       <td>{{ r.failed_in_window }} / {{ r.failed_total }}</td>
-      <td>{{ r.last_failed_at or "—" }}</td>
+      <td>{{ r.last_failed_at|ts }}</td>
       <td>{{ r.pattern }}</td>
     </tr>
     {% endfor %}

@@ -18,7 +18,7 @@
 {% else %}
 <h1>Run #{{ run.build }} — {{ run.status }}{% if not run.complete %} (incomplete){% endif %}</h1>
 <p class="meta">
-  {{ run.started_at }} → {{ run.finished_at }}<br>
+  {{ run.started_at|ts }} → {{ run.finished_at|ts }}<br>
   {{ run.totals.passed }} passed · {{ run.totals.failed }} failed · {{ run.totals.skipped }} skipped
   {% if run.url %}· <a href="{{ run.url }}">Jenkins</a>{% endif %}
 </p>
@@ -29,7 +29,7 @@
   <thead class="table-light"><tr><th>Track</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
   <tbody>
     {% for s in run.shards %}
-    <tr><td>{{ s.track }}</td><td>{{ s.status }}</td><td>{{ s.started_at }}</td><td>{{ s.finished_at }}</td></tr>
+    <tr><td>{{ s.track }}</td><td>{{ s.status }}</td><td>{{ s.started_at|ts }}</td><td>{{ s.finished_at|ts }}</td></tr>
     {% endfor %}
   </tbody>
 </table>
