@@ -38,6 +38,25 @@ def test_ingest_persists_run_and_results(session_factory):
         assert tracks == {"permanent", "permanent_py39"}
 
 
+def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
+    """The ZEPHYR test case(s) a failing test references are resolved onto its identity."""
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
+    with session_scope(session_factory) as s:
+        ident = s.scalar(
+            select(TestIdentity).where(
+                TestIdentity.canonical_name
+                == "ut_accounting.ac_csvc.TestClass.test_inpmode_alternativ_debitor_at_cust"
+            )
+        )
+        assert ident is not None
+        assert ident.zephyr_test_cases == "LX-T4447"
+        # A passing test carries no ZEPHYR block, so its identity stays null.
+        passing = s.scalars(
+            select(TestIdentity).where(TestIdentity.zephyr_test_cases.is_(None))
+        ).all()
+        assert passing  # at least one test has no referenced case
+
+
 def test_unittest_logs_off_by_default(session_factory):
     """Without opt-in, ingest is the devUTs-only path — no console-log results leak in."""
     ingest_build(FakeJenkinsClient(), session_factory, 1702)

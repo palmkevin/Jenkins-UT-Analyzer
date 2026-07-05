@@ -17,6 +17,11 @@ from dataclasses import dataclass, field
 _TRACK_RE = re.compile(r"^permanent(?:_py39)?$")
 # First stack frame pointing at a dev test file -> the test's own source location.
 _TEST_FRAME_RE = re.compile(r'File "([^"]*?/tests/dev/[^"]+\.py)", line (\d+)')
+# Marker beginning the "ZEPHYR TEST CASE INFO" block a failing test emits; ids/owner are read from
+# after it so stray `LX-T…` mentions elsewhere in the trace can't be mistaken for references.
+_ZEPHYR_MARKER = "ZEPHYR TEST CASE INFO"
+# A ZEPHYR test-case identifier, e.g. `LX-T4447`. A failing test may reference more than one.
+_ZEPHYR_ID_RE = re.compile(r"LX-T\d+")
 # ZEPHYR ownership line: `LX-T4447 (kam): "..."` -> (zephyr_id, owner_initials).
 _ZEPHYR_RE = re.compile(r"(LX-T\d+)\s*\(([^)]+)\)")
 
@@ -41,7 +46,8 @@ class TestCaseResult:
     # Derived signals:
     file_path: str | None = None
     line: int | None = None
-    zephyr_id: str | None = None
+    zephyr_id: str | None = None  # first referenced ZEPHYR test case (owner-correlation anchor)
+    zephyr_ids: tuple[str, ...] = ()  # every ZEPHYR test case the failing test references
     owner_initials: str | None = None
 
     @property
@@ -89,13 +95,24 @@ def _extract_location(stack_trace: str | None) -> tuple[str | None, int | None]:
     return m.group(1), int(m.group(2))
 
 
-def _extract_owner(stack_trace: str | None) -> tuple[str | None, str | None]:
+def extract_zephyr(stack_trace: str | None) -> tuple[tuple[str, ...], str | None]:
+    """The ZEPHYR test cases a failing test references, plus the first owner initials.
+
+    Scoped to the ``ZEPHYR TEST CASE INFO`` block so unrelated ``LX-T…`` mentions elsewhere in the
+    trace aren't picked up. Returns ``((), None)`` when there is no block. A test may reference more
+    than one case (``… test case(s): LX-T1, LX-T2``); ids are returned de-duplicated in first-seen
+    order. Owner initials come from the first ``LX-T… (initials)`` detail line, when present.
+    """
     if not stack_trace:
-        return None, None
-    m = _ZEPHYR_RE.search(stack_trace)
-    if not m:
-        return None, None
-    return m.group(1), m.group(2)
+        return (), None
+    idx = stack_trace.find(_ZEPHYR_MARKER)
+    if idx == -1:
+        return (), None
+    section = stack_trace[idx:]
+    ids = tuple(dict.fromkeys(_ZEPHYR_ID_RE.findall(section)))
+    m = _ZEPHYR_RE.search(section)
+    owner = m.group(2) if m else None
+    return ids, owner
 
 
 def parse_test_report(report: dict) -> ParsedReport:
@@ -107,7 +124,7 @@ def parse_test_report(report: dict) -> ParsedReport:
         for case in suite.get("cases", []):
             trace = case.get("errorStackTrace")
             file_path, line = _extract_location(trace)
-            zephyr_id, owner = _extract_owner(trace)
+            zephyr_ids, owner = extract_zephyr(trace)
             parsed.cases.append(
                 TestCaseResult(
                     track=track,
@@ -122,7 +139,8 @@ def parse_test_report(report: dict) -> ParsedReport:
                     error_stack_trace=trace,
                     file_path=file_path,
                     line=line,
-                    zephyr_id=zephyr_id,
+                    zephyr_id=zephyr_ids[0] if zephyr_ids else None,
+                    zephyr_ids=zephyr_ids,
                     owner_initials=owner,
                 )
             )
