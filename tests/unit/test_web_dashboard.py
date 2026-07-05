@@ -130,11 +130,26 @@ def test_jira_ticket_persists_and_links(client, seeded):
 def test_detail_sections_are_collapsible_and_reordered(client, seeded):
     ident_id = _identity_id(seeded, "alpha")
     page = client.get(f"/tests/{ident_id}").text
-    # Native collapsibles, with the three important sections expanded by default.
-    assert '<details class="card" open>' in page  # Lifecycle / Latest failure
+    # Native collapsibles, with the important sections expanded by default.
+    assert '<details class="card" open>' in page  # Lifecycle
     assert '<details class="episodes" open>' in page  # Failure episodes
-    # Failure episodes sits directly after Lifecycle and before Latest failure.
-    assert page.index("Lifecycle") < page.index("Failure episodes") < page.index("Latest failure")
+    # The standalone "Latest failure" section is gone; failure detail lives inside episodes.
+    assert "Latest failure" not in page
+    assert "Failure detail" in page
+    # Lifecycle comes before Failure episodes, which precede the flakiness/KB sections.
+    assert page.index("Lifecycle") < page.index("Failure episodes")
+
+
+def test_current_open_episode_failure_detail_is_expanded(client, seeded):
+    """The failure block is expanded (open) only for the current+open episode."""
+    ident_id = _identity_id(seeded, "alpha")
+    page = client.get(f"/tests/{ident_id}").text
+    # The Failure detail block for the current+open episode is rendered open.
+    summary_idx = page.index("Failure detail")
+    # Walk back to the opening <details ...> tag of that block.
+    open_tag_start = page.rindex("<details", 0, summary_idx)
+    open_tag = page[open_tag_start:summary_idx]
+    assert " open>" in open_tag
 
 
 def test_svn_revision_links_to_fisheye(client, seeded):

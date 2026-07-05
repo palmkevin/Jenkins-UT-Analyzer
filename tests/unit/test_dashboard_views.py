@@ -129,7 +129,13 @@ def test_run_results_capped_with_full_total(session_factory):
 
 def test_test_record_exposes_lifecycle_and_episode(session_factory):
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"t": "FAILED"})
+        r1 = make_run(
+            s,
+            1,
+            {"t": "FAILED"},
+            error_type={"t": "assertion"},
+            errors={"t": ("boom went the assertion", "Traceback ...\n  line 3")},
+        )
         apply_run(s, r1, baseline=None)
         ident_id = get_identity(s, "t").id
         rec = views.test_record(s, ident_id)
@@ -137,7 +143,37 @@ def test_test_record_exposes_lifecycle_and_episode(session_factory):
         assert rec["lifecycle"]["state"] == "FAILING"
         assert len(rec["episodes"]) == 1
         assert rec["episodes"][0]["is_open"] is True
-        assert rec["latest_failure"]["status"] == "FAILED"
+        # The single "latest_failure" section is gone; error detail hangs off the episode now.
+        assert "latest_failure" not in rec
+        failure = rec["episodes"][0]["failure"]
+        assert failure["status"] == "FAILED"
+        assert failure["error_type"] == "assertion"
+        assert failure["error_details"] == "boom went the assertion"
+        assert failure["error_stack_trace"].startswith("Traceback")
+        assert failure["run"]["build"] == 1
+
+
+def test_test_record_scopes_failure_detail_per_episode(session_factory):
+    """Each episode carries the error detail of *its own* last-failing run, not the newest one."""
+    with session_scope(session_factory) as s:
+        # Episode 1: fail in #1, fixed in #2.
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("first-episode error", None)})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"t": "PASSED"})
+        apply_run(s, r2, baseline=r1)
+        # Episode 2 (reopen): fail again in #3 with a different error.
+        r3 = make_run(s, 3, {"t": "REGRESSION"}, errors={"t": ("second-episode error", None)})
+        apply_run(s, r3, baseline=r2)
+
+        ident_id = get_identity(s, "t").id
+        rec = views.test_record(s, ident_id)
+        eps = {e["episode_number"]: e for e in rec["episodes"]}
+        assert eps[1]["failure"]["error_details"] == "first-episode error"
+        assert eps[1]["is_open"] is False
+        assert eps[2]["failure"]["error_details"] == "second-episode error"
+        assert eps[2]["is_open"] is True
+        # The current+open episode is #2.
+        assert rec["lifecycle"]["current_episode_id"] == eps[2]["id"]
 
 
 def test_test_record_missing_identity_is_none(session_factory):

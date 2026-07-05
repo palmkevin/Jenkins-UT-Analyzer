@@ -190,6 +190,41 @@ def triage_queue(
     }
 
 
+def _episode_failure_detail(session: Session, ep: FailureEpisode) -> dict | None:
+    """The error detail for a single episode — the latest failing result *within* that episode.
+
+    Scoped to the episode's last-failing run (falling back to its first-failure run when the
+    episode has no recorded last-failing run yet), so each episode card shows the failure that
+    characterises it. Mirrors the fields :func:`_latest_failing_result` surfaced for the (now
+    removed) single "Latest failure" section.
+    """
+    run_id = ep.last_failing_run_id or ep.first_failure_run_id
+    if run_id is None:
+        return None
+    result = session.scalar(
+        select(TestResult)
+        .where(
+            TestResult.test_identity_id == ep.test_identity_id,
+            TestResult.run_id == run_id,
+            TestResult.status.in_(FAILED_STATUSES),
+        )
+        .order_by(TestResult.id.desc())
+        .limit(1)
+    )
+    if result is None:
+        return None
+    return {
+        "track": result.track,
+        "status": result.status,
+        "error_type": result.error_type,
+        "error_details": result.error_details,
+        "error_stack_trace": result.error_stack_trace,
+        "file_path": result.file_path,
+        "line": result.line,
+        "run": _run_ref(session, result.run_id),
+    }
+
+
 def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
     classification = _latest_classification(session, ep.id)
     attribution = ep.attribution
@@ -225,6 +260,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "original_ai_reason": attribution.original_ai_reason if attribution else None,
         "validated_by": attribution.validated_by if attribution else None,
         "validated_at": attribution.validated_at if attribution else None,
+        "failure": _episode_failure_detail(session, ep),
     }
 
 
@@ -344,18 +380,6 @@ def test_record(
             "current_episode_id": lc.current_episode_id,
         },
         "episodes": [_episode_dict(session, e) for e in episodes],
-        "latest_failure": None
-        if latest is None
-        else {
-            "track": latest.track,
-            "status": latest.status,
-            "error_type": latest.error_type,
-            "error_details": latest.error_details,
-            "error_stack_trace": latest.error_stack_trace,
-            "file_path": latest.file_path,
-            "line": latest.line,
-            "run": _run_ref(session, latest.run_id),
-        },
         "candidates": candidates,
         "flakiness": flakiness,
         "recurrence": recurrence,
