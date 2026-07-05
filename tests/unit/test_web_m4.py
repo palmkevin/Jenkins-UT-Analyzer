@@ -72,6 +72,25 @@ def test_flaky_leaderboard_lists_oscillating_test(client):
     assert "flap.test" in resp.text
 
 
+def test_flaky_leaderboard_total_is_true_count_not_capped(session_factory):
+    """The header total counts every oscillating test, even beyond the display limit."""
+    from uta.web.views import flaky_leaderboard
+
+    base = datetime.now(UTC) - timedelta(days=2)
+    names = [f"flap.test_{i}" for i in range(3)]
+    with session_scope(session_factory) as s:
+        for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
+            run = make_run(s, b, {n: st for n in names}, started_at=base + timedelta(hours=b))
+            apply_run(s, run)
+            recompute_flaky_flags(s)
+
+    with session_scope(session_factory) as s:
+        view = flaky_leaderboard(s, limit=1)
+
+    assert view["total"] == 3  # true count of oscillating tests
+    assert len(view["rows"]) == 1  # display capped by limit
+
+
 def test_kb_search_empty_then_match(client):
     empty = client.get("/kb")
     assert empty.status_code == 200
