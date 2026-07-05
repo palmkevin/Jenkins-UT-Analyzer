@@ -32,7 +32,7 @@
     <tr>
       <td>{{ test_link(row) }}</td>
       <td>{{ row.owner or "" }}</td>
-      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at }}</td>
+      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|ts }}</td>
       <td>{{ row.predicted_cause or "—" }}</td>
       <td>
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
@@ -85,7 +85,7 @@
     <tr>
       <td>{{ test_link(row) }}</td>
       <td>{{ run_link(row.fixed_in) }}</td>
-      <td>{{ row.fixed_at }}</td>
+      <td>{{ row.fixed_at|ts }}</td>
       <td>{{ row.reason_text or "—" }}</td>
     </tr>
     {% endfor %}

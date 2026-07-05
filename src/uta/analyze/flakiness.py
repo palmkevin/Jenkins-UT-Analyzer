@@ -180,15 +180,17 @@ def recompute_flaky_flags(
     return flaky_count
 
 
-def leaderboard(
+def leaderboard_candidates(
     session: Session,
     *,
     window_days: int = 30,
     threshold: float = 0.3,
-    limit: int = 50,
     now: datetime | None = None,
 ) -> list[dict]:
-    """The flaky-leaderboard rows: most-unstable tests first, score then transitions."""
+    """Every leaderboard candidate (oscillating/flaky test), ranked, with **no display limit**.
+
+    This is the true set of unstable tests in the window; ``leaderboard`` slices it for display.
+    """
     from uta.models import TestIdentity
 
     now = now or _now()
@@ -218,4 +220,19 @@ def leaderboard(
             }
         )
     rows.sort(key=lambda r: (r["flaky"], r["score"], r["transitions"]), reverse=True)
-    return rows[:limit]
+    return rows
+
+
+def leaderboard(
+    session: Session,
+    *,
+    window_days: int = 30,
+    threshold: float = 0.3,
+    limit: int = 50,
+    now: datetime | None = None,
+) -> list[dict]:
+    """The flaky-leaderboard rows: most-unstable tests first, score then transitions."""
+    candidates = leaderboard_candidates(
+        session, window_days=window_days, threshold=threshold, now=now
+    )
+    return candidates[:limit]

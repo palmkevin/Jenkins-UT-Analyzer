@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
 from uta.analyze.flakiness import compute_stats
-from uta.analyze.flakiness import leaderboard as _leaderboard
+from uta.analyze.flakiness import leaderboard_candidates as _leaderboard_candidates
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
 from uta.models import (
@@ -393,9 +393,13 @@ def flaky_leaderboard(
     threshold: float = 0.3,
     limit: int = 50,
 ) -> dict:
-    """The flaky-leaderboard view: most-unstable tests ranked by oscillation."""
-    rows = _leaderboard(session, window_days=window_days, threshold=threshold, limit=limit)
-    return {"rows": rows, "window_days": window_days}
+    """The flaky-leaderboard view: most-unstable tests ranked by oscillation.
+
+    ``total`` is the *true* count of unstable tests in the window (independent of ``limit``), so it
+    stays honest when there are more candidates than the display cap.
+    """
+    candidates = _leaderboard_candidates(session, window_days=window_days, threshold=threshold)
+    return {"rows": candidates[:limit], "total": len(candidates), "window_days": window_days}
 
 
 def kb_search(
