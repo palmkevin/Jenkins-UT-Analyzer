@@ -43,6 +43,9 @@ class TestSpec:
     message: str | None = None  # exception message (masked into the signature)
     line: int = 100
     owner: str | None = None  # ZEPHYR owner initials embedded in the stack trace
+    # Extra ZEPHYR test cases this test is also referenced by (beyond the primary LX-T4<line>);
+    # lets the demo exercise the multi-case rendering. Only emitted when ``owner`` is set.
+    extra_zephyr_ids: tuple[str, ...] = ()
 
     @property
     def canonical_name(self) -> str:
@@ -96,6 +99,7 @@ _SPECS: tuple[TestSpec, ...] = (
         line=55,
     ),
     # New & unacknowledged (both code+data in the window) -> UNKNOWN, "New failures" bucket.
+    # Referenced by two ZEPHYR cases -> exercises the multi-case link rendering in the demo.
     TestSpec(
         "ut_billing.bi_round.TestClass",
         "test_invoice_rounding",
@@ -104,6 +108,7 @@ _SPECS: tuple[TestSpec, ...] = (
         message="values differ: expected 100 got 101",
         line=77,
         owner="mel",
+        extra_zephyr_ids=("LX-T5120",),
     ),
     # Flaky oscillator: alternating pass/fail -> high transition rate -> flaky flag + leaderboard.
     TestSpec(
@@ -189,8 +194,15 @@ def _stack_trace(spec: TestSpec, track: str) -> str:
         exc_line,
     ]
     if spec.owner:
-        # ZEPHYR ownership signal (parsed into owner_initials).
-        lines.append(f'ZEPHYR TEST CASE INFO: LX-T4{spec.line:03d} ({spec.owner}): "{spec.method}"')
+        # ZEPHYR ownership signal (parsed into owner_initials + the referenced test case ids).
+        # Shaped like the real "ZEPHYR TEST CASE INFO" block so the parser exercises the same path.
+        ids = (f"LX-T4{spec.line:03d}", *spec.extra_zephyr_ids)
+        rule = "-" * 70
+        lines += ["", rule, "", "ZEPHYR TEST CASE INFO:"]
+        lines.append(f"Unit test referenced by following test case(s): {', '.join(ids)}")
+        for tc in ids:
+            lines.append(f'\t{tc} ({spec.owner}): "{spec.method}"')
+        lines += ["", rule]
     return "\n".join(lines)
 
 
