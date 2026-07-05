@@ -116,6 +116,17 @@ def test_html_entities_and_tags_stripped_in_status_lines():
     assert case.status == "PASSED"
 
 
+def test_unrecognized_outcome_tail_does_not_default_to_passed(caplog):
+    """A format drift must surface loudly, not silently turn a real failure green."""
+    text = "t_weird (m.C) ... xyzzy\n"
+    with caplog.at_level("WARNING"):
+        (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.status == "SKIPPED"
+    assert case.status != "PASSED"
+    assert any("unrecognized outcome tail" in r.message for r in caplog.records)
+    assert any("xyzzy" in r.message for r in caplog.records)
+
+
 def test_empty_log_yields_no_cases():
     assert parse_unittest_log({"text": ""}, track="permanent", suite_name="LXS") == []
 
