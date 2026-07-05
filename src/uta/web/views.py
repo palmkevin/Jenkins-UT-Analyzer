@@ -364,9 +364,7 @@ def test_record(
         "class_name": ident.class_name,
         "method": ident.method,
         "owner": ident.owner_initials,
-        "zephyr_test_cases": [
-            z for z in (ident.zephyr_test_cases or "").split(",") if z
-        ],
+        "zephyr_test_cases": [z for z in (ident.zephyr_test_cases or "").split(",") if z],
         "lifecycle": None
         if lc is None
         else {
