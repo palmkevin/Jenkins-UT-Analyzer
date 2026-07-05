@@ -28,11 +28,11 @@
     {% if lc.reopen_count %}<span class="badge">reopened ×{{ lc.reopen_count }}</span>{% endif %}
   </p>
   <p class="meta">
-    First failure (all-time): {{ run_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at }}<br>
-    Last failing run: {{ run_link(lc.last_failing) }} · {{ lc.last_failing_at }}
+    First failure (all-time): {{ run_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at|ts }}<br>
+    Last failing run: {{ run_link(lc.last_failing) }} · {{ lc.last_failing_at|ts }}
   </p>
   {% if lc.acknowledged %}
-    <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> at {{ lc.acknowledged_at }}.</p>
+    <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> at {{ lc.acknowledged_at|ts }}.</p>
   {% elif lc.state == "FAILING" %}
     <form method="post" action="/tests/{{ record.identity_id }}/acknowledge">
       <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
@@ -51,9 +51,9 @@
       {% if lc and ep.id == lc.current_episode_id %}<span class="badge">current</span>{% endif %}
     </h3>
     <p class="meta">
-      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at }}<br>
-      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at }}<br>
-      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at or "—" }}<br>
+      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at|ts }}<br>
+      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at|ts }}<br>
+      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at|ts }}<br>
       Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
     </p>
 
@@ -78,7 +78,7 @@
       Causing person: {{ ep.causing_person or "—" }} ({{ ep.cause_provenance or "—" }})<br>
       Reason: {{ ep.reason_text or "—" }} ({{ ep.reason_provenance or "—" }})
       {% if ep.original_ai_reason %}<br><em>was (AI): {{ ep.original_ai_reason }}</em>{% endif %}
-      {% if ep.validated_by %}<br>Validated by {{ ep.validated_by }} at {{ ep.validated_at }}{% endif %}
+      {% if ep.validated_by %}<br>Validated by {{ ep.validated_by }} at {{ ep.validated_at|ts }}{% endif %}
     </p>
 
     <form class="mt-3" style="max-width: 34rem" method="post" action="/episodes/{{ ep.id }}/attribute">
@@ -113,7 +113,7 @@
   </p>
   <p class="meta">
     Failed before? {{ "yes" if fl.failed_total else "no" }} ·
-    last failed {{ fl.last_failed_at or "—" }}<br>
+    last failed {{ fl.last_failed_at|ts }}<br>
     Failures: {{ fl.failed_in_window }} in window / {{ fl.failed_total }} all-time ·
     runs in window {{ fl.runs_in_window }}<br>
     Oscillation score {{ "%.2f"|format(fl.score) }}
@@ -129,8 +129,8 @@
   <p class="meta">
     This exact failure signature has been seen <strong>{{ rec.occurrence_count }}×</strong>
     {% if rec.exception_type %} ({{ rec.exception_type }}){% endif %};
-    first {{ run_link(rec.first_seen) }} · {{ rec.first_seen_at or "—" }},
-    last {{ run_link(rec.last_seen) }} · {{ rec.last_seen_at or "—" }}.
+    first {{ run_link(rec.first_seen) }} · {{ rec.first_seen_at|ts }},
+    last {{ run_link(rec.last_seen) }} · {{ rec.last_seen_at|ts }}.
   </p>
   {% if rec.similar %}
   <h3 style="font-size:0.92rem">Similar past cases</h3>
@@ -185,7 +185,7 @@
       {% for c in cand.code %}
       <tr><td>{% if c.revision %}<a href="{{ fisheye_changelog_url }}?cs={{ c.revision }}"><code>{{ c.revision }}</code></a>{% else %}—{% endif %}</td>
           <td>{{ c.author or "" }}</td>
-          <td>{{ c.committed_at }}</td><td>{{ c.message or "" }}</td></tr>
+          <td>{{ c.committed_at|ts }}</td><td>{{ c.message or "" }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -199,7 +199,7 @@
     <tbody>
       {% for d in cand.data %}
       <tr><td><code>{{ d.entity }}</code>{% if d.pk %} ({{ d.pk }}){% endif %}</td>
-          <td>{{ d.change_type }}</td><td>{{ d.author or "" }}</td><td>{{ d.changed_at }}</td></tr>
+          <td>{{ d.change_type }}</td><td>{{ d.author or "" }}</td><td>{{ d.changed_at|ts }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

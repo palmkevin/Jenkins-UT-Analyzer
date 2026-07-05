@@ -35,6 +35,25 @@ _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _STATIC_DIR = _WEB_DIR / "static"
 
 
+def format_ts(value: object) -> str:
+    """Render a timestamp to seconds precision as ordinary, wrappable text (issue #35).
+
+    Drops the sub-second component and the ``+00:00`` tz suffix that ``datetime.__str__``
+    emits (the app normalizes to UTC, so bare wall-clock seconds is what's wanted). Returns
+    ``"—"`` for ``None`` so every render site can drop its own ``or "—"`` fallback. Non-datetime
+    values fall through to ``str`` unchanged.
+    """
+    if value is None:
+        return "—"
+    strftime = getattr(value, "strftime", None)
+    if strftime is None:
+        return str(value)
+    return strftime("%Y-%m-%d %H:%M:%S")
+
+
+_TEMPLATES.env.filters["ts"] = format_ts
+
+
 def _expanded(request: Request) -> list[str]:
     """Sections the reader asked to render in full — the ``?expand=a,b`` query param (issue #19).
 
