@@ -41,6 +41,11 @@ class TestIdentity(Base, TimestampMixin):
     # Ownership fallback contact (ZEPHYR initials / SVN blame), resolved at identity level.
     owner_initials: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # ZEPHYR test case(s) this unit test is referenced by, parsed from the failing test's
+    # "ZEPHYR TEST CASE INFO" block — a comma-separated list of ids (e.g. "LX-T4447,LX-T4792").
+    # Resolved at identity level like owner_initials; only refreshed from runs that carry it.
+    zephyr_test_cases: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     alias_of: Mapped[TestIdentity | None] = relationship(remote_side=[id])
     results: Mapped[list[TestResult]] = relationship(back_populates="identity")
     lifecycle: Mapped[TestLifecycle | None] = relationship(

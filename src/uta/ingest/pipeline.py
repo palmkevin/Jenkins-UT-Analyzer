@@ -117,6 +117,8 @@ def _resolve_identities(session: Session, cases: list[TestCaseResult]) -> dict[s
         ident.method = case.name
         if case.owner_initials:
             ident.owner_initials = case.owner_initials
+        if case.zephyr_ids:
+            ident.zephyr_test_cases = ",".join(case.zephyr_ids)
 
     session.flush()  # new identities need ids before the bulk TestResult insert references them
     return identities

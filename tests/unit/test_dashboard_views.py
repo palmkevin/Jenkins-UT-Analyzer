@@ -176,6 +176,25 @@ def test_test_record_scopes_failure_detail_per_episode(session_factory):
         assert rec["lifecycle"]["current_episode_id"] == eps[2]["id"]
 
 
+def test_test_record_exposes_zephyr_test_cases(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom", None)})
+        apply_run(s, r1, baseline=None)
+        ident = get_identity(s, "t")
+        ident.zephyr_test_cases = "LX-T4792,LX-T5001"
+        s.flush()
+        rec = views.test_record(s, ident.id)
+        assert rec["zephyr_test_cases"] == ["LX-T4792", "LX-T5001"]
+
+
+def test_test_record_zephyr_test_cases_empty_when_unset(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom", None)})
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+        assert rec["zephyr_test_cases"] == []
+
+
 def test_test_record_missing_identity_is_none(session_factory):
     with session_scope(session_factory) as s:
         assert views.test_record(s, 9999) is None
