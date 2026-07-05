@@ -392,8 +392,12 @@
       <h3>Classification</h3>
       <p>Each new regression gets a deterministic predicted cause —
       <code>CODE_CHANGE</code> / <code>DATA_CHANGE</code> / <code>INFRASTRUCTURE</code> / <code>UNKNOWN</code> —
-      from the window-filtered code &amp; data candidates. The evidence stands on its own; the human attributes
-      the final cause.</p>
+      from the window-filtered code &amp; data candidates, each scored for <b>relevance to that
+      specific test</b> (changed-path overlap with its module/stack frames; changed entity/component
+      named in its error text — coarse tiers, not a probability). When both kinds are present,
+      relevance breaks the tie: if only one kind has a candidate relevant to this test, that kind
+      wins; otherwise it's <code>UNKNOWN</code>. The evidence (including the tie-break and top
+      matches) stands on its own; the human attributes the final cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
@@ -416,8 +420,11 @@
     <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
-  <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes, ownership,
-  linked ZEPHYR test case(s), LLM hypothesis, error type, stack trace) plus the editable fields the human owns
+  <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
+  <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
+  mention, most relevant first — rather than one flat run-wide list; see Classification above),
+  ownership, linked ZEPHYR test case(s), LLM hypothesis, error type, stack trace) plus the editable
+  fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
   AI suggestion. Every action is stamped with the acting <code>actor</code>.</p>
