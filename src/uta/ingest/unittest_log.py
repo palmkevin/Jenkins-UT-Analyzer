@@ -22,9 +22,12 @@ It never touches the network; feed it the parsed ``wfapi/log`` JSON (or its raw 
 from __future__ import annotations
 
 import html
+import logging
 import re
 
 from .ut_report import TestCaseResult, extract_zephyr
+
+logger = logging.getLogger(__name__)
 
 # Jenkins' Timestamper plugin wraps each console line in HTML: a visible ``<b>HH:MM:SS</b>`` span
 # and a hidden ISO-8601 span, with ``>`` etc. HTML-escaped. The ``wfapi/log`` ``text`` field carries
@@ -60,8 +63,14 @@ def _strip_console_html(text: str) -> str:
     return html.unescape(text)
 
 
-def _status_of(rest: str) -> str:
-    """Map a verbose-line outcome tail to our status vocabulary (PASSED/FAILED/SKIPPED)."""
+def _status_of(rest: str, *, line: str) -> str:
+    """Map a verbose-line outcome tail to our status vocabulary (PASSED/FAILED/SKIPPED).
+
+    An unrecognized tail means the nose2/unittest output format drifted from what this regex-based
+    parser expects. Defaulting that to PASSED would silently turn a real failure green — the worst
+    failure mode for this tool — so it's logged loudly and mapped to SKIPPED (a neutral "hole",
+    consistent with how the rest of the pipeline already treats SKIPPED/absent results) instead.
+    """
     r = rest.strip().lower()
     if r == "ok":
         return "PASSED"
@@ -73,7 +82,8 @@ def _status_of(rest: str) -> str:
         return "FAILED"  # an xfail that passed — unittest counts this as a failure
     if r.startswith(("fail", "error")):
         return "FAILED"
-    return "PASSED"  # unknown tail — conservative (unittest only emits the cases above)
+    logger.warning("unittest_log: unrecognized outcome tail %r in line: %s", rest, line)
+    return "SKIPPED"
 
 
 def _split_identity(name: str, path: str) -> tuple[str, str]:
@@ -148,7 +158,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
         key = _split_identity(m.group("name"), m.group("path"))
         if key not in outcomes:
             order.append(key)
-        outcomes[key] = _status_of(m.group("rest"))
+        outcomes[key] = _status_of(m.group("rest"), line=line)
 
     blocks = _parse_blocks(lines)
 
