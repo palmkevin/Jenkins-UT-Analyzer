@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}{{ record.test_id if record else "Test" }} — UT Analyzer{% endblock %}
 
 {% macro run_link(ref) -%}
@@ -141,6 +142,7 @@
     Oscillation score {{ "%.2f"|format(fl.score) }}
     ({{ fl.transitions }} transitions) · fail-rate {{ "%.2f"|format(fl.fail_rate) }}
   </p>
+  <p>Recent runs: {{ ui.sparkline(record.spark) }}</p>
 </details>
 {% endif %}
 
@@ -181,17 +183,18 @@
 {% set cand = record.candidates %}
 {% if cand and (cand.code or cand.data) %}
 <details class="card">
-  <summary>Candidate changes in the failure window</summary>
+  <summary>Candidate changes in the failure window <span class="meta">(most relevant to this test first)</span></summary>
   {% if cand.code %}
   <h3 style="font-size:0.92rem">Code changes (SVN)</h3>
   <div class="table-responsive">
   <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-light"><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th></tr></thead>
+    <thead class="table-light"><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th><th>Relevance</th></tr></thead>
     <tbody>
       {% for c in cand.code %}
       <tr><td>{% if c.revision %}<a href="{{ fisheye_changelog_url }}?cs={{ c.revision }}"><code>{{ c.revision }}</code></a>{% else %}—{% endif %}</td>
           <td>{{ c.author or "" }}</td>
-          <td>{{ c.committed_at|ts }}</td><td>{{ c.message or "" }}</td></tr>
+          <td>{{ c.committed_at|ts }}</td><td>{{ c.message or "" }}</td>
+          <td>{% if c.reasons %}<span class="badge match">match</span> {{ c.reasons|join("; ") }}{% else %}—{% endif %}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -201,11 +204,12 @@
   <h3 style="font-size:0.92rem">Data changes (ut_ref)</h3>
   <div class="table-responsive">
   <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-light"><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th></tr></thead>
+    <thead class="table-light"><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th><th>Relevance</th></tr></thead>
     <tbody>
       {% for d in cand.data %}
       <tr><td><code>{{ d.entity }}</code>{% if d.pk %} ({{ d.pk }}){% endif %}</td>
-          <td>{{ d.change_type }}</td><td>{{ d.author or "" }}</td><td>{{ d.changed_at|ts }}</td></tr>
+          <td>{{ d.change_type }}</td><td>{{ d.author or "" }}</td><td>{{ d.changed_at|ts }}</td>
+          <td>{% if d.reasons %}<span class="badge match">match</span> {{ d.reasons|join("; ") }}{% else %}—{% endif %}</td></tr>
       {% endfor %}
     </tbody>
   </table>

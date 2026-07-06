@@ -20,6 +20,7 @@ def build_client(settings: Settings):
         settings.jenkins_job_url,
         user=settings.jenkins_user,
         token=settings.jenkins_api_token,
+        verify=settings.jenkins_verify,
     )
 
 

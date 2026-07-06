@@ -62,6 +62,39 @@ def test_acknowledged_and_attributed_failure_is_present(queue):
     assert tz["predicted_cause"] == "DATA_CHANGE"
 
 
+def test_suggested_contact_populated_from_sole_change_author(session_factory):
+    # #49: a CODE_CHANGE episode whose window holds a single-author commit carries that author as
+    # the suggested contact, so the live demo shows the one-click-Confirm surface populated.
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_interface.if_hl7.TestClass.test_parse_message"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]  # newest episode — opened by the build-613 regression
+    assert ep["predicted_cause"] == "CODE_CHANGE"
+    assert ep["suggested_contact"] == "R. Devlin"
+
+
+def test_data_change_contact_suggested_and_human_corrected(session_factory):
+    # The DATA_CHANGE episode suggests the V_TRACKING USRCODE ("MEL"); the seeded human attribution
+    # ("THA") then reads as a correction — the demo shows the HUMAN_CORRECTED provenance tier.
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_core.co_time.TestClass.test_timezone_convert"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]
+    assert ep["predicted_cause"] == "DATA_CHANGE"
+    assert ep["suggested_contact"] == "MEL"
+    assert ep["causing_person"] == "THA"
+    assert ep["cause_provenance"] == "HUMAN_CORRECTED"
+    assert ep["original_ai_cause"] == "MEL"
+
+
 def test_flaky_leaderboard_has_a_flaky_test(session_factory):
     board = views.flaky_leaderboard(session_factory(), window_days=30, threshold=0.3)
     flaky = [r for r in board["rows"] if r["flaky"]]
@@ -81,6 +114,54 @@ def test_recurrence_and_similar_cases(session_factory):
     assert recurrence is not None
     assert recurrence["occurrence_count"] > 1  # the same failure recurs across builds
     assert recurrence["similar"], "expected fuzzy-similar past cases"
+
+
+def test_divergent_top_ranked_candidates_in_the_same_run(session_factory):
+    """Two failures of the same run history lead with visibly different top candidates (#50):
+    the invoice-rounding failure's is the commit touching its own module (path overlap), the
+    timezone failure's is the LORDER data change its error text names (entity mention)."""
+    session = session_factory()
+
+    def record_of(name: str) -> dict:
+        ident = session.scalar(select(TestIdentity).where(TestIdentity.canonical_name == name))
+        return views.test_record(session, ident.id)
+
+    inv = record_of("ut_billing.bi_round.TestClass.test_invoice_rounding")
+    top_code = inv["candidates"]["code"][0]
+    assert top_code["score"] > 0
+    assert any("bi_round.py" in r for r in top_code["reasons"])
+    # Both candidate kinds were in its window, but only the commit matches -> tie-break to CODE.
+    assert inv["candidates"]["data"], "expected data candidates in the same window"
+    assert all(d["score"] == 0 for d in inv["candidates"]["data"])
+    assert inv["episodes"][0]["predicted_cause"] == "CODE_CHANGE"
+    assert inv["episodes"][0]["evidence"]["relevance"]["tie_break"] == "code"
+
+    tz = record_of("ut_core.co_time.TestClass.test_timezone_convert")
+    top_data = tz["candidates"]["data"][0]
+    assert top_data["entity"] == "LORDER"
+    assert any("LORDER" in r and "mentioned" in r for r in top_data["reasons"])
+    # The other entity in the same window didn't match and ranks below.
+    assert tz["candidates"]["data"][1]["score"] == 0
+
+
+def test_pdf_render_ties_stay_unknown_without_relevance(session_factory):
+    """The flaky test's build-612 episode saw both candidate kinds but neither matches it, so
+    the tie deliberately stays UNKNOWN (contrast with the invoice-rounding tie-break above)."""
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_reporting.rp_pdf.TestClass.test_pdf_render"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    both_kinds = [
+        e
+        for e in record["episodes"]
+        if e["evidence"] and e["evidence"]["code_candidates"] and e["evidence"]["data_candidates"]
+    ]
+    assert both_kinds, "expected an episode opened in a build carrying both candidate kinds"
+    assert all(e["predicted_cause"] == "UNKNOWN" for e in both_kinds)
+    assert all(e["evidence"]["relevance"]["tie_break"] is None for e in both_kinds)
 
 
 def test_run_summary_has_baseline_and_diff(session_factory):

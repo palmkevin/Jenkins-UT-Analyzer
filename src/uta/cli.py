@@ -191,6 +191,38 @@ def bootstrap(depth: int | None = None) -> None:
         )
 
 
+@app.command("prune")
+def prune_cmd(result_days: int | None = None, job_days: int | None = None) -> None:
+    """Prune old passing results and finished ingest jobs per the retention policy (issue #52).
+
+    The same idempotent pass the poller runs on every tick — this command is the on-demand /
+    first-time variant (e.g. right after enabling retention on a store with years of history).
+    Days default to ``RESULT_RETENTION_DAYS`` / ``INGEST_JOB_RETENTION_DAYS``; 0 disables that
+    window.
+    """
+    from uta.db import session_scope
+    from uta.retention import prune
+
+    settings = get_settings()
+    _run_migrations()
+    _configure_logging()
+    session_factory = make_session_factory(make_engine(settings.database_url))
+    with session_scope(session_factory) as session:
+        report = prune(
+            session,
+            result_retention_days=(
+                result_days if result_days is not None else settings.result_retention_days
+            ),
+            ingest_job_retention_days=(
+                job_days if job_days is not None else settings.ingest_job_retention_days
+            ),
+        )
+    typer.echo(
+        f"pruned {report.results_deleted} passing results, "
+        f"{report.ingest_jobs_deleted} finished ingest jobs"
+    )
+
+
 @app.command("seed-demo")
 def seed_demo() -> None:
     """Populate the configured ``DATABASE_URL`` with the synthetic demo dataset (no externals).

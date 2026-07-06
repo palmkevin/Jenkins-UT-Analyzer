@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Job runs — UT Analyzer{% endblock %}
 
 {#- Jenkins build result → Bootstrap contextual colour: green / orange / red. -#}
@@ -23,6 +24,22 @@
     The scheduled poller has not reported a tick yet.
   {% endif %}
 </p>
+
+{% if runs.timeline %}
+{% set tl = runs.timeline %}
+<h2>Run health</h2>
+<p class="timeline-legend">
+  <span class="swatch FAILED"></span>Failed
+  <span class="swatch REGRESSION"></span>Regressions
+  · builds #{{ tl.first_build }} – #{{ tl.last_build }} ({{ tl.runs }} runs)
+</p>
+<svg class="timeline-chart" viewBox="0 0 {{ tl.width }} {{ tl.height }}"
+     width="{{ tl.width }}" height="{{ tl.height }}"
+     role="img" aria-label="failed and regression counts per run over time">
+  <polyline class="REGRESSION" points="{{ tl.regressions_points }}" fill="none" stroke-width="2" />
+  <polyline class="FAILED" points="{{ tl.failed_points }}" fill="none" stroke-width="2" />
+</svg>
+{% endif %}
 
 {% if not runs.runs %}
   <p class="empty">No runs ingested yet.</p>
@@ -63,5 +80,6 @@
   </tbody>
 </table>
 </div>
+{{ ui.pager(runs.page, runs.pages, runs.total) }}
 {% endif %}
 {% endblock %}

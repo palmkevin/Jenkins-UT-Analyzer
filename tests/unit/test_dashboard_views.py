@@ -11,10 +11,17 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from tests.builders import get_identity, make_run
+from tests.builders import _EPOCH, get_identity, make_run
+from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.models import Classification, FailureEpisode, PollerHeartbeat, TestLifecycle
+from uta.models import (
+    Classification,
+    CodeChangeCandidate,
+    FailureEpisode,
+    PollerHeartbeat,
+    TestLifecycle,
+)
 from uta.models.enums import PredictedCause, Provenance
 from uta.web import actions, views
 
@@ -111,17 +118,43 @@ def test_triage_limit_zero_disables_cap(session_factory):
         assert q["truncated"]["new"] is False
 
 
-def test_run_results_capped_with_full_total(session_factory):
+def test_run_results_paginate_with_full_total(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
         apply_run(s, r1, baseline=None)
-        # 5 tests × 2 tracks = 10 result rows.
+        # 5 tests × 2 tracks = 10 result rows → 4 pages of 3.
         summary = views.run_summary(s, 1, limit=3)
         assert len(summary["results"]) == 3
         assert summary["results_total"] == 10
-        # Expanding renders every row.
-        full = views.run_summary(s, 1, limit=3, expand=["results"])
-        assert len(full["results"]) == 10
+        assert (summary["page"], summary["pages"]) == (1, 4)
+        # The last page carries the remainder; pages don't overlap.
+        last = views.run_summary(s, 1, limit=3, page=4)
+        assert len(last["results"]) == 1
+        assert last["page"] == 4
+        seen = [
+            (r["test_id"], r["track"])
+            for p in range(1, 5)
+            for r in views.run_summary(s, 1, limit=3, page=p)["results"]
+        ]
+        assert len(seen) == 10
+        assert len(set(seen)) == 10  # stable ordering — no row repeats across pages
+
+
+def test_run_results_page_out_of_range_clamps(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        assert views.run_summary(s, 1, limit=3, page=99)["page"] == 4
+        assert views.run_summary(s, 1, limit=3, page=0)["page"] == 1
+
+
+def test_run_results_limit_zero_disables_pagination(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {f"t{i:03d}": "PASSED" for i in range(5)})
+        apply_run(s, r1, baseline=None)
+        summary = views.run_summary(s, 1, limit=0)
+        assert len(summary["results"]) == 10
+        assert (summary["page"], summary["pages"]) == (1, 1)
 
 
 # ── per-test record ─────────────────────────────────────────────────────────
@@ -200,6 +233,65 @@ def test_test_record_missing_identity_is_none(session_factory):
         assert views.test_record(s, 9999) is None
 
 
+def test_test_record_exposes_sparkline_history(session_factory):
+    """Anchored to *now* (not a fixed epoch) so the run stays inside the default flaky window."""
+    base = datetime.now(UTC) - timedelta(days=2)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+
+
+def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):
+    """Candidates are ordered by relevance to *this* test, each carrying its match reason (#50)."""
+    from uta.models import DataChangeCandidate
+
+    stack = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/dev/ut_pkg/mod.py", line 7, in t\n'
+        "AssertionError: lookup failed for LXFOO row\n"
+    )
+    t0 = datetime(2026, 6, 1, tzinfo=UTC)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("lookup failed for LXFOO row", stack)})
+        # Earlier unrelated commit vs later commit touching the failing test's module.
+        r1.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="100",
+                revision="100",
+                committed_at=t0,
+                paths='[{"editType": "edit", "file": "/trunk/lx/other/thing.py"}]',
+            )
+        )
+        r1.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="200",
+                revision="200",
+                committed_at=t0 + timedelta(minutes=5),
+                paths='[{"editType": "edit", "file": "/trunk/lx/ut_pkg/mod.py"}]',
+            )
+        )
+        # Earlier unmentioned entity vs later entity named in the error text.
+        r1.data_changes.append(
+            DataChangeCandidate(lx_table_code="ACINVORD", change_type="U", changed_at=t0)
+        )
+        r1.data_changes.append(
+            DataChangeCandidate(
+                lx_table_code="LXFOO", change_type="U", changed_at=t0 + timedelta(minutes=5)
+            )
+        )
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+        cand = rec["candidates"]
+        # The relevant commit outranks the chronologically-earlier unrelated one, reason visible.
+        assert [c["revision"] for c in cand["code"]] == ["200", "100"]
+        assert cand["code"][0]["reasons"] and "module" in cand["code"][0]["reasons"][0]
+        assert cand["code"][1]["reasons"] == []
+        assert [d["entity"] for d in cand["data"]] == ["LXFOO", "ACINVORD"]
+        assert "mentioned in the error text" in cand["data"][0]["reasons"][0]
+
+
 # ── run summary ──────────────────────────────────────────────────────────────
 
 
@@ -271,6 +363,41 @@ def test_job_runs_empty_store_and_no_heartbeat(session_factory):
         assert result["runs"] == []
         assert result["poller"]["last_poll_at"] is None
         assert result["poller"]["next_poll_at"] is None
+        assert result["timeline"] is None
+
+
+def test_job_runs_timeline_is_oldest_first(session_factory):
+    """The timeline chart reads left-to-right in time, unlike the (newest-first) table rows."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"a": "FAILED", "b": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"a": "PASSED", "b": "FAILED"})
+        apply_run(s, r2, baseline=r1)
+
+        result = views.job_runs(s)
+        tl = result["timeline"]
+        assert tl.first_build == 1
+        assert tl.last_build == 2
+        assert tl.runs == 2
+
+
+def test_job_runs_paginates_newest_first(session_factory):
+    with session_scope(session_factory) as s:
+        prev = None
+        for build in range(1, 8):  # 7 runs, pages of 3
+            run = make_run(s, build, {"a": "PASSED"})
+            apply_run(s, run, baseline=prev)
+            prev = run
+
+        first = views.job_runs(s, limit=3)
+        assert (first["total"], first["page"], first["pages"]) == (7, 1, 3)
+        assert [r["build"] for r in first["runs"]] == [7, 6, 5]
+        # Later pages continue the newest-first order; diff counts still resolve (the page-boundary
+        # baseline of build 5 is build 4, which lives on page 2).
+        second = views.job_runs(s, limit=3, page=2)
+        assert [r["build"] for r in second["runs"]] == [4, 3, 2]
+        last = views.job_runs(s, limit=3, page=3)
+        assert [r["build"] for r in last["runs"]] == [1]
 
 
 # ── actions: provenance ─────────────────────────────────────────────────────────
@@ -316,6 +443,25 @@ def test_confirm_accepts_ai_suggestion(session_factory):
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.reason_provenance == Provenance.AI_CONFIRMED
         assert attr.validated_by == "alice"
+
+
+def test_confirm_stamps_classifier_suggested_contact(session_factory):
+    # End-to-end: the deterministic classifier suggests the sole commit author (#49), and one-click
+    # Confirm stamps that person as causing_person with AI_CONFIRMED provenance.
+    with session_scope(session_factory) as s:
+        run = make_run(s, 1, {"t": "FAILED"})
+        run.code_changes.append(
+            CodeChangeCandidate(commit_id="r777", author="dev-dave", committed_at=_EPOCH)
+        )
+        analysis = apply_run(s, run, baseline=None)
+        s.flush()
+        classify_run(s, run, analysis.opened_episodes)
+        s.flush()
+        ep_id = _episode_id(s, "t")
+        attr = actions.confirm(s, ep_id, "alice")
+        assert attr.causing_person == "dev-dave"
+        assert attr.cause_provenance == Provenance.AI_CONFIRMED
+        assert attr.original_ai_cause == "dev-dave"
 
 
 def test_set_attribution_correction_retains_original_ai(session_factory):

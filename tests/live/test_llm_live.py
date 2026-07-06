@@ -7,8 +7,11 @@ prompt.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
+from uta.analyze.relevance import RankedCodeChange
 from uta.config import get_settings
 from uta.llm.claude import AnthropicHypothesisProvider
 from uta.llm.openai_provider import OpenAIHypothesisProvider
@@ -23,8 +26,17 @@ def _sample_prompt() -> tuple[str, str]:
         predicted_cause="CODE_CHANGE",
         error_details="AssertionError: expected fee 12.50, got 12.55",
         error_stack_trace="  File arinv_csvc.py, line 92, in test_reminder_fee",
-        code_candidates=1,
-        data_candidates=0,
+        code_candidates=[
+            RankedCodeChange(
+                revision="135200",
+                author="dev",
+                message="rework reminder fees",
+                committed_at=datetime(2026, 6, 1, tzinfo=UTC),
+                score=2.0,
+                reasons=("changed /trunk/lx/ut_ar/arinv_csvc.py matches a stack-trace file name",),
+            )
+        ],
+        data_candidates=[],
         similar_cases=[],
     )
 

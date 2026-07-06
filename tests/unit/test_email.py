@@ -6,10 +6,12 @@ otherwise silence (unless the recovery-notice toggle is on and the run is back t
 
 from __future__ import annotations
 
-from tests.builders import make_run
+from tests.builders import _EPOCH, make_run
 from tests.fakes.email import RecordingEmailSender
+from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
 from uta.delivery.email import build_regression_report, maybe_notify
+from uta.models import CodeChangeCandidate
 
 RCPT = ("team@example.com",)
 
@@ -40,6 +42,24 @@ def test_email_on_regression_leads_with_new_failures(session_factory):
     assert "a.test" in msg.body
     assert "NEW FAILURES" in msg.body
     assert msg.recipients == RCPT
+
+
+def test_email_shows_suggested_contact_for_new_failure(session_factory):
+    # The classifier suggests the sole commit author (#49); the new-failure line carries it.
+    with session_factory() as s:
+        _process(s, 1, {"a.test": "PASSED"})
+        run = make_run(s, 2, {"a.test": "FAILED"})
+        run.code_changes.append(
+            CodeChangeCandidate(commit_id="r888", author="R. Devlin", committed_at=_EPOCH)
+        )
+        analysis = apply_run(s, run)
+        s.flush()
+        classify_run(s, run, analysis.opened_episodes)
+        s.commit()
+        msg = build_regression_report(s, run, RCPT)
+    assert msg is not None
+    assert "cause: CODE_CHANGE" in msg.body
+    assert "contact: R. Devlin" in msg.body
 
 
 def test_recovery_notice_only_when_toggled_and_green(session_factory):

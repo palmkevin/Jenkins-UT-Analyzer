@@ -3,7 +3,11 @@
 The goal is a *small but complete* run history that lights up every dashboard surface without any
 external system: new & acknowledged failures, a recently-fixed test, a flaky oscillator, a removed
 test, a newly-added test, plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN)
-and a recurring KB signature with fuzzy-similar neighbours.
+and a recurring KB signature with fuzzy-similar neighbours. The per-test **relevance ranking**
+(issue #50) is exercised in both directions: ``test_invoice_rounding``'s top-ranked candidate is
+the commit touching its own module (path overlap), while ``test_timezone_convert``'s is the
+``LORDER`` data change its error text names (entity mention) — two failures of the same run
+history whose likely culprits visibly differ — and ``test_pdf_render`` shows the no-match case.
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``
@@ -80,12 +84,14 @@ _SPECS: tuple[TestSpec, ...] = (
         owner="kam",
     ),
     # Still failing (DATA cause), acknowledged in the seed -> "Still failing"; long recurrence.
+    # Its error names the changed LORDER entity, so the relevance ranking puts that ut_ref change
+    # first (entity mention) — the data-side match-reason example on the test record.
     TestSpec(
         "ut_core.co_time.TestClass",
         "test_timezone_convert",
         "PPPPFFFFFFFFFF",
         exc_type="AssertionError",
-        message="values differ: expected 2 got 1",
+        message="values differ for LORDER: expected 2 got 1",
         line=88,
         owner="tha",
     ),
@@ -98,7 +104,9 @@ _SPECS: tuple[TestSpec, ...] = (
         message="ORA-12541: TNS:no listener",
         line=55,
     ),
-    # New & unacknowledged (both code+data in the window) -> UNKNOWN, "New failures" bucket.
+    # New & unacknowledged; opens with both code+data in the window, but the commit touches this
+    # test's own module (ut_billing/bi_round.py) and no entity is named in the error, so the
+    # relevance tie-break resolves it to CODE_CHANGE — the path-overlap example (issue #50).
     # Referenced by two ZEPHYR cases -> exercises the multi-case link rendering in the demo.
     TestSpec(
         "ut_billing.bi_round.TestClass",
@@ -111,6 +119,9 @@ _SPECS: tuple[TestSpec, ...] = (
         extra_zephyr_ids=("LX-T5120",),
     ),
     # Flaky oscillator: alternating pass/fail -> high transition rate -> flaky flag + leaderboard.
+    # Also the UNKNOWN examples: its build-612 episode has both candidate kinds but neither is
+    # relevant to it (no path overlap, no entity mention), so the tie stays UNKNOWN; its current
+    # episode opens in a build with no candidates at all -> UNKNOWN too.
     TestSpec(
         "ut_reporting.rp_pdf.TestClass",
         "test_pdf_render",
@@ -143,11 +154,14 @@ _SPECS: tuple[TestSpec, ...] = (
 TRACKS = ("permanent", "permanent_py39")
 
 # Builds that carry candidate signals (see the classifier: code-only -> CODE, data-only -> DATA,
-# both -> UNKNOWN, infra error trumps all). Keyed by build number.
+# both -> per-test relevance tie-break, else UNKNOWN; infra error trumps all). Keyed by build
+# number.
 _CODE_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (5, 8, 9, 11, 12)})
 _DATA_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (4, 11)})
 
-# Synthetic commit authors / data-change users — invented initials, never real people.
+# Synthetic commit authors / data-change users — invented initials, never real people. Each
+# candidate build carries a single author, so its CODE/DATA-classified episodes surface that
+# author as the suggested contact (#49) — the demo shows the one-click Confirm surface populated.
 _COMMIT_AUTHORS = ("R. Devlin", "S. Okafor", "P. Nowak")
 _DATA_USERS = ("THA", "MEL", "KAM")
 

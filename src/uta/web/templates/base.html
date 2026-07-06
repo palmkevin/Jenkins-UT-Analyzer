@@ -24,6 +24,7 @@
     .badge { background: #e6eaf0; color: #333; font-weight: 600; vertical-align: middle; }
     .badge.removed { background: #fde2e2; color: #b00020; }
     .badge.flaky { background: #fff3cd; color: #8a6d00; }
+    .badge.match { background: #d7f0db; color: #137333; }
 
     /* Collapsible sections (native <details>/<summary>) styled as cards. */
     .card { display: block; padding: 1rem 1.25rem; margin-bottom: 1rem; }
@@ -36,6 +37,19 @@
 
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
+
+    /* Trend charts (issue #53): inline SVG, no JS/CDN — colours mirror the status classes above. */
+    .timeline-chart { display: block; }
+    .timeline-chart polyline.FAILED { stroke: #b00020; }
+    .timeline-chart polyline.REGRESSION { stroke: #6f42c1; stroke-dasharray: 4 3; }
+    .timeline-legend { color: #6c757d; font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .timeline-legend .swatch { display: inline-block; width: 1.1rem; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 0.3rem; }
+    .timeline-legend .swatch.FAILED { border-color: #b00020; }
+    .timeline-legend .swatch.REGRESSION { border-color: #6f42c1; border-top-style: dashed; }
+
+    .sparkline { vertical-align: middle; }
+    .sparkline rect.FAILED { fill: #b00020; }
+    .sparkline rect.PASSED { fill: #c9e4d4; }
   </style>
 </head>
 <body>

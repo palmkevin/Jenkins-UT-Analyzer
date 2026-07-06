@@ -206,3 +206,45 @@ def test_triage_expand_renders_every_row(many_failures_client):
     assert page.count('href="/tests/') == 150
     # Fully expanded → no residual hint.
     assert "Load all 150 Tests" not in page
+
+
+# ── run-results pagination (issue #52) ─────────────────────────────────────────
+
+
+def test_run_results_paginate_server_side(many_failures_client):
+    # 150 tests × 2 tracks = 300 result rows at a 100-row page size → 3 pages. Each rendered
+    # result row opens with its status cell (<td class="FAILED">) — the diff section above the
+    # table links tests too, so count row cells, not links.
+    page1 = many_failures_client.get("/runs/1").text
+    assert "Results (300)" in page1
+    assert page1.count('<td class="FAILED">') == 100
+    assert "Page 1 of 3 (300 rows)" in page1
+    assert 'href="?page=2#results"' in page1  # Next
+    assert "Load all" not in page1  # the all-or-nothing expand link is gone
+
+    page2 = many_failures_client.get("/runs/1?page=2").text
+    assert "Page 2 of 3 (300 rows)" in page2
+    assert page2.count('<td class="FAILED">') == 100
+    assert 'href="?page=1#results"' in page2  # Previous
+    assert 'href="?page=3#results"' in page2  # Next
+
+
+def test_run_results_page_out_of_range_is_graceful(many_failures_client):
+    resp = many_failures_client.get("/runs/1?page=999")
+    assert resp.status_code == 200
+    assert "Page 3 of 3 (300 rows)" in resp.text
+
+
+def test_runs_list_paginates_server_side(session_factory, monkeypatch):
+    monkeypatch.setenv("UI_ROW_LIMIT", "2")
+    with session_scope(session_factory) as s:
+        for build in (1, 2, 3):
+            apply_run(s, make_run(s, build, {"t": "PASSED"}), baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+    page1 = client.get("/runs").text
+    assert "Page 1 of 2 (3 rows)" in page1
+    assert 'href="/runs/3"' in page1 and 'href="/runs/2"' in page1  # newest first
+    assert 'href="/runs/1"' not in page1
+    page2 = client.get("/runs?page=2").text
+    assert 'href="/runs/1"' in page2

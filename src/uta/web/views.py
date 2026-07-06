@@ -12,13 +12,16 @@ import json
 from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from math import ceil
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, joinedload
 
-from uta.analyze.baseline import compute_diff, identity_status_map, select_baseline
+from uta.analyze.baseline import compute_diff, identity_status_maps, select_baseline
 from uta.analyze.flakiness import compute_stats
+from uta.analyze.flakiness import history as _test_history
 from uta.analyze.flakiness import leaderboard_candidates as _leaderboard_candidates
+from uta.analyze.relevance import rank_candidates
 from uta.control.heartbeat import read_heartbeat
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
@@ -32,6 +35,7 @@ from uta.models import (
     TestResult,
 )
 from uta.models.enums import LifecycleState
+from uta.web import charts
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
@@ -64,6 +68,19 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+def _page_window(total: int, *, limit: int, page: int) -> tuple[int, int, int | None]:
+    """Clamp a 1-based ``page`` against ``total`` rows → ``(page, pages, offset)``.
+
+    ``limit <= 0`` disables pagination (one all-rows page, ``offset=None``); an out-of-range page
+    clamps to the nearest valid one so a stale link never 500s or renders an empty table.
+    """
+    if limit <= 0:
+        return 1, 1, None
+    pages = max(1, ceil(total / limit))
+    page = min(max(1, page), pages)
+    return page, pages, (page - 1) * limit
+
+
 def _run_ref(session: Session, run_id: int | None) -> dict | None:
     """A minimal {id, build, url} reference to a run (episodes hold only the FK)."""
     if run_id is None:
@@ -74,6 +91,15 @@ def _run_ref(session: Session, run_id: int | None) -> dict | None:
     return {"id": run.id, "build": run.build_number, "url": run.url}
 
 
+def _run_refs(session: Session, run_ids: Collection[int]) -> dict[int, dict]:
+    """Batch variant of :func:`_run_ref` — one query for many ids (triage N+1 fix, issue #52)."""
+    ids = {i for i in run_ids if i is not None}
+    if not ids:
+        return {}
+    rows = session.execute(select(Run.id, Run.build_number, Run.url).where(Run.id.in_(ids))).all()
+    return {run_id: {"id": run_id, "build": build, "url": url} for run_id, build, url in rows}
+
+
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
     """The current prediction for an episode (rows are append-only; newest wins)."""
     return session.scalar(
@@ -82,6 +108,28 @@ def _latest_classification(session: Session, episode_id: int) -> Classification 
         .order_by(Classification.created_at.desc(), Classification.id.desc())
         .limit(1)
     )
+
+
+def _latest_classifications(
+    session: Session, episode_ids: Collection[int]
+) -> dict[int, Classification]:
+    """The current (newest) classification per episode, in **one query** for many episodes.
+
+    Rows are read oldest-first and written into the map, so the last write per episode is the
+    newest row — the same "newest wins" rule as :func:`_latest_classification`. Classifications
+    per episode are few (one per analysing run), so reading them all beats N per-episode queries.
+    """
+    ids = {i for i in episode_ids if i is not None}
+    if not ids:
+        return {}
+    latest: dict[int, Classification] = {}
+    for classification in session.scalars(
+        select(Classification)
+        .where(Classification.episode_id.in_(ids))
+        .order_by(Classification.created_at, Classification.id)
+    ):
+        latest[classification.episode_id] = classification
+    return latest
 
 
 def _days_between(start: datetime | None, end: datetime | None) -> int | None:
@@ -98,14 +146,24 @@ def _duration_seconds(start: datetime | None, end: datetime | None) -> float | N
     return max(0.0, (end - start).total_seconds())
 
 
-def _row(session: Session, lc: TestLifecycle) -> dict:
-    """Shared row projection for the triage buckets — identity + current episode + prediction."""
+def _row(
+    lc: TestLifecycle,
+    *,
+    classifications: dict[int, Classification],
+    run_refs: dict[int, dict],
+) -> dict:
+    """Shared row projection for the triage buckets — identity + current episode + prediction.
+
+    A pure projection over **prefetched** data: the lifecycle arrives with its identity, current
+    episode and attribution eager-loaded, and the classification/run lookups are batch maps — so
+    building a row issues no queries (the page is O(1) queries in the number of rows, issue #52).
+    """
     ident = lc.identity
     ep = lc.current_episode
-    classification = _latest_classification(session, ep.id) if ep is not None else None
+    classification = classifications.get(ep.id) if ep is not None else None
     attribution = ep.attribution if ep is not None else None
-    first_failure = _run_ref(session, ep.first_failure_run_id) if ep is not None else None
-    fixed_in = _run_ref(session, ep.fixed_in_run_id) if ep is not None else None
+    first_failure = run_refs.get(ep.first_failure_run_id) if ep is not None else None
+    fixed_in = run_refs.get(ep.fixed_in_run_id) if ep is not None else None
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
@@ -149,28 +207,57 @@ def triage_queue(
     Each bucket is capped at ``limit`` rows for rendering (long lists hurt UI responsiveness —
     issue #19); ``counts`` stays the full, pre-cap size, and a section named in ``expand`` renders
     in full. ``truncated`` reports, per bucket, whether rows were dropped.
+
+    Query count is **O(1) in the number of rows** (issue #52): one eager-loaded lifecycle scan
+    (identity + current episode + attribution), one batched latest-classification lookup, one
+    batched run-ref lookup.
     """
-    lifecycles = session.scalars(
-        select(TestLifecycle).join(TestIdentity, TestLifecycle.identity)
-    ).all()
+    lifecycles = (
+        session.scalars(
+            select(TestLifecycle).options(
+                joinedload(TestLifecycle.identity),
+                joinedload(TestLifecycle.current_episode).joinedload(FailureEpisode.attribution),
+            )
+        )
+        .unique()
+        .all()
+    )
+
+    # Pass 1 — bucket selection only; projection is deferred until the batch maps exist.
+    selected: list[tuple[str, TestLifecycle]] = []
+    cutoff = _now() - timedelta(days=recently_fixed_days)
+    for lc in lifecycles:
+        ep = lc.current_episode
+        if lc.state == LifecycleState.FAILING:
+            selected.append(("still_failing" if lc.acknowledged else "new", lc))
+        elif lc.state == LifecycleState.REMOVED and ep is not None and ep.is_open:
+            selected.append(("removed", lc))
+        elif lc.state == LifecycleState.FIXED and ep is not None and ep.fixed_at is not None:
+            if _aware(ep.fixed_at) >= cutoff:
+                selected.append(("recently_fixed", lc))
+
+    # Pass 2 — batch-fetch everything the rows reference, then project (no per-row queries).
+    episodes = [lc.current_episode for _, lc in selected if lc.current_episode is not None]
+    classifications = _latest_classifications(session, [ep.id for ep in episodes])
+    run_refs = _run_refs(
+        session,
+        [ep.first_failure_run_id for ep in episodes] + [ep.fixed_in_run_id for ep in episodes],
+    )
 
     new: list[dict] = []
     still_failing: list[dict] = []
     recently_fixed: list[dict] = []
-    cutoff = _now() - timedelta(days=recently_fixed_days)
-
-    for lc in lifecycles:
-        ep = lc.current_episode
-        if lc.state == LifecycleState.FAILING:
-            row = _row(session, lc)
-            (still_failing if lc.acknowledged else new).append(row)
-        elif lc.state == LifecycleState.REMOVED and ep is not None and ep.is_open:
-            row = _row(session, lc)
+    for bucket, lc in selected:
+        row = _row(lc, classifications=classifications, run_refs=run_refs)
+        if bucket == "new":
+            new.append(row)
+        elif bucket == "still_failing":
+            still_failing.append(row)
+        elif bucket == "removed":
             row["removed"] = True
             still_failing.append(row)
-        elif lc.state == LifecycleState.FIXED and ep is not None and ep.fixed_at is not None:
-            if _aware(ep.fixed_at) >= cutoff:
-                recently_fixed.append(_row(session, lc))
+        else:
+            recently_fixed.append(row)
 
     new.sort(key=lambda r: (r["first_failure_at"] is not None, r["first_failure_at"]), reverse=True)
     still_failing.sort(key=lambda r: (r.get("removed", False), r["age_days"] or 0), reverse=True)
@@ -286,32 +373,66 @@ def _latest_failing_result(session: Session, identity_id: int) -> TestResult | N
     )
 
 
-def _candidates_for_run(session: Session, run_id: int | None) -> dict:
-    """Candidate code/data changes in the run's window, presented chronologically."""
+def _candidates_for_run(
+    session: Session, run_id: int | None, ident: TestIdentity, latest: TestResult | None
+) -> dict:
+    """Candidate code/data changes in the run's window, **ranked by relevance to this test**.
+
+    Ranking (issue #50) scores each candidate against the test's failure in the candidate run
+    (falling back to the latest failing result): changed SVN paths vs the test's module and
+    stack-frame paths, changed ``ut_ref`` entities vs the error text. Each row carries its match
+    ``reasons`` so the record can show *why* a candidate ranks first; unmatched candidates stay
+    chronological below the matched ones.
+    """
     if run_id is None:
         return {"code": [], "data": []}
     run = session.get(Run, run_id)
     if run is None:
         return {"code": [], "data": []}
+    failure = (
+        session.scalar(
+            select(TestResult)
+            .where(
+                TestResult.run_id == run.id,
+                TestResult.test_identity_id == ident.id,
+                TestResult.status.in_(FAILED_STATUSES),
+            )
+            .order_by(TestResult.id)
+            .limit(1)
+        )
+        or latest
+    )
+    ranked = rank_candidates(
+        run.code_changes,
+        run.data_changes,
+        file_path=failure.file_path if failure else None,
+        error_details=failure.error_details if failure else None,
+        error_stack_trace=failure.error_stack_trace if failure else None,
+        class_name=ident.class_name,
+    )
     code = [
         {
-            "revision": c.revision or c.commit_id,
+            "revision": c.revision,
             "author": c.author,
             "message": c.message,
             "committed_at": c.committed_at,
+            "score": c.score,
+            "reasons": list(c.reasons),
         }
-        for c in sorted(run.code_changes, key=lambda c: c.committed_at)
+        for c in ranked.code
     ]
     data = [
         {
-            "entity": d.lx_table_code,
-            "pk": d.pk_lst,
+            "entity": d.entity,
+            "pk": d.pk,
             "change_type": d.change_type,
-            "component": d.component_name,
+            "component": d.component,
             "author": d.author,
             "changed_at": d.changed_at,
+            "score": d.score,
+            "reasons": list(d.reasons),
         }
-        for d in sorted(run.data_changes, key=lambda d: d.changed_at)
+        for d in ranked.data
     ]
     return {"code": code, "data": data}
 
@@ -357,7 +478,7 @@ def test_record(
     current_ep = lc.current_episode if lc is not None else None
     latest = _latest_failing_result(session, identity_id)
     candidates = _candidates_for_run(
-        session, current_ep.first_failure_run_id if current_ep is not None else None
+        session, current_ep.first_failure_run_id if current_ep is not None else None, ident, latest
     )
     flakiness = asdict(
         compute_stats(
@@ -365,6 +486,7 @@ def test_record(
         )
     )
     recurrence = _recurrence(session, latest, k=kb_top_k, cutoff=kb_cutoff)
+    history = _test_history(session, identity_id, window_days=flaky_window_days)
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
@@ -391,6 +513,7 @@ def test_record(
         "episodes": [_episode_dict(session, e) for e in episodes],
         "candidates": candidates,
         "flakiness": flakiness,
+        "spark": charts.sparkline(history),
         "recurrence": recurrence,
     }
 
@@ -408,7 +531,11 @@ def flaky_leaderboard(
     stays honest when there are more candidates than the display cap.
     """
     candidates = _leaderboard_candidates(session, window_days=window_days, threshold=threshold)
-    return {"rows": candidates[:limit], "total": len(candidates), "window_days": window_days}
+    rows = candidates[:limit]
+    for row in rows:
+        hist = _test_history(session, row["identity_id"], window_days=window_days)
+        row["spark"] = charts.sparkline(hist)
+    return {"rows": rows, "total": len(candidates), "window_days": window_days}
 
 
 def kb_search(
@@ -435,13 +562,14 @@ def run_summary(
     build: int,
     *,
     limit: int = DEFAULT_ROW_LIMIT,
-    expand: Collection[str] = (),
+    page: int = 1,
 ) -> dict | None:
     """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
-    The results table is the ~25k-row surface behind issue #19: it is capped at ``limit`` rows
-    (unless ``"results"`` is in ``expand``) *before* projection, so the expensive per-row work is
-    skipped too. ``results_total`` carries the full count for the "Load all N Tests" hint.
+    The results table is the ~25k-row surface behind issues #19/#52: it is **paginated in SQL**
+    (``limit`` rows per page, LIMIT/OFFSET) — never loaded whole, replacing the all-or-nothing
+    ``?expand=`` link. ``results_total`` is a COUNT; ``page``/``pages`` drive the pager controls.
+    ``limit <= 0`` disables pagination (the operator's explicit no-cap choice).
     """
     run = session.scalar(select(Run).where(Run.build_number == build))
     if run is None:
@@ -464,14 +592,20 @@ def run_summary(
     def _diff_rows(identity_ids: list[int]) -> list[dict]:
         return [{"identity_id": i, "test_id": names.get(i, str(i))} for i in identity_ids]
 
-    results = session.scalars(
-        select(TestResult)
+    results_total = session.scalar(
+        select(func.count()).select_from(TestResult).where(TestResult.run_id == run.id)
+    )
+    page, pages, offset = _page_window(results_total, limit=limit, page=page)
+    # Only the visible page is fetched, with the identity name joined in (no per-row lazy load).
+    results_query = (
+        select(TestResult, TestIdentity.canonical_name)
+        .join(TestIdentity, TestIdentity.id == TestResult.test_identity_id)
         .where(TestResult.run_id == run.id)
-        .order_by(TestResult.status, TestResult.test_identity_id)
-    ).all()
-    results_total = len(results)
-    # Cap before projecting — the per-row identity name is a lazy load, so this skips the work too.
-    visible_results = _cap(results, "results", limit=limit, expand=expand)
+        .order_by(TestResult.status, TestResult.test_identity_id, TestResult.track, TestResult.id)
+    )
+    if offset is not None:
+        results_query = results_query.limit(limit).offset(offset)
+    visible_results = session.execute(results_query).all()
 
     return {
         "build": run.build_number,
@@ -503,7 +637,7 @@ def run_summary(
         },
         "results": [
             {
-                "test_id": r.identity.canonical_name,
+                "test_id": canonical_name,
                 "identity_id": r.test_identity_id,
                 "track": r.track,
                 "status": r.status,
@@ -512,46 +646,72 @@ def run_summary(
                 "file_path": r.file_path,
                 "line": r.line,
             }
-            for r in visible_results
+            for r, canonical_name in visible_results
         ],
         "results_total": results_total,
+        "page": page,
+        "pages": pages,
+        "page_size": limit,
     }
 
 
-def job_runs(session: Session, *, poll_interval_seconds: int | None = None) -> dict:
-    """The 'Job runs' page (issue #37): every ingested run, newest-first, with status, timing,
-    test totals and the regression / newly-fixed counts of its diff vs baseline.
+def job_runs(
+    session: Session,
+    *,
+    poll_interval_seconds: int | None = None,
+    limit: int = DEFAULT_ROW_LIMIT,
+    page: int = 1,
+) -> dict:
+    """The 'Job runs' page (issue #37): ingested runs, newest-first, with status, timing, test
+    totals and the regression / newly-fixed counts of its diff vs baseline.
 
     Each run's counts are its diff against its baseline — the most recent *complete* run before it,
-    the same baseline the run summary uses (so the two pages never disagree). Status maps are cached
-    and reused across runs (a run's baseline is typically the run just before it), so the page costs
-    roughly one lightweight ``(identity_id, status)`` scan per run rather than two.
+    the same baseline the run summary uses (so the two pages never disagree). The list is
+    **paginated in SQL** (issue #52), and the per-run work is batched: one query fetches the page's
+    runs, one fetches the off-page baselines, and one grouped scan builds every needed
+    ``(identity_id, status)`` map — a constant query count per page instead of one scan per run.
 
     The poller block carries the last tick time and the projected next tick (last + interval) for
-    the header banner.
+    the header banner. The run-health timeline (issue #60) spans the runs on the rendered page.
     """
-    runs = session.scalars(select(Run).order_by(Run.started_at.desc())).all()
+    total = session.scalar(select(func.count()).select_from(Run))
+    page, pages, offset = _page_window(total, limit=limit, page=page)
+    runs_query = select(Run).order_by(Run.started_at.desc(), Run.id.desc())
+    if offset is not None:
+        runs_query = runs_query.limit(limit).offset(offset)
+    runs = session.scalars(runs_query).all()
 
-    status_cache: dict[int, dict[int, str]] = {}
+    # Resolve each run's baseline: the recorded id when the analysis stamped one, else the
+    # most-recent-complete-run rule (rare: the store's first run, or a run analysed pre-stamping).
+    by_id: dict[int, Run] = {run.id: run for run in runs}
+    missing = {
+        run.baseline_run_id
+        for run in runs
+        if run.baseline_run_id is not None and run.baseline_run_id not in by_id
+    }
+    if missing:
+        for baseline in session.scalars(select(Run).where(Run.id.in_(missing))).all():
+            by_id[baseline.id] = baseline
+    baselines: dict[int, Run | None] = {}
+    for run in runs:
+        if run.baseline_run_id is not None:
+            baselines[run.id] = by_id.get(run.baseline_run_id)
+        else:
+            baselines[run.id] = select_baseline(session, run)
 
-    def _status_map(run: Run) -> dict[int, str]:
-        if run.id not in status_cache:
-            status_cache[run.id] = identity_status_map(session, run)
-        return status_cache[run.id]
+    # One grouped scan builds every status map the page needs (runs + their baselines).
+    needed_ids = {run.id for run in runs} | {b.id for b in baselines.values() if b is not None}
+    status_maps = identity_status_maps(session, needed_ids)
 
     rows: list[dict] = []
     for run in runs:
-        baseline = (
-            session.get(Run, run.baseline_run_id)
-            if run.baseline_run_id is not None
-            else select_baseline(session, run)
-        )
+        baseline = baselines[run.id]
         diff = compute_diff(
             session,
             run,
             baseline,
-            current=_status_map(run),
-            baseline_status=_status_map(baseline) if baseline is not None else {},
+            current=status_maps[run.id],
+            baseline_status=status_maps[baseline.id] if baseline is not None else {},
         )
         rows.append(
             {
@@ -579,8 +739,20 @@ def job_runs(session: Session, *, poll_interval_seconds: int | None = None) -> d
     if last_poll_at is not None and poll_interval_seconds:
         next_poll_at = _aware(last_poll_at) + timedelta(seconds=poll_interval_seconds)
 
+    timeline = charts.run_health_timeline(
+        [
+            {"build": r["build"], "failed": r["totals"]["failed"], "regressions": r["regressions"]}
+            for r in reversed(rows)  # rows are newest-first; the chart reads left-to-right in time
+        ]
+    )
+
     return {
         "runs": rows,
+        "timeline": timeline,
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "page_size": limit,
         "poller": {
             "last_poll_at": last_poll_at,
             "next_poll_at": next_poll_at,

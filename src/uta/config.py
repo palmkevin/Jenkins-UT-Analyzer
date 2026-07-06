@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     jenkins_job_path: str = "job/Development/job/lsdevbuild-build-release-permanent"
     jenkins_user: str = ""
     jenkins_api_token: str = ""
+    # TLS verification is on by default. Set false only as a stopgap for an internal CA the host
+    # doesn't trust yet; prefer pointing jenkins_ca_bundle at that CA's PEM instead of disabling.
+    jenkins_verify_tls: bool = True
+    # Path to a CA bundle (PEM) for verifying Jenkins' cert, e.g. an internal CA. Takes precedence
+    # over jenkins_verify_tls when set (verification stays on, against this bundle).
+    jenkins_ca_bundle: str = ""
     expected_shards: int = 2
     # Also ingest the unittest console-log UT stages (no JUnit artifact — parsed from stage logs).
     ingest_unittest_stages: bool = True
@@ -53,6 +59,13 @@ class Settings(BaseSettings):
     # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
     # not try to ingest every historical build from #1.
     backfill_depth: int = 10
+    # Retention (issue #52): raw *passing/skipped* results are dropped once their run is older than
+    # this many days (failing results, runs, episodes, lifecycles, attributions and KB signatures
+    # are kept forever). 0 keeps everything. Keep it comfortably above FLAKY_WINDOW_DAYS so the
+    # flakiness sequence never loses in-window pass points.
+    result_retention_days: int = 90
+    # Finished (done/error) on-demand ingest jobs are dropped after this many days. 0 keeps all.
+    ingest_job_retention_days: int = 30
 
     # ── External links (read-only deep links surfaced in the UI) ──────────────
     # Jira base for ticket links: {jira_base_url}/browse/<TICKET>.
@@ -89,6 +102,11 @@ class Settings(BaseSettings):
     @property
     def jenkins_job_url(self) -> str:
         return f"{self.jenkins_base_url.rstrip('/')}/{self.jenkins_job_path.strip('/')}"
+
+    @property
+    def jenkins_verify(self) -> bool | str:
+        """httpx's ``verify`` value: a CA bundle path if set, else the on/off flag."""
+        return self.jenkins_ca_bundle or self.jenkins_verify_tls
 
     @property
     def email_recipients(self) -> tuple[str, ...]:
