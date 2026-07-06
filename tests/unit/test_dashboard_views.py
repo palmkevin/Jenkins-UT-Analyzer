@@ -243,6 +243,55 @@ def test_test_record_exposes_sparkline_history(session_factory):
     assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
 
 
+def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):
+    """Candidates are ordered by relevance to *this* test, each carrying its match reason (#50)."""
+    from uta.models import DataChangeCandidate
+
+    stack = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/dev/ut_pkg/mod.py", line 7, in t\n'
+        "AssertionError: lookup failed for LXFOO row\n"
+    )
+    t0 = datetime(2026, 6, 1, tzinfo=UTC)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("lookup failed for LXFOO row", stack)})
+        # Earlier unrelated commit vs later commit touching the failing test's module.
+        r1.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="100",
+                revision="100",
+                committed_at=t0,
+                paths='[{"editType": "edit", "file": "/trunk/lx/other/thing.py"}]',
+            )
+        )
+        r1.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="200",
+                revision="200",
+                committed_at=t0 + timedelta(minutes=5),
+                paths='[{"editType": "edit", "file": "/trunk/lx/ut_pkg/mod.py"}]',
+            )
+        )
+        # Earlier unmentioned entity vs later entity named in the error text.
+        r1.data_changes.append(
+            DataChangeCandidate(lx_table_code="ACINVORD", change_type="U", changed_at=t0)
+        )
+        r1.data_changes.append(
+            DataChangeCandidate(
+                lx_table_code="LXFOO", change_type="U", changed_at=t0 + timedelta(minutes=5)
+            )
+        )
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+        cand = rec["candidates"]
+        # The relevant commit outranks the chronologically-earlier unrelated one, reason visible.
+        assert [c["revision"] for c in cand["code"]] == ["200", "100"]
+        assert cand["code"][0]["reasons"] and "module" in cand["code"][0]["reasons"][0]
+        assert cand["code"][1]["reasons"] == []
+        assert [d["entity"] for d in cand["data"]] == ["LXFOO", "ACINVORD"]
+        assert "mentioned in the error text" in cand["data"][0]["reasons"][0]
+
+
 # ── run summary ──────────────────────────────────────────────────────────────
 
 
