@@ -232,13 +232,17 @@ def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory
         # Earlier unrelated commit vs later commit touching the failing test's module.
         r1.code_changes.append(
             CodeChangeCandidate(
-                commit_id="100", revision="100", committed_at=t0,
+                commit_id="100",
+                revision="100",
+                committed_at=t0,
                 paths='[{"editType": "edit", "file": "/trunk/lx/other/thing.py"}]',
             )
         )
         r1.code_changes.append(
             CodeChangeCandidate(
-                commit_id="200", revision="200", committed_at=t0 + timedelta(minutes=5),
+                commit_id="200",
+                revision="200",
+                committed_at=t0 + timedelta(minutes=5),
                 paths='[{"editType": "edit", "file": "/trunk/lx/ut_pkg/mod.py"}]',
             )
         )

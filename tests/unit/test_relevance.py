@@ -162,8 +162,10 @@ def test_matched_entity_ranks_above_unmatched():
 def test_no_context_yields_zero_scores_chronological():
     """With nothing to match against, ranking degrades to the chronological v1 presentation."""
     ranked = rank_candidates(
-        [_code(["/trunk/lx/a.py"], revision="r2", offset_min=10),
-         _code(["/trunk/lx/b.py"], revision="r1", offset_min=0)],
+        [
+            _code(["/trunk/lx/a.py"], revision="r2", offset_min=10),
+            _code(["/trunk/lx/b.py"], revision="r1", offset_min=0),
+        ],
         [_data("LORDER")],
     )
     assert all(c.score == 0 for c in ranked.code)

@@ -157,9 +157,7 @@ def test_pdf_render_ties_stay_unknown_without_relevance(session_factory):
     both_kinds = [
         e
         for e in record["episodes"]
-        if e["evidence"]
-        and e["evidence"]["code_candidates"]
-        and e["evidence"]["data_candidates"]
+        if e["evidence"] and e["evidence"]["code_candidates"] and e["evidence"]["data_candidates"]
     ]
     assert both_kinds, "expected an episode opened in a build carrying both candidate kinds"
     assert all(e["predicted_cause"] == "UNKNOWN" for e in both_kinds)

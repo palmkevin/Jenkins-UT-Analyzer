@@ -112,8 +112,16 @@ def test_unmatched_candidates_are_flagged_and_overflow_is_counted():
 def test_redaction_discipline_holds():
     """Only key/author fields can reach the prompt — the ranked dataclasses have no row-content
     field at all, so raw ``MODDATA`` (which may carry patient data) cannot leak by construction."""
-    allowed = {"entity", "pk", "change_type", "component", "author", "changed_at", "score",
-               "reasons"}
+    allowed = {
+        "entity",
+        "pk",
+        "change_type",
+        "component",
+        "author",
+        "changed_at",
+        "score",
+        "reasons",
+    }
     assert {f.name for f in dataclasses.fields(RankedDataChange)} == allowed
     _, user = build_prompt(
         test_id="t",

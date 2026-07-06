@@ -93,9 +93,7 @@ def test_both_candidates_no_relevance_is_unknown(session_factory):
 def test_relevant_code_breaks_the_tie_to_code_change(session_factory):
     """Both kinds present, but the commit touches the failing test's module -> CODE_CHANGE."""
     with session_scope(session_factory) as s:
-        run = make_run(
-            s, 1, {"t": "FAILED"}, errors={"t": ("boom", _STACK.format(msg="1 != 2"))}
-        )
+        run = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom", _STACK.format(msg="1 != 2"))})
         _add_code(run, paths_json='[{"editType": "edit", "file": "/trunk/lx/ut_pkg/mod.py"}]')
         _add_data(run)
         s.flush()
