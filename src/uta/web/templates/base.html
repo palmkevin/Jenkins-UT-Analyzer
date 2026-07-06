@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}UT Analyzer{% endblock %}</title>
   <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <script>
+    // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.
+    // No saved choice yet -> follow the OS/browser preference (prefers-color-scheme).
+    (function () {
+      var saved = localStorage.getItem("uta-theme");
+      var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-bs-theme", theme);
+    })();
+  </script>
   <style>
     /* Domain-specific accents layered on top of Bootstrap (loaded first, so these win). */
     body { background: #f5f6f8; }
@@ -50,6 +59,33 @@
     .sparkline { vertical-align: middle; }
     .sparkline rect.FAILED { fill: #b00020; }
     .sparkline rect.PASSED { fill: #c9e4d4; }
+
+    /* Theme toggle (issue #68): a Material-style icon button in the navbar. */
+    .theme-toggle { width: 2.2rem; height: 2.2rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; }
+    .theme-toggle svg { width: 1.2rem; height: 1.2rem; fill: currentColor; }
+    [data-bs-theme="dark"] .theme-toggle .icon-sun,
+    [data-bs-theme="light"] .theme-toggle .icon-moon { display: none; }
+
+    /* Dark theme: re-tune the light-mode-only colours above (Bootstrap handles its own chrome). */
+    [data-bs-theme="dark"] body { background: #16181c; }
+    [data-bs-theme="dark"] .meta { color: #9aa1a9; }
+    [data-bs-theme="dark"] .empty { color: #9aa1a9; }
+    [data-bs-theme="dark"] .FAILED, [data-bs-theme="dark"] .REGRESSION, [data-bs-theme="dark"] .FAILING { color: #ff6b6b; }
+    [data-bs-theme="dark"] .PASSED, [data-bs-theme="dark"] .FIXED { color: #4ade80; }
+    [data-bs-theme="dark"] .SKIPPED, [data-bs-theme="dark"] .REMOVED { color: #9aa1a9; }
+    [data-bs-theme="dark"] .badge { background: #2b2f36; color: #e9ecef; }
+    [data-bs-theme="dark"] .badge.removed { background: #4a1f24; color: #ff6b6b; }
+    [data-bs-theme="dark"] .badge.flaky { background: #4a3c0a; color: #ffd866; }
+    [data-bs-theme="dark"] .badge.match { background: #16412a; color: #4ade80; }
+    [data-bs-theme="dark"] summary:hover { color: #fff; }
+    [data-bs-theme="dark"] .more { color: #9aa1a9; }
+    [data-bs-theme="dark"] .timeline-chart polyline.FAILED { stroke: #ff6b6b; }
+    [data-bs-theme="dark"] .timeline-chart polyline.REGRESSION { stroke: #b28cf5; }
+    [data-bs-theme="dark"] .timeline-legend { color: #9aa1a9; }
+    [data-bs-theme="dark"] .timeline-legend .swatch.FAILED { border-color: #ff6b6b; }
+    [data-bs-theme="dark"] .timeline-legend .swatch.REGRESSION { border-color: #b28cf5; }
+    [data-bs-theme="dark"] .sparkline rect.FAILED { fill: #ff6b6b; }
+    [data-bs-theme="dark"] .sparkline rect.PASSED { fill: #285241; }
   </style>
 </head>
 <body>
@@ -67,6 +103,15 @@
              placeholder="jump to test…" aria-label="search tests">
       <button class="btn btn-sm btn-outline-light" type="submit">Search</button>
     </form>
+    <button type="button" id="theme-toggle" class="btn btn-outline-light theme-toggle me-2"
+            title="Toggle dark/light theme" aria-label="Toggle dark/light theme">
+      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0-5a1 1 0 0 1 1 1v1.5a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 17.5a1 1 0 0 1 1 1V22a1 1 0 1 1-2 0v-1.5a1 1 0 0 1 1-1ZM3 11a1 1 0 1 0 0 2h1.5a1 1 0 1 0 0-2H3Zm17.5 0a1 1 0 1 0 0 2H22a1 1 0 1 0 0-2h-1.5ZM5.64 4.22a1 1 0 0 1 1.42 0l1.06 1.06a1 1 0 1 1-1.42 1.42L5.64 5.64a1 1 0 0 1 0-1.42Zm11.24 11.24a1 1 0 0 1 1.42 0l1.06 1.06a1 1 0 0 1-1.42 1.42l-1.06-1.06a1 1 0 0 1 0-1.42ZM18.36 4.22a1 1 0 0 1 0 1.42l-1.06 1.06a1 1 0 1 1-1.42-1.42l1.06-1.06a1 1 0 0 1 1.42 0ZM7.12 15.46a1 1 0 0 1 0 1.42l-1.06 1.06a1 1 0 1 1-1.42-1.42l1.06-1.06a1 1 0 0 1 1.42 0Z"/>
+      </svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20.74 14.51a8.5 8.5 0 0 1-10.25-10.25 1 1 0 0 0-1.27-1.19A10.5 10.5 0 1 0 21.93 15.78a1 1 0 0 0-1.19-1.27Z"/>
+      </svg>
+    </button>
     {% if auth_enabled %}
     <span class="navbar-text small me-2">signed in as <strong>{{ actor }}</strong></span>
     <a class="btn btn-sm btn-outline-light" href="/logout">Logout</a>
@@ -82,5 +127,12 @@
   <main class="container-fluid px-4">
     {% block content %}{% endblock %}
   </main>
+  <script>
+    document.getElementById("theme-toggle").addEventListener("click", function () {
+      var next = document.documentElement.getAttribute("data-bs-theme") === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-bs-theme", next);
+      localStorage.setItem("uta-theme", next);
+    });
+  </script>
 </body>
 </html>
