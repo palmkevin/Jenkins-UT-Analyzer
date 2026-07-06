@@ -9,7 +9,7 @@
     --bg:#0f1420; --panel:#161d2e; --panel2:#1c2740; --ink:#e8edf6; --muted:#9fb0cc;
     --line:#2c3a57; --accent:#5aa0ff; --accent2:#7ee0c0;
     --jenkins:#d33833; --oracle:#f28c1e; --pg:#4a90d9; --llm:#a97bf0; --mail:#4bbf73;
-    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b;
+    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b; --auth:#e05fa0;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -121,7 +121,8 @@
 
 <section id="parts">
   <h2>The parts involved</h2>
-  <p class="lead">Four external systems the app reads or notifies, its own store, and the app’s own containers.</p>
+  <p class="lead">Four external systems the app reads or notifies (a fifth, Keycloak, is flag-gated —
+  see below), its own store, and the app’s own containers.</p>
 
   <div class="grid g2">
     <div class="card">
@@ -155,6 +156,16 @@
         quarantines/skips a build, or (once, latched) when <code>/health</code> finds the poller stale —
         operational noise about the pipeline itself, not about test results. Both are disabled when no
         recipients are configured.</p>
+      </div>
+      <div class="part" style="border-color:var(--auth)">
+        <h4>Keycloak (IAM) <span class="pill">optional · flag-gated</span></h4>
+        <p>The company's central identity provider at <code>auth.labsolution.lu</code>, realm
+        <code>labsolution</code>. When <code>AUTH_ENABLED=true</code> (off by default), <code>web</code>
+        acts as a confidential OIDC client (<code>internal-ut-analyzer</code>) doing Authorization
+        Code Flow + PKCE via Authlib: it discovers the realm's endpoints, redirects an unauthenticated
+        browser to Keycloak to sign in, and on <code>/logout</code> also ends the central SSO session
+        (RP-initiated logout). With the flag off the app makes <b>zero</b> Keycloak calls — this is a
+        deployment-time addition, not part of local dev, the public demo, or CI.</p>
       </div>
     </div>
 
@@ -210,7 +221,13 @@
         <code>ERROR</code>, and serves a real <b><code>/health</code></b> — DB ping + poller-heartbeat
         freshness, 503 if the DB is down or no successful poll landed within the configured staleness
         window (a deployment with no poller, like the public demo, reports poller “never” and stays
-        healthy).</p>
+        healthy). With <code>AUTH_ENABLED=true</code>, a fail-closed middleware gates every route
+        except <code>/health</code>, <code>/login</code>, <code>/auth/callback</code>, <code>/logout</code>
+        and <code>/static/</code> — an unauthenticated browser GET bounces to <code>/login</code>, a
+        non-GET gets a plain 401 — and the header swaps the free-text actor form for “signed in as
+        &lt;user&gt;” + Logout. Runs behind Traefik in that mode, so uvicorn is started with
+        <code>--proxy-headers</code> to trust <code>X-Forwarded-*</code> (the OIDC callback URL must be
+        the external <code>https</code> one).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>migrate</code> + <code>db</code> <span class="pill">infra</span></h4>
@@ -221,8 +238,10 @@
       <div class="part" style="border-color:var(--human)">
         <h4>The monitor <span class="pill">human-in-the-loop</span></h4>
         <p>Acknowledges new failures, confirms or corrects AI suggestions, enters the causing person / reason /
-        Jira ticket. Every action is stamped with an <code>actor</code> (self-declared name in Phase 1;
-        Keycloak SSO later).</p>
+        Jira ticket. Every action is stamped with an <code>actor</code> — a self-declared name (Phase 1,
+        default) or the Keycloak-verified <code>preferred_username</code> when <code>AUTH_ENABLED=true</code>
+        (Phase 2) — resolved through one choke point, <code>current_actor</code>, with no data-model
+        change either way.</p>
       </div>
       <div class="part" style="border-color:var(--muted)">
         <h4>Deep-link targets <span class="pill">read-only links</span></h4>
@@ -244,7 +263,10 @@
   Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM). Two producers
   reach email: the <code>poller</code> for both the regression report and <b>ops alerts</b> (a quarantined/
   skipped build), and <code>web</code>'s <code>/health</code> check for a <b>latched</b> ops alert when the
-  poller goes stale.</p>
+  poller goes stale. A fifth external system, <b>Keycloak</b>, appears only when
+  <code>AUTH_ENABLED=true</code> (pink, dashed — off by default, so it is absent from the map in local
+  dev, the public demo and CI): the browser is redirected to it to sign in, and <code>web</code> ends the
+  central SSO session on logout.</p>
 
   <div class="legend">
     <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
@@ -255,6 +277,7 @@
     <span><i class="dot" style="background:var(--mail)"></i> Email</span>
     <span><i class="dot" style="background:var(--human)"></i> Human</span>
     <span><i class="dot" style="background:var(--warn)"></i> Control panel (on-demand)</span>
+    <span><i class="dot" style="background:var(--auth)"></i> Keycloak (flag-gated)</span>
   </div>
 
   <div class="diagram">
@@ -269,6 +292,9 @@
         <marker id="arrW" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
           <path d="M0,0 L8,3 L0,6 Z" fill="#f0774b"/>
         </marker>
+        <marker id="arrK" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#e05fa0"/>
+        </marker>
         <style>
           .box{rx:12;stroke-width:1.5}
           .lbl{fill:#e8edf6;font:13px system-ui;font-weight:600}
@@ -276,6 +302,7 @@
           .edge{stroke:#9fb0cc;stroke-width:1.6;fill:none}
           .edgeA{stroke:#7ee0c0;stroke-width:1.8;fill:none}
           .edgeW{stroke:#f0774b;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
+          .edgeK{stroke:#e05fa0;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
           .etxt{fill:#9fb0cc;font:11px system-ui}
         </style>
       </defs>
@@ -330,6 +357,13 @@
       <text class="lbl" x="710" y="412">Monitor (human)</text>
       <text class="sub" x="710" y="432">ack · confirm · reason</text>
 
+      <!-- Keycloak (flag-gated) -->
+      <rect class="box" x="20" y="270" width="180" height="90" fill="#2a1424" stroke="#e05fa0" stroke-dasharray="6,4"/>
+      <text class="lbl" x="36" y="298">Keycloak (IAM)</text>
+      <text class="sub" x="36" y="318">OIDC login / logout</text>
+      <text class="sub" x="36" y="334">AUTH_ENABLED=true only</text>
+      <text class="sub" x="36" y="350">(off by default)</text>
+
       <!-- edges: Jenkins -> poller -->
       <path class="edge" d="M200,83 C260,83 280,110 328,110" marker-end="url(#arr)"/>
       <text class="etxt" x="222" y="76">builds</text>
@@ -369,12 +403,19 @@
       <text class="etxt" x="204" y="270" style="fill:#f0774b">on-demand ingest</text>
       <text class="etxt" x="204" y="283" style="fill:#f0774b">(control panel,</text>
       <text class="etxt" x="204" y="296" style="fill:#f0774b">no email/LLM)</text>
+      <!-- web <-> Keycloak (flag-gated login redirect / RP-initiated logout) -->
+      <path class="edgeK" d="M330,420 C260,420 200,400 200,360" marker-end="url(#arrK)"/>
+      <path class="edgeK" d="M200,340 C230,370 280,405 328,428" marker-end="url(#arrK)"/>
+      <text class="etxt" x="204" y="378" style="fill:#e05fa0">login /</text>
+      <text class="etxt" x="204" y="391" style="fill:#e05fa0">logout</text>
     </svg>
   </div>
   <p class="muted" style="font-size:13px">Green arrows are write-backs / results returning to a producer.
   Dashed orange arrows are the manual, on-demand path triggered from the control panel — same
-  fetch/parse/persist as the poller, but always back-fill semantics. The same Docker image runs as both
-  <code>poller</code> and <code>web</code>; only the command differs.</p>
+  fetch/parse/persist as the poller, but always back-fill semantics. Dashed pink arrows are the
+  Keycloak login/logout redirects, present only when <code>AUTH_ENABLED=true</code> — with the flag off
+  (the default) that box and its edges don't exist in the running system. The same Docker image runs as
+  both <code>poller</code> and <code>web</code>; only the command differs.</p>
 </section>
 
 <section id="ingest">
@@ -558,8 +599,10 @@
     <tr><th>Human input</th><td>Causing person, reason text, triage status, Jira ticket, acknowledger; every
       conclusion carries a <b>provenance tier</b> (<code>AI_UNCONFIRMED</code> / <code>AI_CONFIRMED</code> /
       <code>HUMAN_CORRECTED</code> / <code>HUMAN_ENTERED</code>), the original AI value when corrected, and who/when.</td></tr>
-    <tr><th>Users</th><td>An <code>actor</code> string on every human action (self-declared name in Phase 1, default
-      <code>test-user</code>; Keycloak principal in Phase 2 — no data-model change).</td></tr>
+    <tr><th>Users</th><td>An <code>actor</code> string on every human action: a self-declared name in Phase 1
+      (default <code>test-user</code>, the always-on default), or the Keycloak-verified
+      <code>preferred_username</code> in Phase 2 (<code>AUTH_ENABLED=true</code>) — resolved through one
+      choke point (<code>current_actor</code>), no data-model change either way.</td></tr>
     <tr><th>Knowledge base</th><td>Failure signatures (normalized error text + its hash for exact lookup, with a
       <code>pg_trgm</code> GIN index for fuzzy similarity) ↔ entered reasons/causes. All in Postgres, no vector store.</td></tr>
   </table>
@@ -611,6 +654,16 @@
   <p class="muted" style="font-size:13px">Config is 12-factor (env → typed settings). Secrets never committed;
   <code>.env.example</code> documents every key. Stack: Python 3.12, FastAPI, SQLAlchemy 2.x + Alembic,
   <code>psycopg</code> (Postgres), <code>oracledb</code> thin (Oracle).</p>
+
+  <h3>Auth (optional, flag-gated)</h3>
+  <div class="card">
+    <p>With <code>AUTH_ENABLED=true</code> the production deployment runs <code>web</code> behind a
+    reverse proxy (Traefik) so the externally-registered OIDC callback is <code>https</code>; uvicorn is
+    started with <code>--proxy-headers</code> to trust <code>X-Forwarded-*</code>. <code>OIDC_CLIENT_SECRET</code>
+    and <code>SESSION_SECRET</code> come from the deployment secret store, never committed. With the flag
+    at its default (<code>false</code>) — local dev, the public demo, CI — none of this is wired and the
+    app makes zero Keycloak calls.</p>
+  </div>
 
   <h3>Public demo</h3>
   <div class="card">
