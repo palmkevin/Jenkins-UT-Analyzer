@@ -392,12 +392,8 @@ def triage_queue(
     _sort_rows(
         new, sort, age_key=lambda r: (r["first_failure_at"] is not None, r["first_failure_at"])
     )
-    _sort_rows(
-        still_failing, sort, age_key=lambda r: (r.get("removed", False), r["age_days"] or 0)
-    )
-    _sort_rows(
-        recently_fixed, sort, age_key=lambda r: (r["fixed_at"] is not None, r["fixed_at"])
-    )
+    _sort_rows(still_failing, sort, age_key=lambda r: (r.get("removed", False), r["age_days"] or 0))
+    _sort_rows(recently_fixed, sort, age_key=lambda r: (r["fixed_at"] is not None, r["fixed_at"]))
 
     counts = {
         "new": len(new),
