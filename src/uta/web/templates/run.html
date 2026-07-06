@@ -25,8 +25,8 @@
 
 <h2>Shards</h2>
 <div class="table-responsive">
-<table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th>Track</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Track</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
   <tbody>
     {% for s in run.shards %}
     <tr><td>{{ s.track }}</td><td>{{ s.status }}</td><td>{{ s.started_at|ts }}</td><td>{{ s.finished_at|ts }}</td></tr>
@@ -39,7 +39,7 @@
   {% if run.baseline %}(<a href="/runs/{{ run.baseline.build }}">#{{ run.baseline.build }}</a>){% else %}(no baseline — first complete run){% endif %}
 </h2>
 <div class="table-responsive">
-<table class="table table-sm align-middle bg-white">
+<table class="table table-sm align-middle">
   <tbody>
     <tr><th>Regressions (new failures)</th><td>{{ diff_list(run.diff.regressions) }}</td></tr>
     <tr><th>Newly fixed</th><td>{{ diff_list(run.diff.newly_fixed) }}</td></tr>
@@ -59,8 +59,8 @@
   <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
 </form>
 <div class="table-responsive">
-<table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light">
+<table class="table table-hover table-sm align-middle">
+  <thead>
     <tr><th>Status</th><th>Track</th><th>Test</th><th>Owner</th><th>Duration</th><th>Location</th></tr>
   </thead>
   <tbody>

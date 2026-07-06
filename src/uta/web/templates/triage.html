@@ -86,8 +86,8 @@
 {% else %}
 <form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"></form>
 <div class="table-responsive">
-<table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th></th><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th></th><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
   <tbody>
     {% for row in queue.new %}
     <tr>
@@ -124,8 +124,8 @@
 {% else %}
 <form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"></form>
 <div class="table-responsive">
-<table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th></th><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th></th><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
   <tbody>
     {% for row in queue.still_failing %}
     <tr>
@@ -175,8 +175,8 @@
   <p class="empty">No fixes in the recent window.</p>
 {% else %}
 <div class="table-responsive">
-<table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th>Test</th><th>Fixed in</th><th>When</th><th>Reason</th></tr></thead>
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Test</th><th>Fixed in</th><th>When</th><th>Reason</th></tr></thead>
   <tbody>
     {% for row in queue.recently_fixed %}
     <tr>

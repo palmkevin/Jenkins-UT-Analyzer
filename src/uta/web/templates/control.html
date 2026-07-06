@@ -19,7 +19,7 @@
 
 <!-- ── Poller health ─────────────────────────────────────────────────────── -->
 <h2>Poller health</h2>
-<div class="card bg-white">
+<div class="card">
   {% if panel.poller.has_run %}
   <div class="row g-3">
     <div class="col-auto"><div class="meta mb-0">Last poll</div>{{ panel.poller.last_poll_at|ts }}</div>
@@ -45,7 +45,7 @@
 <!-- ── Build quarantine (issue #51) ──────────────────────────────────────── -->
 {% if panel.quarantine %}
 <h2>Build quarantine</h2>
-<div class="card bg-white">
+<div class="card">
   <p class="meta">
     Builds the poller could not ingest. A failing build is retried each tick; after
     {{ panel.quarantine_after_attempts }} failed attempts it is <strong>quarantined</strong> —
@@ -54,7 +54,7 @@
   </p>
   <div class="table-responsive">
   <table class="table table-sm align-middle mb-0">
-    <thead class="table-light">
+    <thead>
       <tr><th>Build</th><th>State</th><th>Attempts</th><th>First failed</th><th>Quarantined</th><th>Last error</th></tr>
     </thead>
     <tbody>
@@ -79,7 +79,7 @@
 
 <!-- ── On-demand ingest / re-analysis ────────────────────────────────────── -->
 <h2>Ingest / re-analysis</h2>
-<div class="card bg-white">
+<div class="card">
   <p class="meta">
     Ingest or re-analyse a build (or range). Runs with back-fill semantics — <strong>no email, no
     LLM</strong> — so re-ingesting history never re-mails a regression.
@@ -103,8 +103,8 @@
 
 {% if panel.jobs %}
 <div class="table-responsive">
-<table class="table table-sm align-middle bg-white">
-  <thead class="table-light">
+<table class="table table-sm align-middle">
+  <thead>
     <tr><th>#</th><th>Range</th><th>Status</th><th>Progress</th><th>By</th><th>Started</th><th>Finished</th></tr>
   </thead>
   <tbody>
@@ -134,10 +134,10 @@
 <!-- ── Tunable thresholds ────────────────────────────────────────────────── -->
 <h2>Tunable thresholds</h2>
 {% for group in panel.groups %}
-<div class="card bg-white">
+<div class="card">
   <h3 class="h6 fw-bold">{{ group.name }}</h3>
   <table class="table table-sm align-middle mb-0">
-    <thead class="table-light">
+    <thead>
       <tr><th style="width: 20%">Setting</th><th style="width: 30%">Value</th><th>Default</th><th></th></tr>
     </thead>
     <tbody>
