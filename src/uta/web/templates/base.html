@@ -15,8 +15,28 @@
     })();
   </script>
   <style>
+    /* Material-style surface tokens: page background vs. elevated content surface
+       (cards / tables / headers), one level apart in both themes. Bootstrap's own
+       .card/.table pick these up via --bs-card-bg/--bs-table-bg (both default to
+       --bs-body-bg upstream); dark values are real Material dark-theme colours
+       (#121212 base, not Bootstrap's stock #212529) so the toggle is more than a
+       Bootstrap palette swap. */
+    :root, [data-bs-theme="light"] {
+      --bs-body-bg: #f5f6f8;
+      --uta-surface: #fff;
+    }
+    [data-bs-theme="dark"] {
+      --bs-body-bg: #121212;
+      --bs-body-color: rgba(255, 255, 255, .87);
+      --bs-secondary-color: rgba(255, 255, 255, .6);
+      --bs-border-color: rgba(255, 255, 255, .12);
+      --uta-surface: #1e1e1e;
+    }
+    table.table { background-color: var(--uta-surface); }
+    thead { background-color: var(--bs-tertiary-bg); }
+    pre { background-color: var(--bs-tertiary-bg); }
+
     /* Domain-specific accents layered on top of Bootstrap (loaded first, so these win). */
-    body { background: #f5f6f8; }
     main { margin: 1.6rem auto; }
     h1 { font-size: 1.5rem; }
     h2 { font-size: 1.15rem; margin-top: 1.6rem; }
@@ -36,7 +56,7 @@
     .badge.match { background: #d7f0db; color: #137333; }
 
     /* Collapsible sections (native <details>/<summary>) styled as cards. */
-    .card { display: block; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .card { display: block; padding: 1rem 1.25rem; margin-bottom: 1rem; --bs-card-bg: var(--uta-surface); }
     details.episodes { margin-bottom: 1rem; }
     summary { font-size: 1.1rem; font-weight: 600; cursor: pointer; }
     summary:hover { color: #000; }
@@ -66,8 +86,9 @@
     [data-bs-theme="dark"] .theme-toggle .icon-sun,
     [data-bs-theme="light"] .theme-toggle .icon-moon { display: none; }
 
-    /* Dark theme: re-tune the light-mode-only colours above (Bootstrap handles its own chrome). */
-    [data-bs-theme="dark"] body { background: #16181c; }
+    /* Dark theme: re-tune the light-mode-only colours above (Bootstrap handles its own chrome,
+       and the page/surface background comes from the --bs-body-bg / --uta-surface tokens above).
+       Contrast re-checked against the real #121212/#1e1e1e surfaces: all pairs below are >= 5:1. */
     [data-bs-theme="dark"] .meta { color: #9aa1a9; }
     [data-bs-theme="dark"] .empty { color: #9aa1a9; }
     [data-bs-theme="dark"] .FAILED, [data-bs-theme="dark"] .REGRESSION, [data-bs-theme="dark"] .FAILING { color: #ff6b6b; }

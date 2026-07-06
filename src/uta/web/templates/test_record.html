@@ -76,7 +76,7 @@
         {% if ef.run and ef.run.url %}<br><a href="{{ ef.run.url }}">Jenkins run</a>{% endif %}
       </p>
       {% if ef.error_details %}<p><strong>{{ ef.error_details }}</strong></p>{% endif %}
-      {% if ef.error_stack_trace %}<pre class="p-3 bg-light border rounded small"><code>{{ ef.error_stack_trace }}</code></pre>{% endif %}
+      {% if ef.error_stack_trace %}<pre class="p-3 border rounded small"><code>{{ ef.error_stack_trace }}</code></pre>{% endif %}
     </details>
     {% endif %}
 
@@ -159,8 +159,8 @@
   {% if rec.similar %}
   <h3 style="font-size:0.92rem">Similar past cases</h3>
   <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-light"><tr><th>Test</th><th>Similarity</th><th>Reason</th><th>Caused by</th><th>Provenance</th></tr></thead>
+  <table class="table table-hover table-sm align-middle">
+    <thead><tr><th>Test</th><th>Similarity</th><th>Reason</th><th>Caused by</th><th>Provenance</th></tr></thead>
     <tbody>
       {% for c in rec.similar %}
       <tr>
@@ -187,8 +187,8 @@
   {% if cand.code %}
   <h3 style="font-size:0.92rem">Code changes (SVN)</h3>
   <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-light"><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th><th>Relevance</th></tr></thead>
+  <table class="table table-hover table-sm align-middle">
+    <thead><tr><th>Revision</th><th>Author</th><th>When</th><th>Message</th><th>Relevance</th></tr></thead>
     <tbody>
       {% for c in cand.code %}
       <tr><td>{% if c.revision %}<a href="{{ fisheye_changelog_url }}?cs={{ c.revision }}"><code>{{ c.revision }}</code></a>{% else %}—{% endif %}</td>
@@ -203,8 +203,8 @@
   {% if cand.data %}
   <h3 style="font-size:0.92rem">Data changes (ut_ref)</h3>
   <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-light"><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th><th>Relevance</th></tr></thead>
+  <table class="table table-hover table-sm align-middle">
+    <thead><tr><th>Entity</th><th>Type</th><th>Author</th><th>When</th><th>Relevance</th></tr></thead>
     <tbody>
       {% for d in cand.data %}
       <tr><td><code>{{ d.entity }}</code>{% if d.pk %} ({{ d.pk }}){% endif %}</td>
