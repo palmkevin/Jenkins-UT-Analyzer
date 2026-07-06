@@ -22,6 +22,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from uta.clients import build_email_sender
 from uta.config import Settings, get_settings
@@ -32,6 +33,12 @@ from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_sc
 from uta.delivery.email import EmailSender
 from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
+from uta.web.auth import (
+    SESSION_MAX_AGE_SECONDS,
+    install_auth_middleware,
+    make_oauth,
+    register_auth_routes,
+)
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
 _WEB_DIR = Path(__file__).parent
@@ -129,6 +136,23 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
     # dependency, in keeping with the self-contained, offline-first design.
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+    # ── Phase-2 auth (Keycloak OIDC, issue #17) — wired only when AUTH_ENABLED ────────────────
+    # Flag off (default): none of this exists and the app is the Phase-1 honesty-system app.
+    auth_settings = get_settings()
+    if auth_settings.auth_enabled:
+        if not auth_settings.session_secret:
+            raise ValueError("AUTH_ENABLED=true requires SESSION_SECRET to be set")
+        register_auth_routes(app, make_oauth(auth_settings), auth_settings)
+        install_auth_middleware(app)
+        # Added last ⇒ outermost, so request.session exists by the time require_auth runs.
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=auth_settings.session_secret,
+            same_site="lax",
+            https_only=True,  # TLS terminates at Traefik; the cookie never travels in clear
+            max_age=SESSION_MAX_AGE_SECONDS,
+        )
+
     def effective(s) -> Settings:
         """Env settings with the DB threshold overrides applied — the live view of the tunables."""
         return effective_settings(get_settings(), load_overrides(s))
@@ -140,6 +164,7 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         context = {
             **context,
             "actor": current_actor(request),
+            "auth_enabled": get_settings().auth_enabled,
             "jira_base_url": cfg.jira_base_url,
             "fisheye_changelog_url": cfg.fisheye_changelog_url,
             "zephyr_test_case_url_prefix": cfg.zephyr_test_case_url_prefix,

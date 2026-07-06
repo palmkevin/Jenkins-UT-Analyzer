@@ -135,6 +135,10 @@ Two tiers — offline (the gate) and `live` (local-only):
   [--depth N]` does the same on demand. Once the store is non-empty, selection is incremental above
   the high-water mark.
 - Secrets never committed. Don't add a `live` dependency to the default test path.
+- **Auth is flag-gated** (`AUTH_ENABLED`, default off): Keycloak OIDC (issue #17) is wired only when
+  the flag is on, so local dev, the demo, and the offline gate run the Phase-1 self-declared-actor
+  app with zero Keycloak access. `current_actor` stays the single identity choke point (and the
+  seam for future role gating); auth-on tests seed a signed session cookie, never a live Keycloak.
 - **`gh` CLI is available in the devcontainer** (the `github-cli` devcontainer feature, authed as
   `palmkevin` via a persisted `gh-config` volume) — use it for GitHub PR / branch-protection work
   (`gh pr create`, `gh api …/branches/main/protection`). The **bare VM host is deployment-only** (it

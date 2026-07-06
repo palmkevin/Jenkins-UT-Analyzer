@@ -67,12 +67,17 @@
              placeholder="jump to test…" aria-label="search tests">
       <button class="btn btn-sm btn-outline-light" type="submit">Search</button>
     </form>
+    {% if auth_enabled %}
+    <span class="navbar-text small me-2">signed in as <strong>{{ actor }}</strong></span>
+    <a class="btn btn-sm btn-outline-light" href="/logout">Logout</a>
+    {% else %}
     <form class="d-flex align-items-center gap-2" method="post" action="/identity">
       <span class="navbar-text small">acting as</span>
       <input class="form-control form-control-sm" style="width: 10rem" type="text" name="actor"
              value="{{ actor }}" aria-label="acting user">
       <button class="btn btn-sm btn-outline-light" type="submit">set</button>
     </form>
+    {% endif %}
   </nav>
   <main class="container-fluid px-4">
     {% block content %}{% endblock %}

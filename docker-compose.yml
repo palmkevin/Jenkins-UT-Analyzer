@@ -31,7 +31,14 @@ services:
     build: .
     env_file: .env
     # Schema is applied by the `migrate` service; this just serves (no init-db, so no migrate race).
-    command: ["uvicorn", "uta.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    # --proxy-headers/--forwarded-allow-ips: trust the ingress proxy's X-Forwarded-* so the OIDC
+    # callback URL is built from the external https:// address (TLS terminates at the proxy).
+    command:
+      [
+        "uvicorn", "uta.web.app:app",
+        "--host", "0.0.0.0", "--port", "8000",
+        "--proxy-headers", "--forwarded-allow-ips=*",
+      ]
     ports:
       - "${WEB_PORT:-8000}:8000"
     depends_on:

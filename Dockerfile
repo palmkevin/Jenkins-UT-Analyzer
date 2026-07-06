@@ -24,4 +24,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
 EXPOSE 8000
 
 # Default role = web. The poller service overrides `command` in docker-compose.yml.
-CMD ["sh", "-c", "uta init-db && uvicorn uta.web.app:app --host 0.0.0.0 --port 8000"]
+# --proxy-headers/--forwarded-allow-ips: trust Traefik's X-Forwarded-* so request.url_for builds
+# the external https:// OIDC callback URL (TLS terminates at the proxy).
+CMD ["sh", "-c", "uta init-db && uvicorn uta.web.app:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

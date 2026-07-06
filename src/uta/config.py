@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     email_recovery_notice: bool = False
 
+    # ── Auth / Keycloak OIDC (Phase-2, off by default; see .env.example) ──────
+    # With the flag off the app is the Phase-1 honesty-system app (self-declared actor cookie) and
+    # needs zero Keycloak access — local dev and the offline CI gate stay untouched.
+    auth_enabled: bool = False
+    oidc_server_metadata_url: str = (
+        "https://auth.labsolution.lu/realms/labsolution/.well-known/openid-configuration"
+    )
+    oidc_client_id: str = "internal-ut-analyzer"
+    oidc_client_secret: str = ""  # from Vault / deployment secret store — never committed
+    oidc_post_logout_redirect: str = ""  # external base URL of this tool, e.g. https://uta.example/
+    session_secret: str = ""  # signs the session cookie; required when auth_enabled
+
     # ── App ──────────────────────────────────────────────────────────────────
     app_default_actor: str = "test-user"
     flaky_transition_threshold: float = 0.3
