@@ -150,6 +150,26 @@ def build_regression_report(
     )
 
 
+def send_ops_alert(
+    sender: EmailSender | None,
+    recipients: tuple[str, ...],
+    *,
+    subject: str,
+    body: str,
+) -> EmailMessage | None:
+    """Send an operational alert (poller stale, build quarantined/skipped — issue #51).
+
+    Rides the same :class:`EmailSender` seam as the regression report; a missing sender or empty
+    recipient list means email is not configured, so nothing is sent. Returns the message (or
+    ``None``) so callers/tests can see what went out.
+    """
+    if sender is None or not recipients:
+        return None
+    message = EmailMessage(subject=f"UT Analyzer ops — {subject}", body=body, recipients=recipients)
+    sender.send(message)
+    return message
+
+
 def maybe_notify(
     session: Session,
     run: Run,

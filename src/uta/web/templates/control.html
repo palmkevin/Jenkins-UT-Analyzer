@@ -23,6 +23,7 @@
   {% if panel.poller.has_run %}
   <div class="row g-3">
     <div class="col-auto"><div class="meta mb-0">Last poll</div>{{ panel.poller.last_poll_at|ts }}</div>
+    <div class="col-auto"><div class="meta mb-0">Last successful poll</div>{{ panel.poller.last_success_at|ts }}</div>
     <div class="col-auto"><div class="meta mb-0">High-water mark</div>
       {% if panel.poller.high_water_mark %}#{{ panel.poller.high_water_mark }}{% else %}—{% endif %}</div>
     <div class="col-auto"><div class="meta mb-0">Last tick ingested</div>
@@ -40,6 +41,41 @@
     {% if panel.poller.high_water_mark %}High-water mark: #{{ panel.poller.high_water_mark }}.{% endif %}</p>
   {% endif %}
 </div>
+
+<!-- ── Build quarantine (issue #51) ──────────────────────────────────────── -->
+{% if panel.quarantine %}
+<h2>Build quarantine</h2>
+<div class="card bg-white">
+  <p class="meta">
+    Builds the poller could not ingest. A failing build is retried each tick; after
+    {{ panel.quarantine_after_attempts }} failed attempts it is <strong>quarantined</strong> —
+    skipped so ingest advances past it. Fix the cause, then re-ingest the build with the form
+    below to clear its record.
+  </p>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead class="table-light">
+      <tr><th>Build</th><th>State</th><th>Attempts</th><th>First failed</th><th>Quarantined</th><th>Last error</th></tr>
+    </thead>
+    <tbody>
+      {% for q in panel.quarantine %}
+      <tr>
+        <td>#{{ q.build_number }}</td>
+        <td>
+          {% if q.quarantined %}<span class="badge text-bg-danger">quarantined</span>
+          {% else %}<span class="badge text-bg-warning">failing ({{ q.attempts }}/{{ panel.quarantine_after_attempts }})</span>{% endif %}
+        </td>
+        <td>{{ q.attempts }}</td>
+        <td>{{ q.first_failed_at|ts }}</td>
+        <td>{{ q.quarantined_at|ts }}</td>
+        <td><code>{{ q.last_error }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
 
 <!-- ── On-demand ingest / re-analysis ────────────────────────────────────── -->
 <h2>Ingest / re-analysis</h2>

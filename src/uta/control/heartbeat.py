@@ -36,7 +36,8 @@ def record_heartbeat(
 
     A successful tick leaves the previous ``last_error`` in place (it is the *last* error, not a
     per-tick flag), so a transient failure stays visible until the operator has seen it; a fresh
-    error overwrites it.
+    error overwrites it. ``last_success_at`` moves only on an error-free tick — it is the freshness
+    reference ``/health`` evaluates ("no successful poll in N intervals", issue #51).
     """
     now = datetime.now(UTC)
     with session_scope(session_factory) as session:
@@ -47,6 +48,8 @@ def record_heartbeat(
         if error is not None:
             hb.last_error = error[:_MAX_ERROR]
             hb.last_error_at = now
+        else:
+            hb.last_success_at = now
 
 
 def read_heartbeat(session: Session) -> PollerHeartbeat | None:

@@ -99,6 +99,17 @@ class Settings(BaseSettings):
     # Scheduled poll cadence (seconds) for `uta poll`.
     poll_interval_seconds: int = 300
 
+    # ── Poller resilience (issue #51) ──────────────────────────────────────────
+    # In-tick attempts per build for *transient* errors (network/5xx/DB blips) — exponential
+    # backoff between attempts, base doubling each time (2s, 4s, 8s, …).
+    poll_retry_attempts: int = 3
+    poll_retry_base_seconds: float = 2.0
+    # Failing ticks (one attempt per tick) before a build is quarantined: recorded, alerted, and
+    # skipped so the high-water mark advances past it.
+    quarantine_after_attempts: int = 3
+    # /health flags the poller stale after this many poll intervals without a *successful* tick.
+    poller_stale_after_intervals: int = 5
+
     @property
     def jenkins_job_url(self) -> str:
         return f"{self.jenkins_base_url.rstrip('/')}/{self.jenkins_job_path.strip('/')}"

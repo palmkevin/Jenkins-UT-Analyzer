@@ -29,7 +29,12 @@ def client():
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["db"] == "ok"
+    assert body["poller"] == "never"  # no heartbeat row — this deployment runs no poller
 
 
 def test_run_view_renders_results(client):

@@ -20,7 +20,14 @@ from uta.analyze.flakiness import recompute_flaky_flags
 from uta.db import session_scope
 from uta.demo.dataset import SyntheticJenkins, SyntheticTrackingFeed, build_numbers
 from uta.ingest.pipeline import ingest_build
-from uta.models import IngestJob, PollerHeartbeat, SettingOverride, TestIdentity, TestLifecycle
+from uta.models import (
+    BuildQuarantine,
+    IngestJob,
+    PollerHeartbeat,
+    SettingOverride,
+    TestIdentity,
+    TestLifecycle,
+)
 from uta.models.enums import IngestJobStatus
 from uta.web import actions
 
@@ -53,9 +60,10 @@ def _seed_control_state(
     """Populate the control-panel's operational tables so the demo's ``/control`` page isn't empty.
 
     All synthetic (same discipline as the rest of the demo): a healthy **poller heartbeat**, one
-    active **threshold override** (so the "overridden" badge + Revert button show), and two past
-    **ingest jobs** — one done, one errored — so all three panels render populated. The store is
-    ephemeral and re-seeded per process, so this is rebuilt identically on every restart.
+    active **threshold override** (so the "overridden" badge + Revert button show), two past
+    **ingest jobs** — one done, one errored — and one **quarantined build** (issue #51) so every
+    panel renders populated. The store is ephemeral and re-seeded per process, so this is rebuilt
+    identically on every restart.
     """
     last = builds[-1]
     with session_scope(session_factory) as session:
@@ -63,9 +71,24 @@ def _seed_control_state(
             PollerHeartbeat(
                 id=1,
                 last_poll_at=anchor - timedelta(minutes=4),
+                last_success_at=anchor - timedelta(minutes=4),
                 last_processed_count=1,
                 last_processed=str(last),
                 last_error=None,
+            )
+        )
+        # A build the poller gave up on: malformed JUnit payload, quarantined after 3 failing
+        # ticks — shows the quarantine table with the "quarantined" badge and its recovery hint.
+        session.add(
+            BuildQuarantine(
+                build_number=builds[0] - 2,
+                attempts=3,
+                last_error=(
+                    "ValueError: unexpected enclosingBlockNames for suite "
+                    "'devUTs: Execute - permanent': ['Parallel', '']"
+                ),
+                first_failed_at=anchor - timedelta(days=1, minutes=14),
+                quarantined_at=anchor - timedelta(days=1, minutes=4),
             )
         )
         # Overrides in effect — demonstrate the badge/Revert without perturbing the seeded

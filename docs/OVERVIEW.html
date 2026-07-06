@@ -149,8 +149,12 @@
       </div>
       <div class="part" style="border-color:var(--mail)">
         <h4>SMTP <span class="pill">outbound</span></h4>
-        <p>Email is sent <b>only when a run worsens</b> (≥1 new failing test vs the baseline). Silence means
-        “no worse than before.” Disabled when no recipients are configured.</p>
+        <p>Two distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a run
+        worsens</b> (≥1 new failing test vs the baseline) — silence means “no worse than before.” A
+        separate <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) fires when the poller
+        quarantines/skips a build, or (once, latched) when <code>/health</code> finds the poller stale —
+        operational noise about the pipeline itself, not about test results. Both are disabled when no
+        recipients are configured.</p>
       </div>
     </div>
 
@@ -162,8 +166,10 @@
         Similarity search uses stock <b><code>pg_trgm</code></b> / full-text — <b>no vector database</b>.
         Reached only via <code>DATABASE_URL</code> (“container now, external later”). Also holds a small
         <b>operational</b> state — not part of the failure model: <code>setting_overrides</code> (runtime
-        threshold tuning), <code>ingest_jobs</code> (on-demand ingest requests) and <code>poller_heartbeats</code>
-        (poller health).</p>
+        threshold tuning), <code>ingest_jobs</code> (on-demand ingest requests, recovered to <code>ERROR</code>
+        if orphaned by a restart), <code>poller_heartbeats</code> (poller health, now including
+        <code>last_success_at</code> and a latched <code>stale_alerted_at</code>) and
+        <code>build_quarantines</code> (per-build failed-attempt counters and quarantine state).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>poller</code> container <span class="pill">ingest</span></h4>
@@ -172,7 +178,11 @@
         and fills LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
         (so a tuning change applies with no restart), ends with a <b>retention/pruning pass</b> (old passing
         results, finished ingest jobs), and stamps a heartbeat row with the tick time, build count and last
-        error.</p>
+        error. <b>Resilience:</b> transient faults (network, HTTP 5xx/429, DB connection
+        blips) retry in-tick with exponential backoff; a build that keeps failing accrues one attempt per
+        tick and, past the attempt limit, is <b>quarantined</b> — recorded, ops-alerted by email, and
+        skipped so the high-water mark advances past it. A build rotated out of Jenkins retention (404) is
+        quarantined immediately, the explicit form of what used to be a silent skip.</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
@@ -185,8 +195,15 @@
         leaderboard</b> (each row with a recent-runs sparkline), and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
         ingest/retention knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or
-        range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller health
-        (last poll, high-water mark, last error).</p>
+        range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM; also the recovery
+        path for a quarantined build — a successful re-ingest clears its record), and view poller health
+        (last poll, last <b>successful</b> poll, high-water mark, last error) plus a <b>build quarantine</b>
+        table (failing/quarantined builds with attempts and last error). At startup it also flips any
+        ingest-job row left <code>QUEUED</code>/<code>RUNNING</code> by a prior restart to
+        <code>ERROR</code>, and serves a real <b><code>/health</code></b> — DB ping + poller-heartbeat
+        freshness, 503 if the DB is down or no successful poll landed within the configured staleness
+        window (a deployment with no poller, like the public demo, reports poller “never” and stays
+        healthy).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>migrate</code> + <code>db</code> <span class="pill">infra</span></h4>
@@ -217,7 +234,10 @@
   and Oracle, writes to Postgres, prunes old passing results / finished ingest jobs from Postgres at the end
   of every tick, and fans out to email + LLM; the <code>web</code> app reads Postgres and the human writes
   back through it. The <code>web</code> app's <b>control panel</b> also has a direct, on-demand path to
-  Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM).</p>
+  Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM). Two producers
+  reach email: the <code>poller</code> for both the regression report and <b>ops alerts</b> (a quarantined/
+  skipped build), and <code>web</code>'s <code>/health</code> check for a <b>latched</b> ops alert when the
+  poller goes stale.</p>
 
   <div class="legend">
     <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
@@ -287,9 +307,10 @@
       <text class="sub" x="710" y="104">root-cause hypothesis</text>
 
       <!-- Email -->
-      <rect class="box" x="690" y="140" width="190" height="64" fill="#122a1c" stroke="#4bbf73"/>
-      <text class="lbl" x="710" y="168">SMTP → recipients</text>
-      <text class="sub" x="710" y="188">regression-only alert</text>
+      <rect class="box" x="690" y="140" width="190" height="80" fill="#122a1c" stroke="#4bbf73"/>
+      <text class="lbl" x="710" y="166">SMTP → recipients</text>
+      <text class="sub" x="710" y="185">regression alert, or an</text>
+      <text class="sub" x="710" y="200">ops alert (quarantine / stale)</text>
 
       <!-- Web -->
       <rect class="box" x="330" y="380" width="200" height="70" fill="#12233d" stroke="#5aa0ff"/>
@@ -317,9 +338,14 @@
       <!-- LLM -> poller (hypothesis back) -->
       <path class="edgeA" d="M688,96 C620,120 600,120 532,120" marker-end="url(#arrA)"/>
       <text class="etxt" x="560" y="138" style="fill:#7ee0c0">hypothesis</text>
-      <!-- poller -> email -->
+      <!-- poller -> email (regression report, or quarantine/skip ops alert) -->
       <path class="edge" d="M530,150 C600,160 640,168 688,170" marker-end="url(#arr)"/>
-      <text class="etxt" x="560" y="163">on regression</text>
+      <text class="etxt" x="558" y="163">regression /</text>
+      <text class="etxt" x="558" y="176">quarantine</text>
+      <!-- web /health -> email (latched ops alert on staleness) -->
+      <path class="edge" d="M530,392 C630,392 660,300 700,222" marker-end="url(#arr)"/>
+      <text class="etxt" x="560" y="300">/health stale</text>
+      <text class="etxt" x="560" y="313">(latched)</text>
       <!-- postgres -> web -->
       <path class="edge" d="M450,346 L440,378" marker-end="url(#arr)"/>
       <text class="etxt" x="456" y="368">read</text>
@@ -328,8 +354,8 @@
       <path class="edgeA" d="M688,432 L532,432" marker-end="url(#arrA)"/>
       <text class="etxt" x="560" y="452" style="fill:#7ee0c0">writes back (ack/reason)</text>
       <!-- email -> human (dashed feel) -->
-      <path class="edge" d="M785,204 L785,382" marker-end="url(#arr)"/>
-      <text class="etxt" x="792" y="300">alert</text>
+      <path class="edge" d="M785,220 L785,382" marker-end="url(#arr)"/>
+      <text class="etxt" x="792" y="330">alert</text>
       <!-- web control panel -> Jenkins / Oracle (on-demand ingest, bypasses poller) -->
       <path class="edgeW" d="M330,392 C270,392 240,300 240,180 C240,140 220,110 202,100" marker-end="url(#arrW)"/>
       <path class="edgeW" d="M330,408 C270,408 235,340 235,260 C235,220 215,205 202,198" marker-end="url(#arrW)"/>
@@ -354,7 +380,8 @@
   so a re-ingest never re-mails a historical regression.</p>
   <ol class="flow">
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
-      <code>lastCompletedBuild</code>. The cursor is the DB itself — restart-safe, no separate state.</small></li>
+      <code>lastCompletedBuild</code>, minus any <b>quarantined</b> builds. The cursor is the DB itself —
+      restart-safe, no separate state.</small></li>
     <li><b>Fetch.</b> <small>Per build: build meta, merged test report, SVN change sets, per-shard wfapi timing,
       and (if enabled) the unittest console-log stages’ logs.</small></li>
     <li><b>Parse.</b> <small>JUnit report → per-<code>(test, track)</code> results; console-log stages parsed
@@ -376,6 +403,12 @@
   <div class="note"><b>Clock discipline is load-bearing.</b> Jenkins timestamps are epoch-millis UTC; Oracle
     <code>ut_ref</code> timestamps are naive local wall-clock (server is UTC+2), normalized via the named
     zone <code>Europe/Luxembourg</code>. Data-change attribution rests entirely on these timestamps.</div>
+  <p class="lead">The loop is hardened against faults: a transient error (network, HTTP 5xx/429, a DB
+  connection blip) retries in-tick with exponential backoff; a build that keeps failing accrues one
+  attempt per tick on a <code>build_quarantines</code> row and, past the attempt limit, is <b>quarantined</b>
+  — recorded, ops-alerted by email, and excluded from selection so the high-water mark advances past it. A
+  build rotated out of Jenkins retention (404 on the detail endpoint) is quarantined immediately. A
+  quarantined build's record is cleared by a successful on-demand re-ingest from the control panel.</p>
 </section>
 
 <section id="analysis">
@@ -473,6 +506,12 @@
     failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
     (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. A
     recovery notice (“back to green”) is a separate, optional toggle. Everything else stays in the dashboard.</p>
+    <p>A second, distinct <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) rides the same
+    SMTP seam but is about the pipeline itself, not test results: the poller sends one when a build is
+    <b>quarantined or skipped</b> (retention 404), and the <code>web</code> app's <code>/health</code> check
+    sends one — <b>latched</b> so repeat probes don't re-mail, and cleared on recovery — when no successful
+    poll has landed within the configured staleness window. These are operational noise, unconditional on
+    test outcomes, so they don't affect the regression-only policy above.</p>
   </div>
 </section>
 
@@ -550,7 +589,10 @@
     <tr><td><code>db</code></td><td>postgres:16</td><td>The app’s store (dev only; prod uses an external server via <code>DATABASE_URL</code>).</td></tr>
     <tr><td><code>migrate</code></td><td><code>uta migrate</code></td><td>One-shot: brings the schema to head before the app services start (avoids a migration race).</td></tr>
     <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for email &amp; LLM.</td></tr>
-    <tr><td><code>web</code></td><td><code>uvicorn …</code></td><td>The FastAPI/HTMX dashboard on port 8000.</td></tr>
+    <tr><td><code>web</code></td><td><code>uvicorn …</code></td><td>The FastAPI/HTMX dashboard on port 8000.
+      <code>GET /health</code> pings the DB and the poller heartbeat — 503 if the DB is down or no
+      successful poll landed within the staleness window; a poller-less deployment (e.g. the public demo)
+      reports poller “never” and stays 200.</td></tr>
   </table>
   <p class="muted" style="font-size:13px">Config is 12-factor (env → typed settings). Secrets never committed;
   <code>.env.example</code> documents every key. Stack: Python 3.12, FastAPI, SQLAlchemy 2.x + Alembic,
