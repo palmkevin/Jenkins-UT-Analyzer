@@ -91,9 +91,13 @@ def _seed_control_state(
                 quarantined_at=anchor - timedelta(days=1, minutes=4),
             )
         )
-        # One override in effect — demonstrates the badge/Revert without perturbing the seeded
+        # Overrides in effect — demonstrate the badge/Revert without perturbing the seeded
         # triage/flaky numbers (kb_top_k only widens how many similar KB cases a test page lists).
         session.add(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
+        # Drop the row cap below a demo run's 26 result rows so the run page's server-side
+        # pagination (issue #52) is visible in the live demo. Triage buckets are far smaller, so
+        # they render unchanged.
+        session.add(SettingOverride(key="ui_row_limit", value="20", updated_by=_DEMO_ACTOR))
         session.add(
             IngestJob(
                 build_start=builds[0],

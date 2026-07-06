@@ -186,17 +186,22 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         )
 
     @app.get("/runs", response_class=HTMLResponse)
-    def runs_view(request: Request):
+    def runs_view(request: Request, page: int = 1):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            runs = views.job_runs(s, poll_interval_seconds=cfg.poll_interval_seconds)
+            runs = views.job_runs(
+                s,
+                poll_interval_seconds=cfg.poll_interval_seconds,
+                limit=cfg.ui_row_limit,
+                page=page,
+            )
         return render(request, "runs.html", {"runs": runs}, cfg=cfg)
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
-    def run_view(request: Request, build: int):
+    def run_view(request: Request, build: int, page: int = 1):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            run = views.run_summary(s, build, limit=cfg.ui_row_limit, expand=_expanded(request))
+            run = views.run_summary(s, build, limit=cfg.ui_row_limit, page=page)
         return render(request, "run.html", {"run": run, "build": build}, cfg=cfg)
 
     @app.get("/flaky", response_class=HTMLResponse)

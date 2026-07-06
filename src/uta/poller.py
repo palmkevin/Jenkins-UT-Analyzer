@@ -41,6 +41,7 @@ from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
+from uta.retention import prune
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +275,11 @@ def poll_tick(
     ``hypothesis_provider`` are reused. Any failure is caught, recorded on the heartbeat, and
     swallowed so a single bad tick never kills the long-lived scheduler; a per-build failure
     (:class:`BuildIngestError`) still reports the builds the tick did process.
+
+    Each successful tick ends with a retention pass (issue #52): old passing results and finished
+    ingest jobs are pruned per the (tunable) retention windows. The pass is idempotent, so ticks
+    that ingest nothing still keep the store trimmed (a tick cut short by a build failure skips it
+    until the next clean tick).
     """
     with session_scope(session_factory) as session:
         cfg = effective_settings(base_settings, load_overrides(session))
@@ -302,6 +308,12 @@ def poll_tick(
             quarantine_attempts=cfg.quarantine_after_attempts,
             sleep=sleep,
         )
+        with session_scope(session_factory) as session:
+            prune(
+                session,
+                result_retention_days=cfg.result_retention_days,
+                ingest_job_retention_days=cfg.ingest_job_retention_days,
+            )
     except BuildIngestError as exc:
         logger.exception("poll tick ended early on build #%d", exc.build)
         record_heartbeat(session_factory, processed=exc.processed, error=repr(exc.cause))
