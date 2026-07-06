@@ -207,6 +207,16 @@ def test_test_record_missing_identity_is_none(session_factory):
         assert views.test_record(s, 9999) is None
 
 
+def test_test_record_exposes_sparkline_history(session_factory):
+    """Anchored to *now* (not a fixed epoch) so the run stays inside the default flaky window."""
+    base = datetime.now(UTC) - timedelta(days=2)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+
+
 # ── run summary ──────────────────────────────────────────────────────────────
 
 
@@ -278,6 +288,22 @@ def test_job_runs_empty_store_and_no_heartbeat(session_factory):
         assert result["runs"] == []
         assert result["poller"]["last_poll_at"] is None
         assert result["poller"]["next_poll_at"] is None
+        assert result["timeline"] is None
+
+
+def test_job_runs_timeline_is_oldest_first(session_factory):
+    """The timeline chart reads left-to-right in time, unlike the (newest-first) table rows."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"a": "FAILED", "b": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"a": "PASSED", "b": "FAILED"})
+        apply_run(s, r2, baseline=r1)
+
+        result = views.job_runs(s)
+        tl = result["timeline"]
+        assert tl.first_build == 1
+        assert tl.last_build == 2
+        assert tl.runs == 2
 
 
 # ── actions: provenance ─────────────────────────────────────────────────────────

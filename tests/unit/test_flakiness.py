@@ -13,6 +13,7 @@ from sqlalchemy import select
 from tests.builders import get_identity, make_run
 from uta.analyze.flakiness import (
     compute_stats,
+    history,
     leaderboard,
     leaderboard_candidates,
     recompute_flaky_flags,
@@ -110,6 +111,29 @@ def test_history_counts(session_factory):
     assert st.failed_total == 2
     assert st.failed_in_window == 2
     assert st.last_failed_at is not None
+
+
+def test_history_is_oldest_first_within_window(session_factory):
+    with session_factory() as s:
+        for b, st in enumerate(["PASSED", "FAILED", "PASSED"], start=1):
+            make_run(s, b, {T: st})
+        s.commit()
+        ident = get_identity(s, T)
+        points = history(s, ident.id, window_days=30, now=NOW)
+    assert [p["failed"] for p in points] == [False, True, False]
+    assert [p["build"] for p in points] == [1, 2, 3]
+
+
+def test_history_excludes_gaps_and_incomplete_runs(session_factory):
+    with session_factory() as s:
+        make_run(s, 1, {T: "FAILED"})
+        make_run(s, 2, {"other.test": "PASSED"})  # T absent — a gap, not a point
+        make_run(s, 3, {T: "PASSED"}, complete=False)  # incomplete — excluded
+        make_run(s, 4, {T: "PASSED"})
+        s.commit()
+        ident = get_identity(s, T)
+        points = history(s, ident.id, window_days=30, now=NOW)
+    assert [p["build"] for p in points] == [1, 4]
 
 
 def test_recompute_sets_flag_and_leaderboard(session_factory):
