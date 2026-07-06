@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Search — UT Analyzer{% endblock %}
+
+{% block content %}
+<h1>Test search</h1>
+<p class="meta">Jump to a test record by name — matches suite/class/method substrings.</p>
+
+<form class="row g-2 mb-3" method="get" action="/search">
+  <div class="col-md-8 col-lg-6">
+    <input class="form-control" type="text" name="q" value="{{ query }}"
+           placeholder="e.g. test_invoice_rounding" autofocus>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-primary" type="submit">Search</button>
+  </div>
+</form>
+
+{% if query %}
+  {% if not results %}
+    <p class="empty">No tests match "{{ query }}".</p>
+  {% else %}
+  <div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light"><tr><th>Test</th><th>Suite</th><th>Owner</th></tr></thead>
+    <tbody>
+      {% for r in results %}
+      <tr>
+        <td><a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a></td>
+        <td>{{ r.suite or "—" }}</td>
+        <td>{{ r.owner or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

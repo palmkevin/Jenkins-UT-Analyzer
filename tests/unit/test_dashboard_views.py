@@ -15,6 +15,7 @@ from tests.builders import _EPOCH, get_identity, make_run
 from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
+from uta.kb.store import record_signatures_for_run
 from uta.models import (
     Classification,
     CodeChangeCandidate,
@@ -507,3 +508,262 @@ def test_set_attribution_sets_and_clears_jira_ticket(session_factory):
 def test_acknowledge_unknown_identity_returns_false(session_factory):
     with session_scope(session_factory) as s:
         assert actions.acknowledge(s, 4242, "alice") is False
+
+
+# ── triage filters/sort (issue #63) ─────────────────────────────────────────
+
+
+def test_triage_filters_by_owner_and_suite(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").suite = "ut_pricing"
+        get_identity(s, "beta").owner_initials = "CD"
+        get_identity(s, "beta").suite = "ut_billing"
+
+        by_owner = views.triage_queue(s, filters={"owner": "ab"})
+        assert {r["test_id"] for r in by_owner["new"]} == {"alpha"}
+        assert by_owner["counts"]["new"] == 1
+
+        by_suite = views.triage_queue(s, filters={"suite": "billing"})
+        assert {r["test_id"] for r in by_suite["new"]} == {"beta"}
+
+
+def test_triage_filters_by_triage_status(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        actions.acknowledge(s, get_identity(s, "alpha").id, "dana")
+        actions.acknowledge(s, get_identity(s, "beta").id, "dana")
+        _lc(s, "alpha").current_episode.triage_status = "INVESTIGATING"
+
+        by_status = views.triage_queue(s, filters={"triage_status": "INVESTIGATING"})
+        assert {r["test_id"] for r in by_status["still_failing"]} == {"alpha"}
+
+
+def test_triage_filters_by_flaky(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        _lc(s, "alpha").flaky = True
+
+        by_flaky = views.triage_queue(s, filters={"flaky": "1"})
+        assert {r["test_id"] for r in by_flaky["new"]} == {"alpha"}
+
+
+def test_triage_sort_by_name_and_owner(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"zeta": "FAILED", "alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "zeta").owner_initials = "AA"
+        get_identity(s, "alpha").owner_initials = "ZZ"
+
+        by_name = views.triage_queue(s, sort="name")
+        assert [r["test_id"] for r in by_name["new"]] == ["alpha", "zeta"]
+
+        by_owner = views.triage_queue(s, sort="owner")
+        assert [r["test_id"] for r in by_owner["new"]] == ["zeta", "alpha"]
+
+
+def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").suite = "ut_pricing"
+
+        options = views.triage_filter_options(s)
+        assert "AB" in options["owners"]
+        assert "ut_pricing" in options["suites"]
+
+
+def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+            },
+            fail_tracks={"alpha": ("permanent",), "beta": ("permanent",)},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        queue = views.triage_queue(s)
+        rows = {r["test_id"]: r for r in queue["new"]}
+        assert rows["alpha"]["track"] == "permanent"
+        assert rows["alpha"]["signature_id"] is not None
+        # Distinct tests with the same error text get distinct signatures (hash includes identity).
+        assert rows["alpha"]["signature_id"] != rows["beta"]["signature_id"]
+
+
+# ── run-results failures-only filter (issue #63) ────────────────────────────
+
+
+def test_run_summary_failures_only_filters_results_and_total(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_run(s, r1, baseline=None)
+
+        all_rows = views.run_summary(s, 1)
+        assert all_rows["results_total"] == 4  # 2 tests x 2 tracks
+        assert all_rows["failures_only"] is False
+
+        failing_only = views.run_summary(s, 1, failures_only=True)
+        assert failing_only["results_total"] == 2  # alpha x 2 tracks
+        assert failing_only["failures_only"] is True
+        assert all(r["status"] == "FAILED" for r in failing_only["results"])
+
+
+# ── global test search (issue #63) ──────────────────────────────────────────
+
+
+def test_test_search_matches_substring_case_insensitively(session_factory):
+    with session_scope(session_factory) as s:
+        get_identity(s, "ut_pricing.pr_engine.TestClass.test_margin_calc")
+        get_identity(s, "ut_billing.bi_tax.TestClass.test_vat_rate")
+
+        results = views.test_search(s, "MARGIN")
+        assert [r["test_id"] for r in results] == [
+            "ut_pricing.pr_engine.TestClass.test_margin_calc"
+        ]
+
+
+def test_test_search_empty_query_returns_nothing(session_factory):
+    with session_scope(session_factory) as s:
+        assert views.test_search(s, "") == []
+        assert views.test_search(s, "   ") == []
+
+
+# ── bulk actions (issue #63) ─────────────────────────────────────────────────
+
+
+def test_bulk_acknowledge_stamps_all_selected(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ids = [get_identity(s, n).id for n in ("alpha", "beta")]
+
+        count = actions.bulk_acknowledge(s, ids, "dana")
+        assert count == 2
+        assert _lc(s, "alpha").acknowledged is True
+        assert _lc(s, "alpha").acknowledged_by == "dana"
+        assert _lc(s, "beta").acknowledged is True
+        assert _lc(s, "gamma").acknowledged is False
+
+
+def test_bulk_acknowledge_skips_unknown_ids(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ident = get_identity(s, "alpha")
+
+        count = actions.bulk_acknowledge(s, [ident.id, 999999], "dana")
+        assert count == 1
+
+
+def test_acknowledge_by_signature_only_acks_unacknowledged_matching_tests(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+        assert sig_id is not None
+
+        # gamma is a different signature entirely, so only alpha+beta should be acknowledged.
+        count = actions.acknowledge_by_signature(s, sig_id, "erin")
+        assert count == 2
+        assert _lc(s, "alpha").acknowledged is True
+        assert _lc(s, "alpha").acknowledged_by == "erin"
+        assert _lc(s, "beta").acknowledged is True
+        assert _lc(s, "gamma").acknowledged is False
+
+
+def test_acknowledge_by_signature_matches_across_tests_despite_distinct_frames(session_factory):
+    """Real stack traces embed each test's own function name in the frame line, so two tests
+    hitting the same outage still get distinct ``normalized_text`` — the bulk action must match on
+    exception type + message with the frame lines stripped (see ``actions._error_key``), not literal
+    signature-row identity."""
+
+    def _stack(func: str) -> str:
+        return (
+            "Traceback (most recent call last):\n"
+            f'  File "/opt/ls/lx/release/permanent/tests/dev/ut_notify/nt_dispatch.py", '
+            f"line 63, in {func}\n"
+            "    result = run_case()\n"
+            "ConnectionError: SMTP relay unreachable: connection refused"
+        )
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"test_email_dispatch": "FAILED", "test_sms_dispatch": "FAILED"},
+            errors={
+                "test_email_dispatch": (None, _stack("test_email_dispatch")),
+                "test_sms_dispatch": (None, _stack("test_sms_dispatch")),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        email_sig_id = actions._episode_signature_id(
+            s, _lc(s, "test_email_dispatch").current_episode
+        )
+        sms_sig_id = actions._episode_signature_id(s, _lc(s, "test_sms_dispatch").current_episode)
+        assert email_sig_id != sms_sig_id  # distinct signature rows (identity is part of the hash)
+
+        count = actions.acknowledge_by_signature(s, email_sig_id, "erin")
+        assert count == 2
+        assert _lc(s, "test_email_dispatch").acknowledged is True
+        assert _lc(s, "test_sms_dispatch").acknowledged is True
+
+
+def test_acknowledge_by_signature_skips_already_acknowledged(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        actions.acknowledge(s, get_identity(s, "beta").id, "dana")
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        count = actions.acknowledge_by_signature(s, sig_id, "erin")
+        assert count == 1  # only alpha; beta was already acknowledged
+        assert _lc(s, "beta").acknowledged_by == "dana"  # untouched
+
+
+def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_ids = [_lc(s, "alpha").current_episode_id, _lc(s, "beta").current_episode_id]
+
+        count = actions.bulk_set_attribution(
+            s, ep_ids, "frank", triage_status="INVESTIGATING", reason_text="shared root cause"
+        )
+        assert count == 2
+        alpha_ep = s.get(FailureEpisode, ep_ids[0])
+        beta_ep = s.get(FailureEpisode, ep_ids[1])
+        assert alpha_ep.triage_status == "INVESTIGATING"
+        assert beta_ep.triage_status == "INVESTIGATING"
+        assert alpha_ep.attribution.reason_text == "shared root cause"
+        assert beta_ep.attribution.reason_text == "shared root cause"

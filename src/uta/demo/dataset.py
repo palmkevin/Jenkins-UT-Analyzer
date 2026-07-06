@@ -2,8 +2,10 @@
 
 The goal is a *small but complete* run history that lights up every dashboard surface without any
 external system: new & acknowledged failures, a recently-fixed test, a flaky oscillator, a removed
-test, a newly-added test, plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN)
-and a recurring KB signature with fuzzy-similar neighbours. The per-test **relevance ranking**
+test, a newly-added test, plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
+a recurring KB signature with fuzzy-similar neighbours, and a shared-outage pair (two new,
+unacknowledged tests with identical error text) exercising the triage queue's filters and its
+"acknowledge all with this signature" bulk action (issue #63). The per-test **relevance ranking**
 (issue #50) is exercised in both directions: ``test_invoice_rounding``'s top-ranked candidate is
 the commit touching its own module (path overlap), while ``test_timezone_convert``'s is the
 ``LORDER`` data change its error text names (entity mention) — two failures of the same run
@@ -148,6 +150,28 @@ _SPECS: tuple[TestSpec, ...] = (
         message="unexpected segment count: expected 5 got 4",
         line=64,
         owner="mel",
+    ),
+    # One incident, two tests: both new & unacknowledged, both naming the *same* outage in their
+    # error text -> distinct signatures (identity is part of the hash) but identical normalized
+    # text, exactly what the triage queue's "Acknowledge all with this signature" bulk action
+    # (issue #63) targets. A fresh suite/owner also widens the filter bar's dropdown options.
+    TestSpec(
+        "ut_notify.nt_dispatch.TestClass",
+        "test_email_dispatch",
+        "PPPPPPPPPPPPFF",
+        exc_type="ConnectionError",
+        message="SMTP relay unreachable: connection refused",
+        line=63,
+        owner="rvo",
+    ),
+    TestSpec(
+        "ut_notify.nt_dispatch.TestClass",
+        "test_sms_dispatch",
+        "PPPPPPPPPPPPFF",
+        exc_type="ConnectionError",
+        message="SMTP relay unreachable: connection refused",
+        line=91,
+        owner="rvo",
     ),
 )
 

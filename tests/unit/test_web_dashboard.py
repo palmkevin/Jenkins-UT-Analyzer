@@ -248,3 +248,155 @@ def test_runs_list_paginates_server_side(session_factory, monkeypatch):
     assert 'href="/runs/1"' not in page1
     page2 = client.get("/runs?page=2").text
     assert 'href="/runs/1"' in page2
+
+
+# ── triage filters/sort + bulk actions (issue #63) ─────────────────────────────
+
+
+@pytest.fixture
+def multi_owner_client(session_factory):
+    """Two new failing tests with distinct owners/suites, for filter-bar assertions."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").suite = "ut_pricing"
+        get_identity(s, "beta").owner_initials = "CD"
+        get_identity(s, "beta").suite = "ut_billing"
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_owner_filter_reduces_buckets(multi_owner_client):
+    page = multi_owner_client.get("/?owner=AB").text
+    assert "alpha" in page
+    assert "beta" not in page
+    assert "not yet acknowledged (1)" in page
+
+
+def test_triage_filter_bar_options_render(multi_owner_client):
+    page = multi_owner_client.get("/").text
+    assert 'id="filter-owner"' in page
+    assert "ut_pricing" in page  # datalist option
+    assert "ut_billing" in page
+
+
+def test_triage_filter_survives_acknowledge_round_trip(multi_owner_client, session_factory):
+    ident_id = _identity_id(session_factory, "alpha")
+    resp = multi_owner_client.post(
+        f"/tests/{ident_id}/acknowledge", headers={"referer": "/?owner=AB"}
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/?owner=AB"
+
+
+def test_bulk_acknowledge_multiple_new_tests(multi_owner_client, session_factory):
+    alpha_id = _identity_id(session_factory, "alpha")
+    beta_id = _identity_id(session_factory, "beta")
+    multi_owner_client.cookies.set("uta_actor", "dana")
+    resp = multi_owner_client.post(
+        "/tests/bulk/acknowledge",
+        data={"identity_ids": [str(alpha_id), str(beta_id)]},
+        headers={"referer": "/"},
+    )
+    assert resp.status_code == 303
+    with session_scope(session_factory) as s:
+        for ident_id in (alpha_id, beta_id):
+            lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+            assert lc.acknowledged is True
+            assert lc.acknowledged_by == "dana"
+
+
+def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
+    from uta.kb.store import record_signatures_for_run
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        from uta.web import actions
+
+        sig_id = actions._episode_signature_id(
+            s, get_identity(s, "alpha").lifecycle.current_episode
+        )
+
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    client.cookies.set("uta_actor", "erin")
+    resp = client.post(f"/signatures/{sig_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    with session_scope(session_factory) as s:
+        for name in ("alpha", "beta"):
+            lc = get_identity(s, name).lifecycle
+            assert lc.acknowledged is True
+            assert lc.acknowledged_by == "erin"
+
+
+def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_ids = [
+            get_identity(s, "alpha").lifecycle.current_episode_id,
+            get_identity(s, "beta").lifecycle.current_episode_id,
+        ]
+
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    resp = client.post(
+        "/episodes/bulk/attribute",
+        data={"episode_ids": [str(i) for i in ep_ids], "triage_status": "INVESTIGATING"},
+        headers={"referer": "/"},
+    )
+    assert resp.status_code == 303
+    with session_scope(session_factory) as s:
+        for name in ("alpha", "beta"):
+            ep = get_identity(s, name).lifecycle.current_episode
+            assert ep.triage_status == "INVESTIGATING"
+
+
+def test_search_redirects_on_unique_match(multi_owner_client, session_factory):
+    ident_id = _identity_id(session_factory, "alpha")
+    resp = multi_owner_client.get("/search?q=alpha")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/tests/{ident_id}"
+
+
+def test_search_lists_multiple_matches(session_factory):
+    with session_scope(session_factory) as s:
+        get_identity(s, "ut_a.TestClass.test_alpha_one")
+        get_identity(s, "ut_a.TestClass.test_alpha_two")
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    resp = client.get("/search?q=alpha")
+    assert resp.status_code == 200
+    assert "test_alpha_one" in resp.text
+    assert "test_alpha_two" in resp.text
+
+
+def test_search_navbar_box_present(client):
+    assert 'action="/search"' in client.get("/").text
+
+
+# ── run-results failures-only filter (issue #63) ────────────────────────────
+
+
+def test_run_failures_only_filters_results_and_pagination(session_factory, monkeypatch):
+    monkeypatch.setenv("UI_ROW_LIMIT", "100")
+    with session_scope(session_factory) as s:
+        statuses = {f"f{i:04d}": "FAILED" for i in range(120)} | {
+            f"p{i:04d}": "PASSED" for i in range(30)
+        }
+        r1 = make_run(s, 1, statuses)
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+    all_page = client.get("/runs/1").text
+    assert "Results (300)" in all_page  # 150 tests x 2 tracks
+
+    failing_page = client.get("/runs/1?failures_only=1").text
+    assert "Results (240)" in failing_page  # 120 failing tests x 2 tracks
+    assert failing_page.count('<td class="FAILED">') == 100
+    assert "checked" in failing_page
+    assert 'href="?page=2&amp;failures_only=1#results"' in failing_page
