@@ -392,8 +392,11 @@
       <h3>Classification</h3>
       <p>Each new regression gets a deterministic predicted cause —
       <code>CODE_CHANGE</code> / <code>DATA_CHANGE</code> / <code>INFRASTRUCTURE</code> / <code>UNKNOWN</code> —
-      from the window-filtered code &amp; data candidates. The evidence stands on its own; the human attributes
-      the final cause.</p>
+      from the window-filtered code &amp; data candidates. When the cause is <code>CODE_CHANGE</code> and every
+      candidate SVN commit shares one author (or <code>DATA_CHANGE</code> and every candidate shares one
+      <code>V_TRACKING</code> <code>USRCODE</code>), that person becomes the <b>suggested contact</b> — otherwise
+      it is left blank rather than guessed. The evidence stands on its own; the human attributes the final
+      cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
@@ -476,7 +479,9 @@
       passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
     <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
       <code>V_TRACKING</code>), infra indicators, ownership — each linked to the failure that generated it.</td></tr>
-    <tr><th>Classifications</th><td>Predicted cause, suggested contact, and the LLM hypothesis.</td></tr>
+    <tr><th>Classifications</th><td>Predicted cause, the LLM hypothesis, and a deterministic <b>suggested
+      contact</b> — the single author/<code>USRCODE</code> behind all candidates for the winning cause, left
+      blank whenever authorship is mixed or unknown (never guessed).</td></tr>
     <tr><th>Human input</th><td>Causing person, reason text, triage status, Jira ticket, acknowledger; every
       conclusion carries a <b>provenance tier</b> (<code>AI_UNCONFIRMED</code> / <code>AI_CONFIRMED</code> /
       <code>HUMAN_CORRECTED</code> / <code>HUMAN_ENTERED</code>), the original AI value when corrected, and who/when.</td></tr>
