@@ -15,6 +15,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from uta.analyze.relevance import rank_candidates
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
@@ -70,13 +71,23 @@ def hypothesize_episode(
         exclude_signature_id=sig.id,
     )
     identity = session.get(TestIdentity, identity_id)
+    # Rank the run's change candidates against *this* failure so the prompt can lead with the
+    # likely culprit (author/path/entity + match reason) instead of bare counts (issue #50).
+    ranked = rank_candidates(
+        run.code_changes,
+        run.data_changes,
+        file_path=result.file_path,
+        error_details=result.error_details,
+        error_stack_trace=result.error_stack_trace,
+        class_name=identity.class_name if identity else None,
+    )
     system, user = build_prompt(
         test_id=identity.canonical_name if identity else str(identity_id),
         predicted_cause=classification.predicted_cause,
         error_details=result.error_details,
         error_stack_trace=result.error_stack_trace,
-        code_candidates=len(run.code_changes),
-        data_candidates=len(run.data_changes),
+        code_candidates=ranked.code,
+        data_candidates=ranked.data,
         similar_cases=cases,
     )
     hypothesis = provider.hypothesize(system=system, user=user)

@@ -81,6 +81,34 @@ def test_declining_provider_leaves_null(session_factory):
         assert classification.llm_hypothesis is None
 
 
+def test_ranked_candidate_details_reach_the_prompt(session_factory):
+    """The run's candidates are ranked against the failure and their details (author, path,
+    match reason) appear in the prompt instead of bare counts (issue #50)."""
+    from datetime import UTC, datetime
+
+    from uta.models import CodeChangeCandidate
+
+    with session_factory() as s:
+        run, ident, ep, _ = _setup_episode(s)
+        run.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="135200",
+                revision="135200",
+                author="R. Devlin",
+                message="rework reminder fees",
+                committed_at=datetime(2026, 6, 1, tzinfo=UTC),
+                paths='[{"editType": "edit", "file": "/trunk/lx/ut_ar/arinv_csvc.py"}]',
+            )
+        )
+        s.flush()
+        provider = StubHypothesisProvider()
+        hypothesize_run(s, run, [(ident.id, ep.id)], provider, top_k=5, cutoff=0.3)
+        _system, user = provider.calls[0]
+        assert "135200" in user and "R. Devlin" in user and "rework reminder fees" in user
+        # The commit touches the failing test's module, so the match reason is spelled out.
+        assert "matches the failing test's module" in user
+
+
 def test_similar_cases_reach_the_prompt(session_factory):
     """A prior failure with a validated reason should be retrieved into the hypothesis prompt."""
     from uta.models import Attribution, FailureSignature

@@ -1,8 +1,9 @@
 """Candidate change signals (Information model: 'Signals').
 
-v1 is **run-windowed, not per-test**: candidates are the SVN-update revisions and ``ut_ref``
-``V_TRACKING`` changes that fall inside the run's time window, presented chronologically. Per-test
-relevance ranking is an explicit later enhancement, so these link to the **run**, not a failure.
+Storage is **run-windowed**: candidates are the SVN-update revisions and ``ut_ref`` ``V_TRACKING``
+changes that fall inside the run's time window, so they link to the **run**, not a failure. The
+per-test view is computed, not stored: :mod:`uta.analyze.relevance` (issue #50) scores this shared
+list against each failing test at read/analysis time.
 
 Medical-data invariant: ``MODDATA`` (which may carry patient data) is **never** selected or stored
 — only the entity key, change type, author and timestamp.

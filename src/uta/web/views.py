@@ -21,6 +21,7 @@ from uta.analyze.baseline import compute_diff, identity_status_maps, select_base
 from uta.analyze.flakiness import compute_stats
 from uta.analyze.flakiness import history as _test_history
 from uta.analyze.flakiness import leaderboard_candidates as _leaderboard_candidates
+from uta.analyze.relevance import rank_candidates
 from uta.control.heartbeat import read_heartbeat
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
@@ -372,32 +373,66 @@ def _latest_failing_result(session: Session, identity_id: int) -> TestResult | N
     )
 
 
-def _candidates_for_run(session: Session, run_id: int | None) -> dict:
-    """Candidate code/data changes in the run's window, presented chronologically."""
+def _candidates_for_run(
+    session: Session, run_id: int | None, ident: TestIdentity, latest: TestResult | None
+) -> dict:
+    """Candidate code/data changes in the run's window, **ranked by relevance to this test**.
+
+    Ranking (issue #50) scores each candidate against the test's failure in the candidate run
+    (falling back to the latest failing result): changed SVN paths vs the test's module and
+    stack-frame paths, changed ``ut_ref`` entities vs the error text. Each row carries its match
+    ``reasons`` so the record can show *why* a candidate ranks first; unmatched candidates stay
+    chronological below the matched ones.
+    """
     if run_id is None:
         return {"code": [], "data": []}
     run = session.get(Run, run_id)
     if run is None:
         return {"code": [], "data": []}
+    failure = (
+        session.scalar(
+            select(TestResult)
+            .where(
+                TestResult.run_id == run.id,
+                TestResult.test_identity_id == ident.id,
+                TestResult.status.in_(FAILED_STATUSES),
+            )
+            .order_by(TestResult.id)
+            .limit(1)
+        )
+        or latest
+    )
+    ranked = rank_candidates(
+        run.code_changes,
+        run.data_changes,
+        file_path=failure.file_path if failure else None,
+        error_details=failure.error_details if failure else None,
+        error_stack_trace=failure.error_stack_trace if failure else None,
+        class_name=ident.class_name,
+    )
     code = [
         {
-            "revision": c.revision or c.commit_id,
+            "revision": c.revision,
             "author": c.author,
             "message": c.message,
             "committed_at": c.committed_at,
+            "score": c.score,
+            "reasons": list(c.reasons),
         }
-        for c in sorted(run.code_changes, key=lambda c: c.committed_at)
+        for c in ranked.code
     ]
     data = [
         {
-            "entity": d.lx_table_code,
-            "pk": d.pk_lst,
+            "entity": d.entity,
+            "pk": d.pk,
             "change_type": d.change_type,
-            "component": d.component_name,
+            "component": d.component,
             "author": d.author,
             "changed_at": d.changed_at,
+            "score": d.score,
+            "reasons": list(d.reasons),
         }
-        for d in sorted(run.data_changes, key=lambda d: d.changed_at)
+        for d in ranked.data
     ]
     return {"code": code, "data": data}
 
@@ -443,7 +478,7 @@ def test_record(
     current_ep = lc.current_episode if lc is not None else None
     latest = _latest_failing_result(session, identity_id)
     candidates = _candidates_for_run(
-        session, current_ep.first_failure_run_id if current_ep is not None else None
+        session, current_ep.first_failure_run_id if current_ep is not None else None, ident, latest
     )
     flakiness = asdict(
         compute_stats(
