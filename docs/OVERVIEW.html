@@ -178,8 +178,9 @@
         <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries, a
         <b><code>/runs</code> job-runs list</b> (every ingested run newest-first — status, start time,
         duration, test totals, and regression / newly-fixed counts vs the same baseline the run summary
-        uses, with a header banner showing the poller's last and next tick), per-test records, flaky
-        leaderboard, and knowledge-base search. Where the human confirms causes and enters reasons. Also
+        uses, with a header banner showing the poller's last and next tick, plus a <b>run-health
+        timeline</b> chart of failed/regression counts over time), per-test records, a <b>flaky
+        leaderboard</b> (each row with a recent-runs sparkline), and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
         ingest knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or range
         directly against Jenkins/Oracle (back-fill semantics — no email, no LLM), and view poller health
@@ -396,13 +397,18 @@
       specific test</b> (changed-path overlap with its module/stack frames; changed entity/component
       named in its error text — coarse tiers, not a probability). When both kinds are present,
       relevance breaks the tie: if only one kind has a candidate relevant to this test, that kind
-      wins; otherwise it's <code>UNKNOWN</code>. The evidence (including the tie-break and top
-      matches) stands on its own; the human attributes the final cause.</p>
+      wins; otherwise it's <code>UNKNOWN</code>. When the cause is <code>CODE_CHANGE</code> and every
+      candidate SVN commit shares one author (or <code>DATA_CHANGE</code> and every candidate shares one
+      <code>V_TRACKING</code> <code>USRCODE</code>), that person becomes the <b>suggested contact</b> — otherwise
+      it is left blank rather than guessed. The evidence (including the tie-break and top matches)
+      stands on its own; the human attributes the final cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
       <p>Scored by <b>oscillation</b>, not “no change”: transitions ÷ runs over a 30-day window. Gaps
-      (incomplete/absent) are missing data, never counted as flips. Feeds the <b>flaky leaderboard</b>.</p>
+      (incomplete/absent) are missing data, never counted as flips. Feeds the <b>flaky leaderboard</b>
+      and the per-test record, both rendering the same windowed pass/fail history as a small SVG
+      sparkline.</p>
     </div>
   </div>
 </section>
@@ -483,7 +489,9 @@
       passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
     <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
       <code>V_TRACKING</code>), infra indicators, ownership — each linked to the failure that generated it.</td></tr>
-    <tr><th>Classifications</th><td>Predicted cause, suggested contact, and the LLM hypothesis.</td></tr>
+    <tr><th>Classifications</th><td>Predicted cause, the LLM hypothesis, and a deterministic <b>suggested
+      contact</b> — the single author/<code>USRCODE</code> behind all candidates for the winning cause, left
+      blank whenever authorship is mixed or unknown (never guessed).</td></tr>
     <tr><th>Human input</th><td>Causing person, reason text, triage status, Jira ticket, acknowledger; every
       conclusion carries a <b>provenance tier</b> (<code>AI_UNCONFIRMED</code> / <code>AI_CONFIRMED</code> /
       <code>HUMAN_CORRECTED</code> / <code>HUMAN_ENTERED</code>), the original AI value when corrected, and who/when.</td></tr>

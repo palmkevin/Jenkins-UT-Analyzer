@@ -11,10 +11,17 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from tests.builders import get_identity, make_run
+from tests.builders import _EPOCH, get_identity, make_run
+from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.models import Classification, FailureEpisode, PollerHeartbeat, TestLifecycle
+from uta.models import (
+    Classification,
+    CodeChangeCandidate,
+    FailureEpisode,
+    PollerHeartbeat,
+    TestLifecycle,
+)
 from uta.models.enums import PredictedCause, Provenance
 from uta.web import actions, views
 
@@ -200,11 +207,19 @@ def test_test_record_missing_identity_is_none(session_factory):
         assert views.test_record(s, 9999) is None
 
 
+def test_test_record_exposes_sparkline_history(session_factory):
+    """Anchored to *now* (not a fixed epoch) so the run stays inside the default flaky window."""
+    base = datetime.now(UTC) - timedelta(days=2)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
+        apply_run(s, r1, baseline=None)
+        rec = views.test_record(s, get_identity(s, "t").id)
+    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+
+
 def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):
     """Candidates are ordered by relevance to *this* test, each carrying its match reason (#50)."""
-    from datetime import UTC, datetime, timedelta
-
-    from uta.models import CodeChangeCandidate, DataChangeCandidate
+    from uta.models import DataChangeCandidate
 
     stack = (
         "Traceback (most recent call last):\n"
@@ -318,6 +333,22 @@ def test_job_runs_empty_store_and_no_heartbeat(session_factory):
         assert result["runs"] == []
         assert result["poller"]["last_poll_at"] is None
         assert result["poller"]["next_poll_at"] is None
+        assert result["timeline"] is None
+
+
+def test_job_runs_timeline_is_oldest_first(session_factory):
+    """The timeline chart reads left-to-right in time, unlike the (newest-first) table rows."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"a": "FAILED", "b": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"a": "PASSED", "b": "FAILED"})
+        apply_run(s, r2, baseline=r1)
+
+        result = views.job_runs(s)
+        tl = result["timeline"]
+        assert tl.first_build == 1
+        assert tl.last_build == 2
+        assert tl.runs == 2
 
 
 # ── actions: provenance ─────────────────────────────────────────────────────────
@@ -363,6 +394,25 @@ def test_confirm_accepts_ai_suggestion(session_factory):
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.reason_provenance == Provenance.AI_CONFIRMED
         assert attr.validated_by == "alice"
+
+
+def test_confirm_stamps_classifier_suggested_contact(session_factory):
+    # End-to-end: the deterministic classifier suggests the sole commit author (#49), and one-click
+    # Confirm stamps that person as causing_person with AI_CONFIRMED provenance.
+    with session_scope(session_factory) as s:
+        run = make_run(s, 1, {"t": "FAILED"})
+        run.code_changes.append(
+            CodeChangeCandidate(commit_id="r777", author="dev-dave", committed_at=_EPOCH)
+        )
+        analysis = apply_run(s, run, baseline=None)
+        s.flush()
+        classify_run(s, run, analysis.opened_episodes)
+        s.flush()
+        ep_id = _episode_id(s, "t")
+        attr = actions.confirm(s, ep_id, "alice")
+        assert attr.causing_person == "dev-dave"
+        assert attr.cause_provenance == Provenance.AI_CONFIRMED
+        assert attr.original_ai_cause == "dev-dave"
 
 
 def test_set_attribution_correction_retains_original_ai(session_factory):

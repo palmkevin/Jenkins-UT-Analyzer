@@ -37,6 +37,19 @@
 
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
+
+    /* Trend charts (issue #53): inline SVG, no JS/CDN — colours mirror the status classes above. */
+    .timeline-chart { display: block; }
+    .timeline-chart polyline.FAILED { stroke: #b00020; }
+    .timeline-chart polyline.REGRESSION { stroke: #6f42c1; stroke-dasharray: 4 3; }
+    .timeline-legend { color: #6c757d; font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .timeline-legend .swatch { display: inline-block; width: 1.1rem; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 0.3rem; }
+    .timeline-legend .swatch.FAILED { border-color: #b00020; }
+    .timeline-legend .swatch.REGRESSION { border-color: #6f42c1; border-top-style: dashed; }
+
+    .sparkline { vertical-align: middle; }
+    .sparkline rect.FAILED { fill: #b00020; }
+    .sparkline rect.PASSED { fill: #c9e4d4; }
   </style>
 </head>
 <body>

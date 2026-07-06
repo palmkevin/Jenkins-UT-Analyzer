@@ -54,3 +54,6 @@ def test_job_runs_page_lists_the_run(client):
     assert "Job runs" in body
     # The ingested build is listed and links to its detail page.
     assert 'href="/runs/1702"' in body
+    # The run-health timeline chart (issue #53): inline SVG, no JS.
+    assert '<svg class="timeline-chart"' in body
+    assert '<polyline class="FAILED"' in body

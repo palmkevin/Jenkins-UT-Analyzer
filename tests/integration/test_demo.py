@@ -62,6 +62,39 @@ def test_acknowledged_and_attributed_failure_is_present(queue):
     assert tz["predicted_cause"] == "DATA_CHANGE"
 
 
+def test_suggested_contact_populated_from_sole_change_author(session_factory):
+    # #49: a CODE_CHANGE episode whose window holds a single-author commit carries that author as
+    # the suggested contact, so the live demo shows the one-click-Confirm surface populated.
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_interface.if_hl7.TestClass.test_parse_message"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]  # newest episode — opened by the build-613 regression
+    assert ep["predicted_cause"] == "CODE_CHANGE"
+    assert ep["suggested_contact"] == "R. Devlin"
+
+
+def test_data_change_contact_suggested_and_human_corrected(session_factory):
+    # The DATA_CHANGE episode suggests the V_TRACKING USRCODE ("MEL"); the seeded human attribution
+    # ("THA") then reads as a correction — the demo shows the HUMAN_CORRECTED provenance tier.
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_core.co_time.TestClass.test_timezone_convert"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]
+    assert ep["predicted_cause"] == "DATA_CHANGE"
+    assert ep["suggested_contact"] == "MEL"
+    assert ep["causing_person"] == "THA"
+    assert ep["cause_provenance"] == "HUMAN_CORRECTED"
+    assert ep["original_ai_cause"] == "MEL"
+
+
 def test_flaky_leaderboard_has_a_flaky_test(session_factory):
     board = views.flaky_leaderboard(session_factory(), window_days=30, threshold=0.3)
     flaky = [r for r in board["rows"] if r["flaky"]]

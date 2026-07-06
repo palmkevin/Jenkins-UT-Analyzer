@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, identity_status_map, select_baseline
 from uta.analyze.flakiness import compute_stats
+from uta.analyze.flakiness import history as _test_history
 from uta.analyze.flakiness import leaderboard_candidates as _leaderboard_candidates
 from uta.analyze.relevance import rank_candidates
 from uta.control.heartbeat import read_heartbeat
@@ -33,6 +34,7 @@ from uta.models import (
     TestResult,
 )
 from uta.models.enums import LifecycleState
+from uta.web import charts
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
@@ -400,6 +402,7 @@ def test_record(
         )
     )
     recurrence = _recurrence(session, latest, k=kb_top_k, cutoff=kb_cutoff)
+    history = _test_history(session, identity_id, window_days=flaky_window_days)
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
@@ -426,6 +429,7 @@ def test_record(
         "episodes": [_episode_dict(session, e) for e in episodes],
         "candidates": candidates,
         "flakiness": flakiness,
+        "spark": charts.sparkline(history),
         "recurrence": recurrence,
     }
 
@@ -443,7 +447,11 @@ def flaky_leaderboard(
     stays honest when there are more candidates than the display cap.
     """
     candidates = _leaderboard_candidates(session, window_days=window_days, threshold=threshold)
-    return {"rows": candidates[:limit], "total": len(candidates), "window_days": window_days}
+    rows = candidates[:limit]
+    for row in rows:
+        hist = _test_history(session, row["identity_id"], window_days=window_days)
+        row["spark"] = charts.sparkline(hist)
+    return {"rows": rows, "total": len(candidates), "window_days": window_days}
 
 
 def kb_search(
@@ -614,8 +622,16 @@ def job_runs(session: Session, *, poll_interval_seconds: int | None = None) -> d
     if last_poll_at is not None and poll_interval_seconds:
         next_poll_at = _aware(last_poll_at) + timedelta(seconds=poll_interval_seconds)
 
+    timeline = charts.run_health_timeline(
+        [
+            {"build": r["build"], "failed": r["totals"]["failed"], "regressions": r["regressions"]}
+            for r in reversed(rows)  # rows are newest-first; the chart reads left-to-right in time
+        ]
+    )
+
     return {
         "runs": rows,
+        "timeline": timeline,
         "poller": {
             "last_poll_at": last_poll_at,
             "next_poll_at": next_poll_at,
