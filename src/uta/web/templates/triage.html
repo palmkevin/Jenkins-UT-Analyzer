@@ -20,30 +20,101 @@
   <span class="count">{{ queue.counts.recently_fixed }}</span> recently fixed
 </p>
 
+<form class="row row-cols-auto g-2 align-items-end mb-3" method="get" action="/">
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-owner">Owner</label>
+    <input class="form-control form-control-sm" id="filter-owner" type="text" name="owner"
+           value="{{ filters.owner or '' }}" placeholder="initials">
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-suite">Suite</label>
+    <input class="form-control form-control-sm" id="filter-suite" type="text" name="suite"
+           value="{{ filters.suite or '' }}" list="suite-options" placeholder="e.g. ut_pricing">
+    <datalist id="suite-options">
+      {% for s in options.suites %}<option value="{{ s }}">{% endfor %}
+    </datalist>
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-track">Track</label>
+    <select class="form-select form-select-sm" id="filter-track" name="track">
+      <option value="">any</option>
+      {% for t in options.tracks %}
+      <option value="{{ t }}" {% if filters.track == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-cause">Predicted cause</label>
+    <select class="form-select form-select-sm" id="filter-cause" name="cause">
+      <option value="">any</option>
+      {% for c in options.causes %}
+      <option value="{{ c }}" {% if filters.cause == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-triage-status">Triage status</label>
+    <select class="form-select form-select-sm" id="filter-triage-status" name="triage_status">
+      <option value="">any</option>
+      {% for st in options.triage_statuses %}
+      <option value="{{ st }}" {% if filters.triage_status == st %}selected{% endif %}>{{ st }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col form-check pb-1">
+    <input class="form-check-input" type="checkbox" name="flaky" value="1" id="filter-flaky"
+           {% if filters.flaky %}checked{% endif %}>
+    <label class="form-check-label small" for="filter-flaky">Flaky only</label>
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-sort">Sort</label>
+    <select class="form-select form-select-sm" id="filter-sort" name="sort">
+      <option value="" {% if not sort %}selected{% endif %}>Age (default)</option>
+      <option value="name" {% if sort == "name" %}selected{% endif %}>Name</option>
+      <option value="owner" {% if sort == "owner" %}selected{% endif %}>Owner</option>
+    </select>
+  </div>
+  <div class="col">
+    <button class="btn btn-sm btn-primary" type="submit">Apply filters</button>
+    <a class="btn btn-sm btn-outline-secondary" href="/">Clear</a>
+  </div>
+</form>
+
 <h2 id="new">★ New failing tests — not yet acknowledged ({{ queue.counts.new }})</h2>
 {% if not queue.new %}
   <p class="empty">Nothing waiting — the action queue is empty.</p>
 {% else %}
+<form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
+  <thead class="table-light"><tr><th></th><th>Test</th><th>Owner</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
   <tbody>
     {% for row in queue.new %}
     <tr>
+      <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
       <td>{{ test_link(row) }}</td>
       <td>{{ row.owner or "" }}</td>
       <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|ts }}</td>
       <td>{{ row.predicted_cause or "—" }}</td>
-      <td>
+      <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
           <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
         </form>
+        {% if row.signature_id %}
+        <form method="post" action="/signatures/{{ row.signature_id }}/acknowledge">
+          <button class="btn btn-sm btn-outline-primary" type="submit"
+                  title="Acknowledge every unacknowledged failing test sharing this failure signature">
+            Ack all w/ signature
+          </button>
+        </form>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
+<button type="submit" form="bulk-ack-new" class="btn btn-sm btn-outline-primary mb-3">Acknowledge selected</button>
 {{ ui.more_hint("new", queue.counts.new, queue.new|length, expand) }}
 {% endif %}
 
@@ -51,12 +122,18 @@
 {% if not queue.still_failing %}
   <p class="empty">No acknowledged failures in flight.</p>
 {% else %}
+<form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle bg-white">
-  <thead class="table-light"><tr><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
+  <thead class="table-light"><tr><th></th><th>Test</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
   <tbody>
     {% for row in queue.still_failing %}
     <tr>
+      <td>
+        {% if row.episode_id %}
+        <input type="checkbox" name="episode_ids" value="{{ row.episode_id }}" form="bulk-attr-still" aria-label="select {{ row.test_id }}">
+        {% endif %}
+      </td>
       <td>
         {{ test_link(row) }}
         {% if row.removed %}<span class="badge removed">Removed</span>{% endif %}
@@ -69,6 +146,26 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
+<div class="row row-cols-auto g-2 align-items-end mb-3">
+  <div class="col">
+    <label class="form-label small mb-0" for="bulk-triage-status">Set triage status</label>
+    <select class="form-select form-select-sm" id="bulk-triage-status" name="triage_status" form="bulk-attr-still">
+      <option value="">— unchanged —</option>
+      {% for st in options.triage_statuses %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="bulk-causing-person">Causing person</label>
+    <input class="form-control form-control-sm" id="bulk-causing-person" type="text" name="causing_person" form="bulk-attr-still">
+  </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="bulk-reason">Reason</label>
+    <input class="form-control form-control-sm" id="bulk-reason" type="text" name="reason_text" form="bulk-attr-still">
+  </div>
+  <div class="col">
+    <button type="submit" form="bulk-attr-still" class="btn btn-sm btn-outline-primary">Apply to selected</button>
+  </div>
 </div>
 {{ ui.more_hint("still_failing", queue.counts.still_failing, queue.still_failing|length, expand) }}
 {% endif %}

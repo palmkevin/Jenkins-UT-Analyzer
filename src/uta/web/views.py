@@ -14,7 +14,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from math import ceil
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from uta.analyze.baseline import compute_diff, identity_status_maps, select_baseline
@@ -100,6 +100,44 @@ def _run_refs(session: Session, run_ids: Collection[int]) -> dict[int, dict]:
     return {run_id: {"id": run_id, "build": build, "url": url} for run_id, build, url in rows}
 
 
+def _failure_infos(
+    session: Session, episodes: Collection[FailureEpisode]
+) -> dict[int, dict | None]:
+    """Batch variant of the failure-detail lookup, projected down to ``{track, signature_id}``.
+
+    Used by the triage queue to filter/display by track and to surface the "acknowledge all with
+    this signature" bulk action — one query for every episode's characterising failure instead of
+    one per row.
+    """
+    pairs = {
+        (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
+    }
+    pairs.discard((None, None))
+    if not pairs:
+        return {}
+    rows = session.execute(
+        select(
+            TestResult.test_identity_id,
+            TestResult.run_id,
+            TestResult.track,
+            TestResult.signature_id,
+        )
+        .where(
+            tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
+            TestResult.status.in_(FAILED_STATUSES),
+        )
+        .order_by(TestResult.id)
+    ).all()
+    by_pair = {
+        (identity_id, run_id): {"track": track, "signature_id": signature_id}
+        for identity_id, run_id, track, signature_id in rows
+    }
+    return {
+        ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
+        for ep in episodes
+    }
+
+
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
     """The current prediction for an episode (rows are append-only; newest wins)."""
     return session.scalar(
@@ -151,12 +189,14 @@ def _row(
     *,
     classifications: dict[int, Classification],
     run_refs: dict[int, dict],
+    failure_infos: dict[int, dict | None],
 ) -> dict:
     """Shared row projection for the triage buckets — identity + current episode + prediction.
 
     A pure projection over **prefetched** data: the lifecycle arrives with its identity, current
-    episode and attribution eager-loaded, and the classification/run lookups are batch maps — so
-    building a row issues no queries (the page is O(1) queries in the number of rows, issue #52).
+    episode and attribution eager-loaded, and the classification/run/failure lookups are batch
+    maps — so building a row issues no queries (the page is O(1) queries in the number of rows,
+    issue #52).
     """
     ident = lc.identity
     ep = lc.current_episode
@@ -164,9 +204,11 @@ def _row(
     attribution = ep.attribution if ep is not None else None
     first_failure = run_refs.get(ep.first_failure_run_id) if ep is not None else None
     fixed_in = run_refs.get(ep.fixed_in_run_id) if ep is not None else None
+    failure_info = failure_infos.get(ep.id) if ep is not None else None
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
+        "suite": ident.suite,
         "owner": ident.owner_initials,
         "state": lc.state,
         "flaky": lc.flaky,
@@ -185,7 +227,82 @@ def _row(
         "predicted_cause": classification.predicted_cause if classification else None,
         "causing_person": attribution.causing_person if attribution else None,
         "reason_text": attribution.reason_text if attribution else None,
+        "track": failure_info["track"] if failure_info else None,
+        "signature_id": failure_info["signature_id"] if failure_info else None,
     }
+
+
+def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
+    """Whether a projected triage row passes the query-param filter set.
+
+    Text filters (``owner``/``suite``) are case-insensitive substring matches; the rest
+    (``track``/``cause``/``triage_status``) are exact; ``flaky`` is a truthy toggle. An absent or
+    empty filter value never excludes a row.
+    """
+    owner = filters.get("owner", "").strip().lower()
+    if owner and owner not in (row["owner"] or "").lower():
+        return False
+    suite = filters.get("suite", "").strip().lower()
+    if suite and suite not in (row["suite"] or "").lower():
+        return False
+    track = filters.get("track", "").strip()
+    if track and row["track"] != track:
+        return False
+    cause = filters.get("cause", "").strip()
+    if cause and row["predicted_cause"] != cause:
+        return False
+    triage_status = filters.get("triage_status", "").strip()
+    if triage_status and row["triage_status"] != triage_status:
+        return False
+    if filters.get("flaky") and not row["flaky"]:
+        return False
+    return True
+
+
+_SORT_KEYS = {
+    "name": lambda r: (r["test_id"] or "").lower(),
+    "owner": lambda r: (r["owner"] or "").lower(),
+}
+
+
+def _sort_rows(rows: list[dict], sort: str | None, *, age_key) -> None:
+    """Sort a bucket in place: ``name``/``owner`` ascending, else the bucket's own age order."""
+    key = _SORT_KEYS.get(sort or "")
+    if key is not None:
+        rows.sort(key=key)
+    else:
+        rows.sort(key=age_key, reverse=True)
+
+
+def triage_filter_options(session: Session) -> dict:
+    """Distinct owner/suite values in play, for the triage filter bar's dropdowns.
+
+    Suites come from identities that currently have a lifecycle row (irrelevant identities never
+    show up in any bucket); owners likewise. Cheap, small-cardinality scans.
+    """
+    owners = sorted(
+        {
+            o
+            for o in session.scalars(
+                select(TestIdentity.owner_initials)
+                .join(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
+                .distinct()
+            ).all()
+            if o
+        }
+    )
+    suites = sorted(
+        {
+            s
+            for s in session.scalars(
+                select(TestIdentity.suite)
+                .join(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
+                .distinct()
+            ).all()
+            if s
+        }
+    )
+    return {"owners": owners, "suites": suites}
 
 
 def triage_queue(
@@ -194,6 +311,8 @@ def triage_queue(
     recently_fixed_days: int = 7,
     limit: int = DEFAULT_ROW_LIMIT,
     expand: Collection[str] = (),
+    filters: dict[str, str] | None = None,
+    sort: str | None = None,
 ) -> dict:
     """The three-bucket triage queue: new-unacknowledged / still-failing(+removed) / recently-fixed.
 
@@ -204,14 +323,20 @@ def triage_queue(
        episode surfaced with a Removed flag (disappeared ≠ fixed).
     3. **Recently fixed** — ``FIXED`` within the configured window (default 7 days).
 
+    ``filters`` (issue #63) narrows every bucket by owner/suite/track/predicted cause/triage
+    status/flaky before capping — query params, so the view stays server-rendered and bookmarkable.
+    ``sort`` reorders each bucket by ``name``/``owner``; any other value (including ``None``) keeps
+    each bucket's natural age-based order.
+
     Each bucket is capped at ``limit`` rows for rendering (long lists hurt UI responsiveness —
-    issue #19); ``counts`` stays the full, pre-cap size, and a section named in ``expand`` renders
-    in full. ``truncated`` reports, per bucket, whether rows were dropped.
+    issue #19); ``counts`` reflects the full, post-filter, pre-cap size, and a section named in
+    ``expand`` renders in full. ``truncated`` reports, per bucket, whether rows were dropped.
 
     Query count is **O(1) in the number of rows** (issue #52): one eager-loaded lifecycle scan
     (identity + current episode + attribution), one batched latest-classification lookup, one
-    batched run-ref lookup.
+    batched run-ref lookup, one batched failure-info (track/signature) lookup.
     """
+    filters = filters or {}
     lifecycles = (
         session.scalars(
             select(TestLifecycle).options(
@@ -243,12 +368,17 @@ def triage_queue(
         session,
         [ep.first_failure_run_id for ep in episodes] + [ep.fixed_in_run_id for ep in episodes],
     )
+    failure_infos = _failure_infos(session, episodes)
 
     new: list[dict] = []
     still_failing: list[dict] = []
     recently_fixed: list[dict] = []
     for bucket, lc in selected:
-        row = _row(lc, classifications=classifications, run_refs=run_refs)
+        row = _row(
+            lc, classifications=classifications, run_refs=run_refs, failure_infos=failure_infos
+        )
+        if not _matches_filters(row, filters):
+            continue
         if bucket == "new":
             new.append(row)
         elif bucket == "still_failing":
@@ -259,9 +389,11 @@ def triage_queue(
         else:
             recently_fixed.append(row)
 
-    new.sort(key=lambda r: (r["first_failure_at"] is not None, r["first_failure_at"]), reverse=True)
-    still_failing.sort(key=lambda r: (r.get("removed", False), r["age_days"] or 0), reverse=True)
-    recently_fixed.sort(key=lambda r: (r["fixed_at"] is not None, r["fixed_at"]), reverse=True)
+    _sort_rows(
+        new, sort, age_key=lambda r: (r["first_failure_at"] is not None, r["first_failure_at"])
+    )
+    _sort_rows(still_failing, sort, age_key=lambda r: (r.get("removed", False), r["age_days"] or 0))
+    _sort_rows(recently_fixed, sort, age_key=lambda r: (r["fixed_at"] is not None, r["fixed_at"]))
 
     counts = {
         "new": len(new),
@@ -557,12 +689,40 @@ def kb_search(
     return {"query": query, "results": results}
 
 
+def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
+    """Global "jump to test by name" search (issue #63): canonical-name substring → identities.
+
+    Matches suite/class/method too (all folded into ``canonical_name``), case-insensitively.
+    Returns plain rows for the navbar search box: a unique match lets the route redirect straight
+    to the test record, several matches render as a short pick-list.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    idents = session.scalars(
+        select(TestIdentity)
+        .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
+        .order_by(TestIdentity.canonical_name)
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "identity_id": i.id,
+            "test_id": i.canonical_name,
+            "suite": i.suite,
+            "owner": i.owner_initials,
+        }
+        for i in idents
+    ]
+
+
 def run_summary(
     session: Session,
     build: int,
     *,
     limit: int = DEFAULT_ROW_LIMIT,
     page: int = 1,
+    failures_only: bool = False,
 ) -> dict | None:
     """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
@@ -570,6 +730,9 @@ def run_summary(
     (``limit`` rows per page, LIMIT/OFFSET) — never loaded whole, replacing the all-or-nothing
     ``?expand=`` link. ``results_total`` is a COUNT; ``page``/``pages`` drive the pager controls.
     ``limit <= 0`` disables pagination (the operator's explicit no-cap choice).
+
+    ``failures_only`` (issue #63) restricts the results (and their count/pagination) to non-passing
+    statuses — paging through ~25k rows to find the handful of failures is the current reality.
     """
     run = session.scalar(select(Run).where(Run.build_number == build))
     if run is None:
@@ -592,15 +755,18 @@ def run_summary(
     def _diff_rows(identity_ids: list[int]) -> list[dict]:
         return [{"identity_id": i, "test_id": names.get(i, str(i))} for i in identity_ids]
 
+    result_filters = [TestResult.run_id == run.id]
+    if failures_only:
+        result_filters.append(TestResult.status.in_(FAILED_STATUSES))
     results_total = session.scalar(
-        select(func.count()).select_from(TestResult).where(TestResult.run_id == run.id)
+        select(func.count()).select_from(TestResult).where(*result_filters)
     )
     page, pages, offset = _page_window(results_total, limit=limit, page=page)
     # Only the visible page is fetched, with the identity name joined in (no per-row lazy load).
     results_query = (
         select(TestResult, TestIdentity.canonical_name)
         .join(TestIdentity, TestIdentity.id == TestResult.test_identity_id)
-        .where(TestResult.run_id == run.id)
+        .where(*result_filters)
         .order_by(TestResult.status, TestResult.test_identity_id, TestResult.track, TestResult.id)
     )
     if offset is not None:
@@ -652,6 +818,7 @@ def run_summary(
         "page": page,
         "pages": pages,
         "page_size": limit,
+        "failures_only": failures_only,
     }
 
 

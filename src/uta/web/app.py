@@ -30,6 +30,7 @@ from uta.control.health import check_health
 from uta.control.tunables import clear_override, effective_settings, load_overrides, set_override
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
 from uta.delivery.email import EmailSender
+from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
@@ -89,6 +90,15 @@ def _expanded(request: Request) -> list[str]:
     """
     raw = request.query_params.get("expand", "")
     return [s for s in raw.split(",") if s]
+
+
+_TRIAGE_FILTER_KEYS = ("owner", "suite", "track", "cause", "triage_status", "flaky")
+
+
+def _triage_filters(request: Request) -> dict[str, str]:
+    """The triage queue's filter-bar state (issue #63) — query params, so it's bookmarkable and
+    survives an action's Post/Redirect/Get round trip via the referer header."""
+    return {k: v for k, v in request.query_params.items() if k in _TRIAGE_FILTER_KEYS and v}
 
 
 def create_app(session_factory=None, *, email_sender: EmailSender | None = None) -> FastAPI:
@@ -158,7 +168,8 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         return JSONResponse(report.payload(), status_code=200 if report.ok else 503)
 
     @app.get("/", response_class=HTMLResponse)
-    def triage(request: Request):
+    def triage(request: Request, sort: str = ""):
+        filters = _triage_filters(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
             queue = views.triage_queue(
@@ -166,8 +177,19 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
                 recently_fixed_days=cfg.recently_fixed_days,
                 limit=cfg.ui_row_limit,
                 expand=_expanded(request),
+                filters=filters,
+                sort=sort or None,
             )
-        return render(request, "triage.html", {"queue": queue}, cfg=cfg)
+            options = views.triage_filter_options(s)
+        options["tracks"] = ["permanent", "permanent_py39"]
+        options["causes"] = list(PredictedCause)
+        options["triage_statuses"] = list(TriageStatus)
+        return render(
+            request,
+            "triage.html",
+            {"queue": queue, "filters": filters, "sort": sort, "options": options},
+            cfg=cfg,
+        )
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
     def test_record(request: Request, identity_id: int):
@@ -198,10 +220,12 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         return render(request, "runs.html", {"runs": runs}, cfg=cfg)
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
-    def run_view(request: Request, build: int, page: int = 1):
+    def run_view(request: Request, build: int, page: int = 1, failures_only: bool = False):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            run = views.run_summary(s, build, limit=cfg.ui_row_limit, page=page)
+            run = views.run_summary(
+                s, build, limit=cfg.ui_row_limit, page=page, failures_only=failures_only
+            )
         return render(request, "run.html", {"run": run, "build": build}, cfg=cfg)
 
     @app.get("/flaky", response_class=HTMLResponse)
@@ -221,6 +245,16 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             cfg = effective(s)
             results = views.kb_search(s, q, cutoff=cfg.pgtrgm_similarity_cutoff)
         return render(request, "kb.html", {"kb": results}, cfg=cfg)
+
+    @app.get("/search", response_class=HTMLResponse)
+    def search_view(request: Request, q: str = ""):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+            results = views.test_search(s, q, limit=cfg.ui_row_limit)
+        # A unique match jumps straight to the record; the navbar box is a "go to test" shortcut.
+        if len(results) == 1:
+            return RedirectResponse(f"/tests/{results[0]['identity_id']}", status_code=303)
+        return render(request, "search.html", {"query": q, "results": results}, cfg=cfg)
 
     # ── Control panel (issue #16) ────────────────────────────────────────────
     # Access is deliberately open for now (honesty system, no auth anywhere yet). These handlers are
@@ -281,11 +315,46 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             resp.delete_cookie(ACTOR_COOKIE)
         return resp
 
+    # Literal-path bulk routes are registered before their `{id}`-parametrized siblings — FastAPI
+    # matches routes in registration order, so `/tests/bulk/acknowledge` must win over
+    # `/tests/{identity_id}/acknowledge` (which would otherwise swallow it with identity_id="bulk").
+    @app.post("/tests/bulk/acknowledge")
+    async def bulk_acknowledge(request: Request):
+        form = await request.form()
+        identity_ids = [int(v) for v in form.getlist("identity_ids")]
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            actions.bulk_acknowledge(s, identity_ids, actor)
+        return back(request)
+
     @app.post("/tests/{identity_id}/acknowledge")
     def acknowledge(request: Request, identity_id: int):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             actions.acknowledge(s, identity_id, actor)
+        return back(request)
+
+    @app.post("/signatures/{signature_id}/acknowledge")
+    def acknowledge_signature(request: Request, signature_id: int):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            actions.acknowledge_by_signature(s, signature_id, actor)
+        return back(request)
+
+    @app.post("/episodes/bulk/attribute")
+    async def bulk_attribute(request: Request):
+        form = await request.form()
+        episode_ids = [int(v) for v in form.getlist("episode_ids")]
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            actions.bulk_set_attribution(
+                s,
+                episode_ids,
+                actor,
+                causing_person=str(form.get("causing_person", "")),
+                reason_text=str(form.get("reason_text", "")),
+                triage_status=str(form.get("triage_status", "")) or None,
+            )
         return back(request)
 
     @app.post("/episodes/{episode_id}/confirm")

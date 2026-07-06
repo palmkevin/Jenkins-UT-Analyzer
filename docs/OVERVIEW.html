@@ -186,13 +186,20 @@
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
-        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue, run summaries (results
-        table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable), a
+        <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue — now with a
+        bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
+        flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
+        acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
+        one-click <b>“acknowledge all with this signature”</b> per New-bucket row — run summaries (results
+        table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
+        optional <b>failures-only</b> filter), a
         <b><code>/runs</code> job-runs list</b> (also paginated — every ingested run newest-first — status,
         start time, duration, test totals, and regression / newly-fixed counts vs the same baseline the run
         summary uses, with a header banner showing the poller's last and next tick, plus a <b>run-health
         timeline</b> chart of failed/regression counts over time), per-test records, a <b>flaky
-        leaderboard</b> (each row with a recent-runs sparkline), and knowledge-base search. Where the human confirms causes and enters reasons. Also
+        leaderboard</b> (each row with a recent-runs sparkline), a global <b>“jump to test” search</b>
+        (navbar box, substring match on canonical name — a unique match redirects straight to the record),
+        and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
         ingest/retention knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or
         range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM; also the recovery
@@ -457,13 +464,20 @@
 <section id="triage">
   <h2><span class="n">3</span>Human triage <span class="muted" style="font-size:14px">— web dashboard</span></h2>
   <p class="lead">The dashboard opens on the <b>daily triage queue</b> — the primary landing surface —
-  organized into the three buckets the monitor thinks in.</p>
+  organized into the three buckets the monitor thinks in. A <b>filter/sort bar</b> (owner, suite, track,
+  predicted cause, triage status, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
+  bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
   <div class="grid g3">
     <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. The action
-      queue: predicted cause + an <b>Acknowledge</b> button. Driven toward empty.</p></div>
+      queue: predicted cause + an <b>Acknowledge</b> button, a row checkbox for <b>bulk-acknowledge
+      selected</b>, and a one-click <b>“acknowledge all with this signature”</b> — matches other
+      unacknowledged failures with the same exception type + message (own-function stack frames
+      excluded), since a signature key is test-identity-scoped and so never literally shared across
+      tests. Driven toward empty.</p></div>
     <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with age,
-      triage status, causing person, and a one-line cause. <code>REMOVED</code> mid-failure is flagged
-      distinctly.</p></div>
+      triage status, causing person, and a one-line cause. Row checkboxes support a <b>bulk “apply to
+      selected”</b> (triage status / causing person / reason) across the caseload. <code>REMOVED</code>
+      mid-failure is flagged distinctly.</p></div>
     <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
