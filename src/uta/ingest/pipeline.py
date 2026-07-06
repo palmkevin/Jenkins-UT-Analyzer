@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 
 from sqlalchemy import insert, select
@@ -29,6 +30,7 @@ from uta.ingest.unittest_log import parse_unittest_log
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
 from uta.ingest.wfapi import (
     DEFAULT_UNITTEST_SUITES,
+    LogStage,
     find_log_step_node,
     find_unittest_stages,
     parse_wfapi,
@@ -80,6 +82,18 @@ def _dedupe_cases(cases: list[TestCaseResult]) -> list[TestCaseResult]:
             ", ".join(f"{t}@{k}" for t, k in dropped[:10]),
         )
     return deduped
+
+
+# Upper bound on concurrent Jenkins calls per build: the 4 base endpoints plus one per unittest
+# console-log stage (5 suites x 2 tracks by default) — comfortably under this cap.
+_FETCH_MAX_WORKERS = 16
+
+
+def _fetch_stage_log(client: JenkinsClient, build: int, stage: LogStage) -> tuple[LogStage, dict]:
+    """One stage's describe->log pair (the log's node id depends on the describe call)."""
+    describe = client.stage_describe(build, stage.node_id)
+    step_id = find_log_step_node(describe) or stage.node_id
+    return stage, client.stage_log(build, step_id)
 
 
 _IDENTITY_CHUNK = 1000
@@ -166,19 +180,32 @@ def ingest_build(
     """
     t_total = time.perf_counter()
 
+    # The 4 base endpoints are mutually independent, and each unittest stage's describe/log pair is
+    # independent of the others and of the base fetches — dispatched concurrently on a thread pool
+    # (the client is a sync httpx.Client behind the JenkinsClient Protocol/fake seam). Stage tasks
+    # need wfapi's result to know which stages exist, so they're submitted once that one future
+    # resolves rather than waiting on all 4 base calls.
     t = time.perf_counter()
-    meta = client.build_meta(build)
-    wfapi_payload = client.wfapi(build)
-    report_payload = client.test_report(build)
-    change_sets_payload = client.change_sets(build)
-    stage_logs: list[tuple[object, str]] = []  # (stage, log text) — fetched before parse timing
-    if ingest_unittest_logs:
-        suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
-        for stage in find_unittest_stages(wfapi_payload, suites):
-            # The console text is on the stage's Shell Script step node, not the stage node itself.
-            describe = client.stage_describe(build, stage.node_id)
-            step_id = find_log_step_node(describe) or stage.node_id
-            stage_logs.append((stage, client.stage_log(build, step_id)))
+    with ThreadPoolExecutor(max_workers=_FETCH_MAX_WORKERS) as pool:
+        meta_f = pool.submit(client.build_meta, build)
+        wfapi_f = pool.submit(client.wfapi, build)
+        report_f = pool.submit(client.test_report, build)
+        change_sets_f = pool.submit(client.change_sets, build)
+
+        wfapi_payload = wfapi_f.result()
+
+        stage_futures: list[Future[tuple[LogStage, dict]]] = []
+        if ingest_unittest_logs:
+            suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
+            stage_futures = [
+                pool.submit(_fetch_stage_log, client, build, stage)
+                for stage in find_unittest_stages(wfapi_payload, suites)
+            ]
+
+        meta = meta_f.result()
+        report_payload = report_f.result()
+        change_sets_payload = change_sets_f.result()
+        stage_logs: list[tuple[LogStage, dict]] = [f.result() for f in stage_futures]
     t_fetch = time.perf_counter() - t
 
     t = time.perf_counter()
