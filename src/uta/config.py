@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     jenkins_job_path: str = "job/Development/job/lsdevbuild-build-release-permanent"
     jenkins_user: str = ""
     jenkins_api_token: str = ""
+    # TLS verification is on by default. Set false only as a stopgap for an internal CA the host
+    # doesn't trust yet; prefer pointing jenkins_ca_bundle at that CA's PEM instead of disabling.
+    jenkins_verify_tls: bool = True
+    # Path to a CA bundle (PEM) for verifying Jenkins' cert, e.g. an internal CA. Takes precedence
+    # over jenkins_verify_tls when set (verification stays on, against this bundle).
+    jenkins_ca_bundle: str = ""
     expected_shards: int = 2
     # Also ingest the unittest console-log UT stages (no JUnit artifact — parsed from stage logs).
     ingest_unittest_stages: bool = True
@@ -100,6 +106,11 @@ class Settings(BaseSettings):
     @property
     def jenkins_job_url(self) -> str:
         return f"{self.jenkins_base_url.rstrip('/')}/{self.jenkins_job_path.strip('/')}"
+
+    @property
+    def jenkins_verify(self) -> bool | str:
+        """httpx's ``verify`` value: a CA bundle path if set, else the on/off flag."""
+        return self.jenkins_ca_bundle or self.jenkins_verify_tls
 
     @property
     def email_recipients(self) -> tuple[str, ...]:

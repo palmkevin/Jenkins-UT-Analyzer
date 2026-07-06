@@ -35,7 +35,7 @@ class HttpJenkinsClient:
         *,
         user: str = "",
         token: str = "",
-        verify: bool = False,
+        verify: bool | str = True,
         timeout: float = 60.0,
     ) -> None:
         self._job_url = job_url.rstrip("/")

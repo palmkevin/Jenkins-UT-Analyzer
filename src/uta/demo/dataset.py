@@ -147,7 +147,9 @@ TRACKS = ("permanent", "permanent_py39")
 _CODE_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (5, 8, 9, 11, 12)})
 _DATA_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (4, 11)})
 
-# Synthetic commit authors / data-change users — invented initials, never real people.
+# Synthetic commit authors / data-change users — invented initials, never real people. Each
+# candidate build carries a single author, so its CODE/DATA-classified episodes surface that
+# author as the suggested contact (#49) — the demo shows the one-click Confirm surface populated.
 _COMMIT_AUTHORS = ("R. Devlin", "S. Okafor", "P. Nowak")
 _DATA_USERS = ("THA", "MEL", "KAM")
 

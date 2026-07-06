@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Flaky leaderboard — UT Analyzer{% endblock %}
 
 {% block content %}
@@ -22,7 +23,7 @@
   <thead class="table-light">
     <tr>
       <th>Test</th><th>Owner</th><th>Score</th><th>Transitions</th><th>Runs</th>
-      <th>Fail rate</th><th>Fails (window / all)</th><th>Last failed</th><th>Pattern</th>
+      <th>Fail rate</th><th>Fails (window / all)</th><th>Last failed</th><th>Pattern</th><th>Recent</th>
     </tr>
   </thead>
   <tbody>
@@ -41,6 +42,7 @@
       <td>{{ r.failed_in_window }} / {{ r.failed_total }}</td>
       <td>{{ r.last_failed_at|ts }}</td>
       <td>{{ r.pattern }}</td>
+      <td>{{ ui.sparkline(r.spark) }}</td>
     </tr>
     {% endfor %}
   </tbody>

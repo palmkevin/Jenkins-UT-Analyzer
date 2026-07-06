@@ -60,6 +60,7 @@ class FlakinessStats:
 @dataclass
 class _RunPoint:
     started_at: datetime
+    build: int
     failed: bool
     fail_tracks: frozenset[str]
     pass_tracks: frozenset[str]
@@ -73,7 +74,7 @@ def _sequence(session: Session, identity_id: int) -> list[_RunPoint]:
     are holes, not points.
     """
     rows = session.execute(
-        select(Run.id, Run.started_at, TestResult.track, TestResult.status)
+        select(Run.id, Run.build_number, Run.started_at, TestResult.track, TestResult.status)
         .join(Run, Run.id == TestResult.run_id)
         .where(TestResult.test_identity_id == identity_id, Run.complete.is_(True))
         .order_by(Run.started_at, Run.id)
@@ -81,12 +82,12 @@ def _sequence(session: Session, identity_id: int) -> list[_RunPoint]:
 
     by_run: dict[int, _RunPoint] = {}
     order: list[int] = []
-    for run_id, started_at, track, status in rows:
+    for run_id, build_number, started_at, track, status in rows:
         if status not in _REPORTED:
             continue
         point = by_run.get(run_id)
         if point is None:
-            point = _RunPoint(_aware(started_at), False, frozenset(), frozenset())
+            point = _RunPoint(_aware(started_at), build_number, False, frozenset(), frozenset())
             by_run[run_id] = point
             order.append(run_id)
         if status in FAILED_STATUSES:
@@ -155,6 +156,28 @@ def compute_stats(
         shard_correlated=shard_correlated,
         pattern=_pattern(states),
     )
+
+
+def history(
+    session: Session,
+    identity_id: int,
+    *,
+    window_days: int = 30,
+    now: datetime | None = None,
+) -> list[dict]:
+    """The test's oldest-first pass/fail points within the window, for sparkline rendering.
+
+    Same windowing as :func:`compute_stats` (``started_at >= now - window_days``), so a sparkline
+    and its test's flakiness card always agree on which runs are "in window".
+    """
+    now = now or _now()
+    cutoff = now - timedelta(days=window_days)
+    seq = _sequence(session, identity_id)
+    return [
+        {"build": p.build, "started_at": p.started_at, "failed": p.failed}
+        for p in seq
+        if p.started_at and p.started_at >= cutoff
+    ]
 
 
 def recompute_flaky_flags(

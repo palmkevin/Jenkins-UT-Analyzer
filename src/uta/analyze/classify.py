@@ -15,18 +15,36 @@ Rule (ordered, documented because it is the whole v1 commitment):
 4. **UNKNOWN** otherwise — both kinds present (genuinely ambiguous; both attached as evidence) or
    neither. There is deliberately **no confidence number**: with no knowledge base to rank against
    on day one it would be fabricated (deferred to the knowledge-base learning loop).
+
+A **suggested contact** rides along when the winning cause has exactly one author in play: the SVN
+commit author for ``CODE_CHANGE``, the ``V_TRACKING`` ``USRCODE`` for ``DATA_CHANGE``. Anything
+ambiguous — several authors, or a candidate whose author is unknown — leaves it ``None`` rather
+than guess, so the one-click Confirm never stamps a fabricated person.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from uta.ingest.ut_report import FAILED_STATUSES
-from uta.models import Classification, Run, TestResult
+from uta.models import Classification, CodeChangeCandidate, DataChangeCandidate, Run, TestResult
 from uta.models.enums import ErrorType, PredictedCause
+
+
+def _sole_author(candidates: Iterable[CodeChangeCandidate | DataChangeCandidate]) -> str | None:
+    """The single author behind *all* candidates, or ``None`` when unknown or ambiguous.
+
+    Conservative by design: a candidate without an author means someone unknown is in play, and
+    more than one distinct author is genuinely ambiguous — both yield ``None``.
+    """
+    authors = {(c.author or "").strip() for c in candidates}
+    if len(authors) != 1:
+        return None
+    return next(iter(authors)) or None
 
 
 def _has_infra_failure(session: Session, run: Run, identity_id: int) -> bool:
@@ -57,6 +75,13 @@ def classify_episode(
     else:
         cause = PredictedCause.UNKNOWN
 
+    if cause == PredictedCause.CODE_CHANGE:
+        contact = _sole_author(run.code_changes)
+    elif cause == PredictedCause.DATA_CHANGE:
+        contact = _sole_author(run.data_changes)
+    else:
+        contact = None
+
     evidence = {
         "code_candidates": code_n,
         "data_candidates": data_n,
@@ -67,6 +92,7 @@ def classify_episode(
         episode_id=episode_id,
         predicted_cause=cause,
         confidence=None,  # deferred (v1: null)
+        suggested_contact=contact,
         evidence=json.dumps(evidence),
     )
     session.add(classification)

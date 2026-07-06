@@ -11,3 +11,20 @@
   </p>
   {%- endif -%}
 {%- endmacro %}
+
+{#- Per-test pass/fail sparkline (issue #53) — one bar per recent run, oldest-first, red = failed.
+    `spark` is the geometry dict built by uta.web.charts.sparkline; `None` when there's no history. -#}
+{% macro sparkline(spark) -%}
+  {%- if spark -%}
+  <svg class="sparkline" viewBox="0 0 {{ spark.width }} {{ spark.height }}"
+       width="{{ spark.width }}" height="{{ spark.height }}"
+       role="img" aria-label="recent pass/fail history">
+    {%- for bar in spark.bars %}
+    <rect x="{{ bar.x }}" y="0" width="{{ bar.width }}" height="{{ spark.height }}"
+          class="{{ 'FAILED' if bar.failed else 'PASSED' }}"><title>#{{ bar.build }} {{ 'failed' if bar.failed else 'passed' }}</title></rect>
+    {%- endfor %}
+  </svg>
+  {%- else -%}
+  <span class="empty">—</span>
+  {%- endif -%}
+{%- endmacro %}
