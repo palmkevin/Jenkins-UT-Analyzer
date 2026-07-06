@@ -11,10 +11,17 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from tests.builders import get_identity, make_run
+from tests.builders import _EPOCH, get_identity, make_run
+from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.models import Classification, FailureEpisode, PollerHeartbeat, TestLifecycle
+from uta.models import (
+    Classification,
+    CodeChangeCandidate,
+    FailureEpisode,
+    PollerHeartbeat,
+    TestLifecycle,
+)
 from uta.models.enums import PredictedCause, Provenance
 from uta.web import actions, views
 
@@ -342,6 +349,25 @@ def test_confirm_accepts_ai_suggestion(session_factory):
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.reason_provenance == Provenance.AI_CONFIRMED
         assert attr.validated_by == "alice"
+
+
+def test_confirm_stamps_classifier_suggested_contact(session_factory):
+    # End-to-end: the deterministic classifier suggests the sole commit author (#49), and one-click
+    # Confirm stamps that person as causing_person with AI_CONFIRMED provenance.
+    with session_scope(session_factory) as s:
+        run = make_run(s, 1, {"t": "FAILED"})
+        run.code_changes.append(
+            CodeChangeCandidate(commit_id="r777", author="dev-dave", committed_at=_EPOCH)
+        )
+        analysis = apply_run(s, run, baseline=None)
+        s.flush()
+        classify_run(s, run, analysis.opened_episodes)
+        s.flush()
+        ep_id = _episode_id(s, "t")
+        attr = actions.confirm(s, ep_id, "alice")
+        assert attr.causing_person == "dev-dave"
+        assert attr.cause_provenance == Provenance.AI_CONFIRMED
+        assert attr.original_ai_cause == "dev-dave"
 
 
 def test_set_attribution_correction_retains_original_ai(session_factory):
