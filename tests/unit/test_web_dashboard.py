@@ -379,6 +379,14 @@ def test_search_navbar_box_present(client):
     assert 'action="/search"' in client.get("/").text
 
 
+def test_theme_toggle_present_and_defaults_from_system_preference(client):
+    body = client.get("/").text
+    assert 'id="theme-toggle"' in body
+    # Applied in <head>, before first paint, from localStorage or prefers-color-scheme.
+    assert "prefers-color-scheme: dark" in body
+    assert 'setAttribute("data-bs-theme", theme)' in body
+
+
 # ── run-results failures-only filter (issue #63) ────────────────────────────
 
 
