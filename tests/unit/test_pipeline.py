@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import timedelta
 
+import httpx
+import pytest
 from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
@@ -354,3 +358,95 @@ def test_ingest_dedupes_junit_console_log_overlap(session_factory):
         ).all()
         assert len(overlap) == 1
         assert overlap[0].duration == 2.5
+
+
+class _ConcurrencyTrackingFake(FakeJenkinsClient):
+    """Records the peak number of Jenkins calls in flight, to verify the fetch phase parallelizes
+    (issue #65) rather than serializing the base endpoints (and, when enabled, the per-stage
+    describe/log pairs)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self._in_flight = 0
+        self.peak_concurrency = 0
+
+    def _track(self, fn, *args):
+        with self._lock:
+            self._in_flight += 1
+            self.peak_concurrency = max(self.peak_concurrency, self._in_flight)
+        try:
+            time.sleep(0.01)  # widen the window so overlapping calls are reliably observed
+            return fn(*args)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
+
+    def build_meta(self, build):
+        return self._track(super().build_meta, build)
+
+    def wfapi(self, build):
+        return self._track(super().wfapi, build)
+
+    def test_report(self, build):
+        return self._track(super().test_report, build)
+
+    def change_sets(self, build):
+        return self._track(super().change_sets, build)
+
+    def stage_describe(self, build, node_id):
+        return self._track(super().stage_describe, build, node_id)
+
+    def stage_log(self, build, node_id):
+        return self._track(super().stage_log, build, node_id)
+
+
+def test_ingest_fetches_base_endpoints_concurrently(session_factory):
+    """The 4 base Jenkins calls overlap in flight instead of running one after another."""
+    fake = _ConcurrencyTrackingFake()
+    ingest_build(fake, session_factory, 1702, expected_shards=2)
+    assert fake.peak_concurrency >= 2
+
+
+def test_ingest_fetches_unittest_stages_concurrently(session_factory):
+    """Multiple unittest console-log stages' describe/log pairs also fetch in parallel."""
+    fake = _ConcurrencyTrackingFake()
+    ingest_build(
+        fake,
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    assert fake.peak_concurrency >= 2
+
+
+def test_ingest_parallel_fetch_matches_serial_output(session_factory):
+    """Parallelizing the fetch phase must not change the persisted result (issue #65)."""
+    ingest_build(
+        _ConcurrencyTrackingFake(),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        # Same counts as the serial-fetch test test_ingest_unittest_logs_adds_console_log_results.
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 22
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 9
+        assert s.scalar(select(func.count()).select_from(Classification)) == 9
+
+
+class _FailingReportFake(FakeJenkinsClient):
+    """``test_report`` always 5xxs — the failure the poller's transient-retry path expects."""
+
+    def test_report(self, build: int) -> dict:
+        request = httpx.Request("GET", f"http://jenkins/{build}/testReport/api/json")
+        response = httpx.Response(500, request=request)
+        raise httpx.HTTPStatusError("Server Error", request=request, response=response)
+
+
+def test_ingest_propagates_single_endpoint_failure(session_factory):
+    """A single failing endpoint still surfaces its original exception type, unwrapped."""
+    with pytest.raises(httpx.HTTPStatusError):
+        ingest_build(_FailingReportFake(), session_factory, 1702)
