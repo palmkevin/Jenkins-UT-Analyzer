@@ -25,6 +25,7 @@ from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
+from uta.retention import prune
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,10 @@ def poll_tick(
     URLs are not tunable, so the pre-built ``client`` / ``feed`` / ``email_sender`` /
     ``hypothesis_provider`` are reused. Any failure is caught, recorded on the heartbeat, and
     swallowed so a single bad tick never kills the long-lived scheduler.
+
+    Each tick ends with a retention pass (issue #52): old passing results and finished ingest jobs
+    are pruned per the (tunable) retention windows. The pass is idempotent, so ticks that ingest
+    nothing still keep the store trimmed.
     """
     with session_scope(session_factory) as session:
         cfg = effective_settings(base_settings, load_overrides(session))
@@ -164,6 +169,12 @@ def poll_tick(
             unittest_suites=cfg.unittest_suite_set,
             backfill_depth=cfg.backfill_depth,
         )
+        with session_scope(session_factory) as session:
+            prune(
+                session,
+                result_retention_days=cfg.result_retention_days,
+                ingest_job_retention_days=cfg.ingest_job_retention_days,
+            )
     except Exception as exc:  # noqa: BLE001 — surface on the heartbeat, keep the scheduler alive
         logger.exception("poll tick failed")
         record_heartbeat(session_factory, processed=[], error=repr(exc))

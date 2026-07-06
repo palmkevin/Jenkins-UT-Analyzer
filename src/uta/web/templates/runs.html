@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Job runs — UT Analyzer{% endblock %}
 
 {#- Jenkins build result → Bootstrap contextual colour: green / orange / red. -#}
@@ -79,5 +80,6 @@
   </tbody>
 </table>
 </div>
+{{ ui.pager(runs.page, runs.pages, runs.total) }}
 {% endif %}
 {% endblock %}
