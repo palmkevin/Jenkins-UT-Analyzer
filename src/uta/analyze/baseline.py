@@ -13,6 +13,7 @@ buckets work in.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -30,17 +31,23 @@ SKIPPED = "SKIPPED"
 _PASSED_STATUSES = frozenset({"PASSED", "FIXED"})
 
 
-def identity_status_map(session: Session, run: Run) -> dict[int, str]:
-    """Map ``test_identity_id -> collapsed status`` for one run.
+def identity_status_maps(session: Session, run_ids: Collection[int]) -> dict[int, dict[int, str]]:
+    """Collapsed status maps for **many runs in one query** — ``run_id -> {identity_id: status}``.
 
-    A test runs once per track; the identity is **FAILED** if any track failed, else **PASSED** if
-    any track passed, else **SKIPPED**. Absent identities are simply omitted.
+    Same collapse as :func:`identity_status_map`; batching is what keeps pages that diff several
+    runs (the runs list) at a constant query count instead of one scan per run (issue #52).
+    Every requested id gets an entry (empty for a run with no results).
     """
+    maps: dict[int, dict[int, str]] = {run_id: {} for run_id in run_ids}
+    if not run_ids:
+        return maps
     rows = session.execute(
-        select(TestResult.test_identity_id, TestResult.status).where(TestResult.run_id == run.id)
+        select(TestResult.run_id, TestResult.test_identity_id, TestResult.status).where(
+            TestResult.run_id.in_(set(run_ids))
+        )
     ).all()
-    collapsed: dict[int, str] = {}
-    for identity_id, status in rows:
+    for run_id, identity_id, status in rows:
+        collapsed = maps[run_id]
         if status in FAILED_STATUSES:
             collapsed[identity_id] = FAILED  # FAILED in any track wins outright
         elif status in _PASSED_STATUSES:
@@ -48,7 +55,16 @@ def identity_status_map(session: Session, run: Run) -> dict[int, str]:
                 collapsed[identity_id] = PASSED
         else:  # SKIPPED / unknown — only fills a slot nothing stronger claimed
             collapsed.setdefault(identity_id, SKIPPED)
-    return collapsed
+    return maps
+
+
+def identity_status_map(session: Session, run: Run) -> dict[int, str]:
+    """Map ``test_identity_id -> collapsed status`` for one run.
+
+    A test runs once per track; the identity is **FAILED** if any track failed, else **PASSED** if
+    any track passed, else **SKIPPED**. Absent identities are simply omitted.
+    """
+    return identity_status_maps(session, [run.id])[run.id]
 
 
 def select_baseline(session: Session, run: Run) -> Run | None:
