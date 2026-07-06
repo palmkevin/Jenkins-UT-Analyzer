@@ -95,6 +95,7 @@
     <a href="#learning">Learning loop</a>
     <a href="#email">Alerting</a>
     <a href="#reference">Reference</a>
+    <a href="#config">Configuration</a>
     <a href="#deploy">Deployment</a>
   </div>
 </nav>
@@ -635,6 +636,218 @@
       “newly fixed” entries (accepted). Both windows (<code>RESULT_RETENTION_DAYS</code>,
       <code>INGEST_JOB_RETENTION_DAYS</code>) are runtime-tunable from the control panel; <code>0</code>
       disables either.</td></tr>
+  </table>
+</section>
+
+<section id="config">
+  <h2>Configuration</h2>
+  <p class="lead">Everything is 12-factor: env vars → the typed <code>Settings</code> object
+  (<code>src/uta/config.py</code>), loaded once at process start (also from a local <code>.env</code>
+  in dev). <a href="../.env.example"><code>.env.example</code></a> documents every key with the same
+  defaults and comments as below and is the file to copy when standing up a new environment; this
+  page is the reader-facing explanation grouped by topic. A <span class="pill">control panel</span>
+  pill marks the small whitelist (<code>src/uta/control/tunables.py</code>) the <code>/control</code>
+  dashboard page can override <b>live, without a restart</b> — deliberately never secrets, URLs or
+  connection strings, only thresholds/windows; everything else is env-only. A
+  <span class="pill">secret</span> pill marks values that must come from a secret store and are
+  never committed.</p>
+
+  <h3>Jenkins — source connection &amp; ingest scope</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>JENKINS_BASE_URL</code></td><td><code>https://jenkins2.labsolution.lu</code></td>
+      <td>Base URL of the Jenkins instance.</td></tr>
+    <tr><td><code>JENKINS_JOB_PATH</code></td>
+      <td><code>job/Development/job/lsdevbuild-build-release-permanent</code></td>
+      <td>Path (under the base URL) to the UT pipeline job.</td></tr>
+    <tr><td><code>JENKINS_USER</code> / <code>JENKINS_API_TOKEN</code></td><td>empty</td>
+      <td>Optional basic-auth credentials <span class="pill">secret</span> — anonymous read already
+      works against this job, so these are only needed if that ever changes.</td></tr>
+    <tr><td><code>JENKINS_VERIFY_TLS</code></td><td><code>true</code></td>
+      <td>TLS certificate verification for Jenkins requests. Disable only as a stopgap for an
+      internal CA the host doesn't trust yet — prefer <code>JENKINS_CA_BUNDLE</code> instead.</td></tr>
+    <tr><td><code>JENKINS_CA_BUNDLE</code></td><td>empty</td>
+      <td>Path to a PEM CA bundle to verify Jenkins' cert against. Takes precedence over
+      <code>JENKINS_VERIFY_TLS</code> when set (verification stays on, against this bundle).</td></tr>
+    <tr><td><code>EXPECTED_SHARDS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
+      <td>Shards (tracks) a run must report to be considered <b>complete</b> — incomplete runs are
+      stored but skipped as an analysis baseline.</td></tr>
+    <tr><td><code>INGEST_UNITTEST_STAGES</code></td><td><code>true</code></td>
+      <td>Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS,
+      Uniface) — parsed from each stage's <code>wfapi/log</code> behind the same interface as the
+      JUnit report.</td></tr>
+    <tr><td><code>UNITTEST_SUITES</code></td>
+      <td><code>LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests</code></td>
+      <td>Allowlist of stage names (a <code>"&lt;suite&gt; - &lt;track&gt;"</code> stage → suite)
+      treated as test stages, keeping non-test <code>"… - permanent"</code> stages out.</td></tr>
+  </table>
+
+  <h3>Oracle <code>ut_ref</code> — data-change correlation</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>UT_REF_HOST</code></td><td><code>lsdb04</code></td><td>Oracle host.</td></tr>
+    <tr><td><code>UT_REF_PORT</code></td><td><code>1521</code></td><td>Oracle listener port.</td></tr>
+    <tr><td><code>UT_REF_SERVICE</code></td><td><code>lsdb04pdb</code></td><td>Oracle service name.</td></tr>
+    <tr><td><code>UT_REF_USER</code></td><td><code>utestref01</code></td><td>Read-only DB user.</td></tr>
+    <tr><td><code>UT_REF_PASSWORD</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Password for the read-only user.</td></tr>
+    <tr><td><code>UT_REF_THICK</code></td><td><code>false</code></td>
+      <td><code>oracledb</code> thin mode by default; set <code>true</code> only if a thick client /
+      Oracle wallet is required by the environment.</td></tr>
+  </table>
+
+  <h3>PostgreSQL — the app's own store</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>DATABASE_URL</code></td>
+      <td><code>postgresql+psycopg://uta:uta@db:5432/uta</code></td>
+      <td>The only way the app reaches Postgres ("container now, external later"). Dev points at the
+      compose <code>db</code> service; production points at an external server, same URL shape.</td></tr>
+    <tr><td><code>POSTGRES_USER</code> / <code>POSTGRES_PASSWORD</code> / <code>POSTGRES_DB</code></td>
+      <td><code>uta</code> / <code>uta</code> / <code>uta</code></td>
+      <td>Not read by the app itself — used only by the compose <code>db</code> service to initialize
+      the Postgres container on first start; keep in sync with <code>DATABASE_URL</code>.</td></tr>
+  </table>
+
+  <h3>Email — regression &amp; ops alerts (SMTP)</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>SMTP_HOST</code> / <code>SMTP_PORT</code></td><td>empty / <code>25</code></td>
+      <td>Outbound mail relay.</td></tr>
+    <tr><td><code>SMTP_FROM</code></td><td>empty</td><td>Envelope/From address for both the
+      regression report and ops alerts.</td></tr>
+    <tr><td><code>SMTP_RECIPIENTS</code></td><td>empty</td>
+      <td>Comma-separated recipient list. <b>Empty disables email entirely</b> — both the
+      regression report and ops alerts.</td></tr>
+    <tr><td><code>SMTP_USER</code> / <code>SMTP_PASSWORD</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Optional SMTP auth, if the relay requires it.</td></tr>
+    <tr><td><code>EMAIL_RECOVERY_NOTICE</code></td><td><code>false</code></td>
+      <td>Also send a "back to green" notice when a run has zero new failures after a prior
+      regression; off by default (silence already means "no worse than before").</td></tr>
+  </table>
+
+  <h3>Auth / Keycloak OIDC — optional, flag-gated (Phase 2)</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>AUTH_ENABLED</code></td><td><code>false</code></td>
+      <td>Master switch. Off: the Phase-1 self-declared-actor cookie, zero Keycloak calls — local
+      dev, the public demo, and the offline CI gate stay untouched. On: every route except
+      <code>/health</code>, <code>/login</code>, <code>/auth/callback</code>, <code>/logout</code> and
+      <code>/static/</code> requires a signed-in session.</td></tr>
+    <tr><td><code>OIDC_SERVER_METADATA_URL</code></td>
+      <td><code>https://auth.labsolution.lu/realms/labsolution/.well-known/openid-configuration</code></td>
+      <td>The realm's OIDC discovery document; every endpoint/key is self-configured from it.</td></tr>
+    <tr><td><code>OIDC_CLIENT_ID</code></td><td><code>internal-ut-analyzer</code></td>
+      <td>Confidential client registered in the <code>labsolution</code> realm (standard
+      auth-code flow, direct access grants off, no service account).</td></tr>
+    <tr><td><code>OIDC_CLIENT_SECRET</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Client secret, delivered via the deployment secret store — required when
+      <code>AUTH_ENABLED=true</code>.</td></tr>
+    <tr><td><code>OIDC_POST_LOGOUT_REDIRECT</code></td><td>empty</td>
+      <td>External base URL of this tool — where Keycloak sends the browser back after RP-initiated
+      logout.</td></tr>
+    <tr><td><code>SESSION_SECRET</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Signs the session cookie; required when <code>AUTH_ENABLED=true</code>. Generate with
+      <code>python -c "import secrets; print(secrets.token_urlsafe(32))"</code>.</td></tr>
+  </table>
+  <p class="lead" style="font-size:14px">DevOps must additionally register the redirect URI
+  <code>https://&lt;tool-host&gt;/auth/callback</code> and post-logout URI
+  <code>https://&lt;tool-host&gt;/</code> per environment on the Keycloak side.</p>
+
+  <h3>App — identity, thresholds &amp; windows</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>WEB_PORT</code></td><td><code>8088</code></td>
+      <td>Host port the compose <code>web</code> service publishes (container always listens on
+      8000); not read by the app itself.</td></tr>
+    <tr><td><code>APP_DEFAULT_ACTOR</code></td><td><code>test-user</code></td>
+      <td>Default self-declared actor name shown/used in Phase 1 (<code>AUTH_ENABLED=false</code>).</td></tr>
+    <tr><td><code>FLAKY_TRANSITION_THRESHOLD</code> <span class="pill">control panel</span></td>
+      <td><code>0.3</code></td>
+      <td>Oscillation score (transitions ÷ runs) above which a test is flagged flaky.</td></tr>
+    <tr><td><code>FLAKY_WINDOW_DAYS</code> <span class="pill">control panel</span></td><td><code>30</code></td>
+      <td>Window the flaky score and failure-history counts look back over.</td></tr>
+    <tr><td><code>PGTRGM_SIMILARITY_CUTOFF</code> <span class="pill">control panel</span></td>
+      <td><code>0.3</code></td>
+      <td>Minimum <code>pg_trgm</code> trigram similarity for a knowledge-base match to surface.</td></tr>
+    <tr><td><code>KB_TOP_K</code> <span class="pill">control panel</span></td><td><code>5</code></td>
+      <td>How many similar past cases the knowledge base surfaces per failure.</td></tr>
+    <tr><td><code>RECENTLY_FIXED_DAYS</code> <span class="pill">control panel</span></td><td><code>7</code></td>
+      <td>How long a fixed test stays visible/confirmable in the "recently fixed" bucket.</td></tr>
+    <tr><td><code>UI_ROW_LIMIT</code> <span class="pill">control panel</span></td><td><code>50</code></td>
+      <td>Max rows a dashboard section renders before it's capped behind a "Load all N Tests" link.
+      <code>0</code> disables the cap.</td></tr>
+    <tr><td><code>BACKFILL_DEPTH</code> <span class="pill">control panel</span></td><td><code>10</code></td>
+      <td>On a fresh (empty) store, the number of completed builds a cold-start poll (or
+      <code>uta bootstrap</code>) ingests oldest-first before incremental polling takes over.</td></tr>
+    <tr><td><code>RESULT_RETENTION_DAYS</code> <span class="pill">control panel</span></td><td><code>90</code></td>
+      <td>Raw passing/skipped results are pruned once their run is older than this (failing results,
+      runs, episodes, lifecycles, attributions and KB signatures are kept forever). <code>0</code>
+      keeps everything; keep it above <code>FLAKY_WINDOW_DAYS</code>.</td></tr>
+    <tr><td><code>INGEST_JOB_RETENTION_DAYS</code> <span class="pill">control panel</span></td><td><code>30</code></td>
+      <td>Finished (done/error) on-demand ingest jobs are pruned after this many days. <code>0</code>
+      keeps all.</td></tr>
+  </table>
+
+  <h3>External deep links — surfaced in the UI</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>JIRA_BASE_URL</code></td><td><code>https://labsolution.atlassian.net</code></td>
+      <td>Episode ticket links: <code>{JIRA_BASE_URL}/browse/&lt;TICKET&gt;</code>.</td></tr>
+    <tr><td><code>FISHEYE_CHANGELOG_URL</code></td>
+      <td><code>https://fisheye.labsolution.lu/changelog/LS_TRUNK</code></td>
+      <td>SVN revision links: <code>{FISHEYE_CHANGELOG_URL}?cs=&lt;revision&gt;</code>.</td></tr>
+    <tr><td><code>ZEPHYR_TEST_CASE_URL_PREFIX</code></td>
+      <td><code>https://labsolution.atlassian.net/projects/LX?selectedItem=…/v2/testCase/</code></td>
+      <td>ZEPHYR (Kanoah) test-case deep link prefix: parsed test-case IDs (e.g.
+      <code>LX-T4792</code>) from a failure's stack trace are appended to this.</td></tr>
+  </table>
+
+  <h3>LLM hypothesis — optional root-cause provider</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>LLM_PROVIDER</code></td><td>empty</td>
+      <td><code>anthropic</code>, <code>openai</code>, or empty to auto-pick from whichever API key
+      is set (Anthropic wins if both). A chosen provider with no key — or nothing set — falls back
+      to the no-op provider: everything else still works, <code>llm_hypothesis</code> stays blank.
+      Only the live <code>uta poll</code> path calls the model; back-fill never does.</td></tr>
+    <tr><td><code>ANTHROPIC_API_KEY</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Anthropic Developer Console key (pay-as-you-go, separate from any Claude.ai subscription).</td></tr>
+    <tr><td><code>ANTHROPIC_MODEL</code></td><td><code>claude-opus-4-8</code></td>
+      <td>Model used for the Anthropic provider.</td></tr>
+    <tr><td><code>OPENAI_API_KEY</code></td><td>empty <span class="pill">secret</span></td>
+      <td>OpenAI Platform key (pay-as-you-go, separate from a ChatGPT subscription).</td></tr>
+    <tr><td><code>OPENAI_MODEL</code></td><td><code>gpt-4o</code></td>
+      <td>Model used for the OpenAI provider.</td></tr>
+  </table>
+
+  <h3>Ingest / correlation windows &amp; poll cadence</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>DATA_CHANGE_LOOKBACK_HOURS</code> <span class="pill">control panel</span></td>
+      <td><code>12</code></td>
+      <td>How far before a run's start to look for correlated Oracle <code>V_TRACKING</code> data
+      changes (they precede the nightly run).</td></tr>
+    <tr><td><code>DATA_CHANGE_TOLERANCE_MINUTES</code> <span class="pill">control panel</span></td>
+      <td><code>5</code></td>
+      <td>Margin widening both ends of that window to absorb Jenkins↔Oracle clock skew.</td></tr>
+    <tr><td><code>POLL_INTERVAL_SECONDS</code></td><td><code>300</code></td>
+      <td>Scheduled-poll cadence for <code>uta poll</code>.</td></tr>
+  </table>
+
+  <h3>Poller resilience</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>POLL_RETRY_ATTEMPTS</code></td><td><code>3</code></td>
+      <td>In-tick attempts per build for transient errors (network / HTTP 5xx / DB blips).</td></tr>
+    <tr><td><code>POLL_RETRY_BASE_SECONDS</code></td><td><code>2.0</code></td>
+      <td>Base backoff between retry attempts, doubling each time (2s, 4s, 8s, …).</td></tr>
+    <tr><td><code>QUARANTINE_AFTER_ATTEMPTS</code></td><td><code>3</code></td>
+      <td>Failing ticks (one attempt per tick) before a build is quarantined — recorded on the
+      control panel, ops-alerted by email, and skipped so ingest advances past it.</td></tr>
+    <tr><td><code>POLLER_STALE_AFTER_INTERVALS</code></td><td><code>5</code></td>
+      <td><code>/health</code> reports the poller stale (HTTP 503 + one latched ops alert email)
+      after this many poll intervals without a successful tick.</td></tr>
   </table>
 </section>
 
