@@ -387,6 +387,79 @@ def test_theme_toggle_present_and_defaults_from_system_preference(client):
     assert 'setAttribute("data-bs-theme", theme)' in body
 
 
+# ── orientation polish: active nav, triage badge, relative times (issue #79) ──
+
+
+def test_nav_marks_each_section_active(client):
+    for href in ("/runs", "/flaky", "/kb", "/control"):
+        page = client.get(href).text
+        assert f'class="nav-link active" aria-current="page" href="{href}"' in page
+        # Triage (and only the current section) is not marked.
+        assert 'aria-current="page" href="/">Triage' not in page
+
+
+def test_nav_triage_active_on_queue_and_test_record(client, seeded):
+    assert 'class="nav-link active" aria-current="page" href="/">Triage' in client.get("/").text
+    ident_id = _identity_id(seeded, "alpha")
+    page = client.get(f"/tests/{ident_id}").text
+    assert 'class="nav-link active" aria-current="page" href="/">Triage' in page
+    assert 'aria-current="page" href="/runs"' not in page
+
+
+def test_nav_search_page_highlights_nothing(client):
+    page = client.get("/search?q=zzz-no-such-test").text
+    assert "nav-link active" not in page
+    assert "aria-current" not in page
+
+
+def test_nav_section_boundaries():
+    from uta.web.app import nav_section
+
+    assert nav_section("/") == "triage"
+    assert nav_section("/tests/42") == "triage"
+    assert nav_section("/runs") == "runs"
+    assert nav_section("/runs/1702") == "runs"
+    assert nav_section("/search") is None
+
+
+def test_triage_badge_shows_new_count_on_every_page(client):
+    # One unacknowledged new failing test ("alpha") → a red 1 on the Triage nav link everywhere.
+    for path in ("/", "/runs", "/flaky", "/kb", "/control"):
+        page = client.get(path).text
+        assert 'text-bg-danger' in page
+        assert ">1</span>" in page
+
+
+def test_triage_badge_ignores_queue_filters(multi_owner_client):
+    # The badge is the live global count, not the filtered view's.
+    page = multi_owner_client.get("/?owner=AB").text
+    assert ">2</span>" in page
+
+
+def test_triage_badge_hidden_at_zero(client, seeded):
+    ident_id = _identity_id(seeded, "alpha")
+    client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    page = client.get("/").text
+    assert "text-bg-danger" not in page
+
+
+def test_triage_and_test_record_times_render_relative_with_absolute_title(session_factory):
+    # Triage "First failed" column and the test-record lifecycle/episode times use |reltime.
+    from datetime import UTC, datetime, timedelta
+
+    started = datetime.now(UTC) - timedelta(hours=3, minutes=1)
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"}, started_at=started)
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    queue = client.get("/").text
+    assert "3 h ago</span>" in queue
+    assert f'<span title="{started.strftime("%Y-%m-%d %H:%M")}' in queue  # absolute on hover
+    record = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
+    assert "3 h ago</span>" in record
+    assert f'<span title="{started.strftime("%Y-%m-%d %H:%M")}' in record
+
+
 # ── run-results failures-only filter (issue #63) ────────────────────────────
 
 

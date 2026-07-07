@@ -113,11 +113,11 @@
   <nav class="navbar navbar-expand navbar-dark bg-dark px-3">
     <span class="navbar-brand fw-bold">UT Analyzer</span>
     <ul class="navbar-nav me-auto">
-      <li class="nav-item"><a class="nav-link" href="/">Triage</a></li>
-      <li class="nav-item"><a class="nav-link" href="/runs">Job runs</a></li>
-      <li class="nav-item"><a class="nav-link" href="/flaky">Flaky</a></li>
-      <li class="nav-item"><a class="nav-link" href="/kb">Knowledge base</a></li>
-      <li class="nav-item"><a class="nav-link" href="/control">Control</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "triage" %} active" aria-current="page{% endif %}" href="/">Triage{% if triage_new_count %} <span class="badge rounded-pill text-bg-danger" title="{{ triage_new_count }} new failing test{{ "s" if triage_new_count != 1 }} awaiting acknowledgement">{{ triage_new_count }}</span>{% endif %}</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "runs" %} active" aria-current="page{% endif %}" href="/runs">Job runs</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "flaky" %} active" aria-current="page{% endif %}" href="/flaky">Flaky</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "kb" %} active" aria-current="page{% endif %}" href="/kb">Knowledge base</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "control" %} active" aria-current="page{% endif %}" href="/control">Control</a></li>
     </ul>
     <form class="d-flex align-items-center gap-2 me-2" method="get" action="/search">
       <input class="form-control form-control-sm" style="width: 12rem" type="text" name="q"

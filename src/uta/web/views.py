@@ -305,6 +305,23 @@ def triage_filter_options(session: Session) -> dict:
     return {"owners": owners, "suites": suites}
 
 
+def new_failing_count(session: Session) -> int:
+    """The number of unacknowledged NEW failing tests — the triage queue's "new" bucket size.
+
+    The same predicate :func:`triage_queue` uses for its first bucket (``FAILING`` and not
+    acknowledged), as a single COUNT so the navbar badge (issue #79) can show it on every page
+    without building the whole queue projection.
+    """
+    return session.scalar(
+        select(func.count())
+        .select_from(TestLifecycle)
+        .where(
+            TestLifecycle.state == LifecycleState.FAILING,
+            TestLifecycle.acknowledged.is_(False),
+        )
+    )
+
+
 def triage_queue(
     session: Session,
     *,
