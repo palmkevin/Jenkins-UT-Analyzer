@@ -10,8 +10,10 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
+from tests.builders import make_run
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
 from tests.fakes.email import RecordingEmailSender
+from uta.analyze.baseline import select_baseline
 from uta.db import session_scope
 from uta.ingest.pipeline import _dedupe_cases, data_change_window, ingest_build
 from uta.ingest.ut_report import FAILED_STATUSES, TestCaseResult
@@ -40,6 +42,33 @@ def test_ingest_persists_run_and_results(session_factory):
         assert n == 14
         tracks = set(s.scalars(select(TestResult.track)).all())
         assert tracks == {"permanent", "permanent_py39"}
+
+
+class _AbortedShardFakeJenkins(FakeJenkinsClient):
+    """A build interrupted mid-way through the py39 UT shard: ``wfapi/describe`` still lists both
+    UT stages, but the interrupted one carries status ABORTED (issue #83)."""
+
+    def wfapi(self, build: int) -> dict:
+        payload = super().wfapi(build)
+        for stage in payload["stages"]:
+            if stage["name"] == "devUTs: Execute - permanent_py39":
+                stage["status"] = "ABORTED"
+        return payload
+
+
+def test_ingest_aborted_shard_run_is_incomplete_and_never_a_baseline(session_factory):
+    """Both shards present but one ABORTED ⇒ not complete, no analysis, never the baseline."""
+    ingest_build(_AbortedShardFakeJenkins(), session_factory, 1702, expected_shards=2)
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is False
+        assert {sh.track: sh.status for sh in run.shards}["permanent_py39"] == "ABORTED"
+        # The partial run is persisted but gated out of the analysis…
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 14
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
+        # …and a later run never diffs against it.
+        later = make_run(s, 1703, {}, started_at=run.started_at + timedelta(hours=24))
+        assert select_baseline(s, later) is None
 
 
 def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
