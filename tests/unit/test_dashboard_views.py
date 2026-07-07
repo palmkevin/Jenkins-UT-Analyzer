@@ -578,15 +578,16 @@ def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory)
         assert "ut_pricing" in options["suites"]
 
 
-def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_factory):
+def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(
             s,
             1,
-            {"alpha": "FAILED", "beta": "FAILED"},
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
             errors={
                 "alpha": ("boom", "Traceback"),
                 "beta": ("boom", "Traceback"),
+                "gamma": ("boom", "Traceback"),
             },
             fail_tracks={"alpha": ("permanent",), "beta": ("permanent",)},
         )
@@ -595,10 +596,37 @@ def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_fa
 
         queue = views.triage_queue(s)
         rows = {r["test_id"]: r for r in queue["new"]}
-        assert rows["alpha"]["track"] == "permanent"
+        assert rows["alpha"]["tracks"] == ["permanent"]
         assert rows["alpha"]["signature_id"] is not None
         # Distinct tests with the same error text get distinct signatures (hash includes identity).
         assert rows["alpha"]["signature_id"] != rows["beta"]["signature_id"]
+        # A test failing in both tracks carries both (issue #84) and still anchors one signature —
+        # the normalizer strips the track prefix, so both tracks' failures share it.
+        assert rows["gamma"]["tracks"] == ["permanent", "permanent_py39"]
+        assert rows["gamma"]["signature_id"] is not None
+
+
+def test_triage_track_filter_matches_any_failing_track(session_factory):
+    # Issue #84: "both" fails in both tracks, "single" only in permanent_py39. The exact-track
+    # filter used to keep only one arbitrary track per row, hiding "both" from one of the filters.
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"both": "FAILED", "single": "FAILED"},
+            fail_tracks={"single": ("permanent_py39",)},
+        )
+        apply_run(s, r1, baseline=None)
+
+        by_perm = views.triage_queue(s, filters={"track": "permanent"})
+        assert {r["test_id"] for r in by_perm["new"]} == {"both"}
+
+        by_py39 = views.triage_queue(s, filters={"track": "permanent_py39"})
+        assert {r["test_id"] for r in by_py39["new"]} == {"both", "single"}
+
+        rows = {r["test_id"]: r for r in by_py39["new"]}
+        assert rows["both"]["tracks"] == ["permanent", "permanent_py39"]
+        assert rows["single"]["tracks"] == ["permanent_py39"]
 
 
 # ── run-results failures-only filter (issue #63) ────────────────────────────

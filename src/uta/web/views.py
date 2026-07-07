@@ -103,11 +103,18 @@ def _run_refs(session: Session, run_ids: Collection[int]) -> dict[int, dict]:
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:
-    """Batch variant of the failure-detail lookup, projected down to ``{track, signature_id}``.
+    """Batch variant of the failure-detail lookup, projected down to ``{tracks, signature_id}``.
 
     Used by the triage queue to filter/display by track and to surface the "acknowledge all with
     this signature" bulk action — one query for every episode's characterising failure instead of
     one per row.
+
+    ``tracks`` carries **every** failing track of the ``(identity, run)`` pair — a test normally
+    runs in both tracks, so failing in both is the common case, and collapsing to one row's track
+    made the exact track filter hide genuinely failing tests (issue #84). ``signature_id`` is the
+    first failing row's (track order): the normalizer strips the track prefix, so both tracks'
+    failures hash to the same signature in practice — and the bulk action matches on the
+    signature's error *text*, not its id, so any one of the pair's signatures anchors it equally.
     """
     pairs = {
         (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
@@ -126,12 +133,14 @@ def _failure_infos(
             tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
             TestResult.status.in_(FAILED_STATUSES),
         )
-        .order_by(TestResult.id)
+        .order_by(TestResult.track, TestResult.id)
     ).all()
-    by_pair = {
-        (identity_id, run_id): {"track": track, "signature_id": signature_id}
-        for identity_id, run_id, track, signature_id in rows
-    }
+    by_pair: dict[tuple[int, int], dict] = {}
+    for identity_id, run_id, track, signature_id in rows:
+        info = by_pair.setdefault((identity_id, run_id), {"tracks": [], "signature_id": None})
+        info["tracks"].append(track)
+        if info["signature_id"] is None:
+            info["signature_id"] = signature_id
     return {
         ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
         for ep in episodes
@@ -227,7 +236,7 @@ def _row(
         "predicted_cause": classification.predicted_cause if classification else None,
         "causing_person": attribution.causing_person if attribution else None,
         "reason_text": attribution.reason_text if attribution else None,
-        "track": failure_info["track"] if failure_info else None,
+        "tracks": failure_info["tracks"] if failure_info else [],
         "signature_id": failure_info["signature_id"] if failure_info else None,
     }
 
@@ -235,9 +244,10 @@ def _row(
 def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     """Whether a projected triage row passes the query-param filter set.
 
-    Text filters (``owner``/``suite``) are case-insensitive substring matches; the rest
-    (``track``/``cause``/``triage_status``) are exact; ``flaky`` is a truthy toggle. An absent or
-    empty filter value never excludes a row.
+    Text filters (``owner``/``suite``) are case-insensitive substring matches; ``track`` matches
+    when **any** failing track equals it (a test failing in both tracks must show under either
+    filter — issue #84); ``cause``/``triage_status`` are exact; ``flaky`` is a truthy toggle. An
+    absent or empty filter value never excludes a row.
     """
     owner = filters.get("owner", "").strip().lower()
     if owner and owner not in (row["owner"] or "").lower():
@@ -246,7 +256,7 @@ def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     if suite and suite not in (row["suite"] or "").lower():
         return False
     track = filters.get("track", "").strip()
-    if track and row["track"] != track:
+    if track and track not in row["tracks"]:
         return False
     cause = filters.get("cause", "").strip()
     if cause and row["predicted_cause"] != cause:

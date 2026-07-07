@@ -8,6 +8,8 @@
 
 {% macro test_link(row) -%}
   <a href="/tests/{{ row.identity_id }}">{{ row.test_id }}</a>
+  {#- One badge per failing track (issue #84) — both when the test fails in both. -#}
+  {%- for t in row.tracks %} <span class="badge track">{{ t }}</span>{% endfor -%}
   {%- if row.flaky %} <span class="badge flaky">flaky</span>{% endif -%}
   {%- if row.reopen_count %} <span class="badge">reopened ×{{ row.reopen_count }}</span>{% endif -%}
 {%- endmacro %}
