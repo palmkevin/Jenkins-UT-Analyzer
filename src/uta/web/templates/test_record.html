@@ -88,6 +88,7 @@
 
     <p>
       <strong>Predicted cause:</strong> {{ ep.predicted_cause or "—" }}
+      {% if ep.confidence is not none %} <span class="badge" title="Deterministic confidence: relevance-score gap + KB provenance">confidence {{ "%.2f"|format(ep.confidence) }}</span>{% endif %}
       {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
     </p>
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}

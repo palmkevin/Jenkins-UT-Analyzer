@@ -94,7 +94,7 @@ def _seed_control_state(
         # Overrides in effect — demonstrate the badge/Revert without perturbing the seeded
         # triage/flaky numbers (kb_top_k only widens how many similar KB cases a test page lists).
         session.add(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
-        # Drop the row cap below a demo run's 26 result rows so the run page's server-side
+        # Drop the row cap below a demo run's 30 result rows so the run page's server-side
         # pagination (issue #52) is visible in the live demo. Triage buckets are far smaller, so
         # they render unchanged.
         session.add(SettingOverride(key="ui_row_limit", value="20", updated_by=_DEMO_ACTOR))
@@ -179,6 +179,13 @@ def seed_demo_data(
                 triage_status="in_progress",
                 jira_ticket="LX-8842",
             )
+
+        # One-click Confirm of the tie-break test's AI suggestion (issue #73): together with the
+        # timezone correction above, the control panel's AI-accuracy metric shows one confirmed and
+        # one corrected cause instead of an empty panel.
+        dt = _current_episode_id(session, "ut_pricing.pr_engine.TestClass.test_discount_tiers")
+        if dt is not None:
+            actions.confirm(session, dt[1], _DEMO_ACTOR)
 
     # Synthetic control-panel state so the demo's /control page renders populated (issue #16).
     _seed_control_state(session_factory, anchor=anchor, builds=builds)

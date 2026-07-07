@@ -10,6 +10,11 @@ unacknowledged tests with identical error text) exercising the triage queue's fi
 the commit touching its own module (path overlap), while ``test_timezone_convert``'s is the
 ``LORDER`` data change its error text names (entity mention) — two failures of the same run
 history whose likely culprits visibly differ — and ``test_pdf_render`` shows the no-match case.
+``test_discount_tiers`` adds the score-magnitude tie-break (issue #73): both candidate kinds match
+it, but the tier-3 module match outscores the tier-2 component mention, so it classifies as
+CODE_CHANGE (with a visible confidence) instead of UNKNOWN; the seed Confirms that suggestion and
+the timezone test's seeded attribution is a correction, so the control panel's AI-accuracy metric
+shows both verdict kinds.
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``
@@ -119,6 +124,21 @@ _SPECS: tuple[TestSpec, ...] = (
         line=77,
         owner="mel",
         extra_zephyr_ids=("LX-T5120",),
+    ),
+    # Score-magnitude tie-break (issue #73): opens in build 612, whose window carries BOTH candidate
+    # kinds and BOTH match this test — the commit touches its own module ut_pricing/pr_engine.py
+    # (tier-3 module match) while the error text names the AC_CSVC2 *component* (tier-2 mention).
+    # The old boolean tie-break collapsed this to UNKNOWN; the margin-aware comparison resolves it
+    # to CODE_CHANGE with a visible mid-range confidence. The seed then Confirms the suggestion, so
+    # the AI-accuracy panel shows a confirmed verdict next to the timezone test's corrected one.
+    TestSpec(
+        "ut_pricing.pr_engine.TestClass",
+        "test_discount_tiers",
+        "PPPPPPPPPPPFFF",
+        exc_type="AssertionError",
+        message="tier lookup failed after AC_CSVC2 refresh: expected 3 rows got 0",
+        line=152,
+        owner="kam",
     ),
     # Flaky oscillator: alternating pass/fail -> high transition rate -> flaky flag + leaderboard.
     # Also the UNKNOWN examples: its build-612 episode has both candidate kinds but neither is
