@@ -578,6 +578,39 @@ def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory)
         assert "ut_pricing" in options["suites"]
 
 
+# ── active-filter chips + header sort links (issue #77) ──────────────────────
+
+
+def test_triage_filter_chips_one_per_active_filter_with_remove_url():
+    chips = views.triage_filter_chips({"owner": "KP", "flaky": "1"}, sort="name")
+    assert [c["label"] for c in chips] == ["owner: KP", "flaky only"]
+    by_key = {c["key"]: c for c in chips}
+    # Each ✕ drops just its own filter and keeps the rest, including the sort.
+    assert by_key["owner"]["remove_url"] == "/?flaky=1&sort=name"
+    assert by_key["flaky"]["remove_url"] == "/?owner=KP&sort=name"
+
+
+def test_triage_filter_chips_empty_when_nothing_active():
+    assert views.triage_filter_chips({}) == []
+
+
+def test_triage_filter_chip_removing_last_filter_links_home():
+    (chip,) = views.triage_filter_chips({"suite": "ut_pricing"})
+    assert chip["label"] == "suite: ut_pricing"
+    assert chip["remove_url"] == "/"
+
+
+def test_triage_sort_links_apply_and_toggle_off():
+    links = views.triage_sort_links({"owner": "KP"})
+    assert links["name"] == {"active": False, "url": "/?owner=KP&sort=name"}
+    assert links["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
+
+    active = views.triage_sort_links({"owner": "KP"}, sort="name")
+    # The active sort marks itself and its link toggles back to the age default.
+    assert active["name"] == {"active": True, "url": "/?owner=KP"}
+    assert active["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
+
+
 def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(
