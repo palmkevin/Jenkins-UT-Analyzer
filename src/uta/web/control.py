@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from uta.config import Settings
+from uta.control.ai_accuracy import ai_accuracy
 from uta.control.heartbeat import read_heartbeat
 from uta.control.jobs import recent_jobs
 from uta.control.quarantine import list_quarantine
@@ -90,7 +91,7 @@ def _quarantine_dict(row) -> dict:
 
 
 def control_panel(session: Session, base_settings: Settings, *, error: str | None = None) -> dict:
-    """The full control-panel context: tunables, poller health, quarantine, ingest jobs."""
+    """The full control-panel context: tunables, poller health, quarantine, jobs, AI accuracy."""
     overrides = load_overrides(session)
     hb = read_heartbeat(session)
     high_water_mark = session.scalar(select(func.max(Run.build_number)))
@@ -111,5 +112,6 @@ def control_panel(session: Session, base_settings: Settings, *, error: str | Non
         "quarantine": [_quarantine_dict(q) for q in list_quarantine(session)],
         "quarantine_after_attempts": base_settings.quarantine_after_attempts,
         "jobs": [_job_dict(j) for j in recent_jobs(session)],
+        "ai_accuracy": ai_accuracy(session),
         "error": error,
     }

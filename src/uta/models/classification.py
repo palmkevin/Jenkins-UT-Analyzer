@@ -1,9 +1,11 @@
 """Predicted cause / LLM hypothesis per episode (Information model: 'Classifications').
 
-Deterministic prediction (CODE/DATA/INFRA/UNKNOWN) from time-windowed candidates (M2). A
-**confidence** number is deferred per design — there is no KB to rank against on day one — so the
-column is nullable and stays null in v1. Rows are append-only for auditability; the latest by
-``created_at`` is the current prediction.
+Deterministic prediction (CODE/DATA/INFRA/UNKNOWN) from time-windowed candidates (M2). The
+**confidence** number is derived deterministically at classification time (issue #73) from the
+relevance-score gap between the winning and losing candidate kinds plus the KB provenance weight of
+the failure's signature — see :mod:`uta.analyze.classify`. The column stays nullable: rows
+classified before the formula existed keep ``NULL``. Rows are append-only for auditability; the
+latest by ``created_at`` is the current prediction.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ class Classification(Base, TimestampMixin):
     episode_id: Mapped[int] = mapped_column(ForeignKey("failure_episodes.id"), index=True)
 
     predicted_cause: Mapped[str] = mapped_column(String(16), default=PredictedCause.UNKNOWN)
-    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)  # deferred (v1: null)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)  # null pre-#73 rows
     suggested_contact: Mapped[str | None] = mapped_column(String(128), nullable=True)
     llm_hypothesis: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[str | None] = mapped_column(

@@ -144,6 +144,59 @@ def test_divergent_top_ranked_candidates_in_the_same_run(session_factory):
     assert tz["candidates"]["data"][1]["score"] == 0
 
 
+def test_score_magnitude_tie_break_resolves_to_code(session_factory):
+    """Both candidate kinds match test_discount_tiers, but the tier-3 module match outscores the
+    tier-2 component mention — the margin-aware tie-break (issue #73) resolves it to CODE_CHANGE
+    (previously UNKNOWN) with a visible mid-range confidence, and the seed's one-click Confirm
+    stamps AI_CONFIRMED so the accuracy metric has a confirmed verdict."""
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_pricing.pr_engine.TestClass.test_discount_tiers"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]
+    evidence = ep["evidence"]
+    assert evidence["code_candidates"] and evidence["data_candidates"]
+    assert evidence["relevance"]["top_code"]["score"] == 3.0
+    assert evidence["relevance"]["top_data"]["score"] == 2.0
+    assert ep["predicted_cause"] == "CODE_CHANGE"
+    assert evidence["relevance"]["tie_break"] == "code"
+    assert ep["confidence"] == pytest.approx(0.63)
+    # The seeded Confirm accepted the suggested contact (the build-612 commit's sole author).
+    assert ep["causing_person"] == "P. Nowak"
+    assert ep["cause_provenance"] == "AI_CONFIRMED"
+
+
+def test_every_new_classification_carries_a_confidence(session_factory, queue):
+    """#73's acceptance: confidence is populated (non-None) for every newly classified episode."""
+    session = session_factory()
+    for bucket in ("new", "still_failing", "recently_fixed"):
+        for row in queue[bucket]:
+            if row["predicted_cause"] is None:
+                continue
+            record = views.test_record(session, row["identity_id"])
+            classified = [e for e in record["episodes"] if e["predicted_cause"]]
+            assert classified and all(e["confidence"] is not None for e in classified), row[
+                "test_id"
+            ]
+
+
+def test_control_panel_shows_ai_accuracy(session_factory):
+    """The demo seeds one confirmed (discount-tiers) and one corrected (timezone) AI cause, so the
+    control panel's accuracy metric renders populated (issue #73)."""
+    from uta.config import Settings
+    from uta.web import control
+
+    panel = control.control_panel(session_factory(), Settings())
+    acc = panel["ai_accuracy"]
+    assert acc["has_data"] is True
+    assert acc["all_time"]["cause"]["confirmed"] == 1
+    assert acc["all_time"]["cause"]["corrected"] == 1
+    assert acc["all_time"]["cause"]["precision"] == pytest.approx(0.5)
+
+
 def test_pdf_render_ties_stay_unknown_without_relevance(session_factory):
     """The flaky test's build-612 episode saw both candidate kinds but neither matches it, so
     the tie deliberately stays UNKNOWN (contrast with the invoice-rounding tie-break above)."""

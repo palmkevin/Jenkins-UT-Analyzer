@@ -476,6 +476,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "triage_status": ep.triage_status,
         "jira_ticket": ep.jira_ticket,
         "predicted_cause": classification.predicted_cause if classification else None,
+        "confidence": classification.confidence if classification else None,
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
         "suggested_contact": classification.suggested_contact if classification else None,
         "evidence": evidence,

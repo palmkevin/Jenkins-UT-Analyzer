@@ -73,6 +73,33 @@ def _best_attribution(session: Session, signature_id: int) -> Attribution | None
     )
 
 
+def strongest_provenance_weight(session: Session, signature_id: int | None) -> int:
+    """The strongest provenance weight among conclusions attached to a signature (0 when none).
+
+    The classifier's confidence derivation (issue #73) asks "how well does the KB know this exact
+    failure?" — answered by the most-validated human conclusion linked to the signature, whichever
+    of its two provenance columns (cause / reason) carries the stronger tier.
+    """
+    if signature_id is None:
+        return 0
+    attrs = session.scalars(
+        select(Attribution).where(
+            Attribution.signature_id == signature_id,
+            (Attribution.reason_text.isnot(None)) | (Attribution.causing_person.isnot(None)),
+        )
+    ).all()
+    return max(
+        (
+            max(
+                PROVENANCE_WEIGHT.get(a.cause_provenance, 0),
+                PROVENANCE_WEIGHT.get(a.reason_provenance, 0),
+            )
+            for a in attrs
+        ),
+        default=0,
+    )
+
+
 def exact_recurrence(
     session: Session, identity_name: str, sig: NormalizedSignature
 ) -> FailureSignature | None:
