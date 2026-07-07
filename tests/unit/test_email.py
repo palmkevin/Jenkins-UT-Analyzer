@@ -6,11 +6,13 @@ otherwise silence (unless the recovery-notice toggle is on and the run is back t
 
 from __future__ import annotations
 
+import smtplib
+
 from tests.builders import _EPOCH, make_run
 from tests.fakes.email import RecordingEmailSender
 from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
-from uta.delivery.email import build_regression_report, maybe_notify
+from uta.delivery.email import EmailMessage, build_regression_report, send_alert
 from uta.models import CodeChangeCandidate
 
 RCPT = ("team@example.com",)
@@ -73,24 +75,24 @@ def test_recovery_notice_only_when_toggled_and_green(session_factory):
     assert "back to green" in msg.subject
 
 
-def test_maybe_notify_sends_via_sender(session_factory):
+def test_send_alert_delivers_via_sender(session_factory):
     sender = RecordingEmailSender()
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
         run = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        out = maybe_notify(s, run, sender, RCPT)
-    assert out is not None
-    assert len(sender.sent) == 1
-    assert sender.sent[0].subject == out.subject
+        msg = build_regression_report(s, run, RCPT)
+    assert msg is not None
+    assert send_alert(sender, msg) is True
+    assert sender.sent == [msg]
 
 
-def test_maybe_notify_noop_without_sender_or_recipients(session_factory):
-    sender = RecordingEmailSender()
-    with session_factory() as s:
-        _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED"})
-        s.commit()
-        assert maybe_notify(s, run, None, RCPT) is None  # no sender
-        assert maybe_notify(s, run, sender, ()) is None  # no recipients
-    assert sender.sent == []
+def test_send_alert_swallows_sender_failure():
+    """A raising sender is logged and dropped, never raised — alerting is best-effort (#81)."""
+
+    class _RaisingSender:
+        def send(self, message: EmailMessage) -> None:
+            raise smtplib.SMTPException("relay down")
+
+    msg = EmailMessage(subject="s", body="b", recipients=RCPT)
+    assert send_alert(_RaisingSender(), msg) is False

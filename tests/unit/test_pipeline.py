@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import smtplib
 import threading
 import time
 from datetime import timedelta
 
 import httpx
 import pytest
+from sqlalchemy import exc as sa_exc
 from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
@@ -245,6 +247,101 @@ def test_ingest_emails_on_regression_only_via_sender(session_factory):
     # Re-ingest with no sender (the back-fill path) sends nothing more.
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     assert len(sender.sent) == 1
+
+
+def test_ingest_sends_nothing_without_recipients(session_factory):
+    """A sender with no recipients means email isn't configured — no report is even composed."""
+    sender = RecordingEmailSender()
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, email_sender=sender)
+    assert sender.sent == []
+
+
+class _RaisingEmailSender:
+    """An :class:`~uta.delivery.email.EmailSender` whose relay is down — every send raises."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def send(self, message) -> None:
+        self.attempts += 1
+        raise smtplib.SMTPException("relay down")
+
+
+def test_email_failure_does_not_fail_or_roll_back_ingest(session_factory):
+    """An SMTP outage must never destroy an ingest (issue #81).
+
+    The alert is sent only after the run's transaction commits, and a send failure is swallowed —
+    so the run and its results are persisted regardless, and ``ingest_build`` returns normally
+    (no quarantine attempt is ever recorded for a mail outage).
+    """
+    sender = _RaisingEmailSender()
+    ingest_build(
+        FakeJenkinsClient(),
+        session_factory,
+        1702,
+        email_sender=sender,
+        email_recipients=("team@example.com",),
+    )
+    assert sender.attempts == 1  # the send was attempted (post-commit) and its failure swallowed
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run is not None and run.complete is True
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 14
+
+
+class _CommitFailsOnce:
+    """A session factory whose first ``commit()`` raises a transient ``OperationalError``.
+
+    Simulates the poller-retry scenario of issue #81: ingest completes, the commit blips, the
+    poller retries ``ingest_build``. The alert must go out for the committed attempt only.
+    """
+
+    def __init__(self, session_factory) -> None:
+        self._factory = session_factory
+        self.failed = False
+
+    def __call__(self):
+        session = self._factory()
+        if not self.failed:
+
+            def _fail_once():
+                self.failed = True
+                # ``session_scope`` rolls back on the raise, discarding the attempt's writes.
+                raise sa_exc.OperationalError("COMMIT", None, RuntimeError("connection blip"))
+
+            session.commit = _fail_once
+        return session
+
+
+def test_alert_sent_once_when_retry_follows_commit_failure(session_factory):
+    """A commit failure after the analysis must not duplicate the alert on retry (issue #81).
+
+    The send happens only after a successful commit, so the failed first attempt mails nothing;
+    the retry recomputes the identical diff and sends the alert exactly once.
+    """
+    sender = RecordingEmailSender()
+    factory = _CommitFailsOnce(session_factory)
+    with pytest.raises(sa_exc.OperationalError):
+        ingest_build(
+            FakeJenkinsClient(),
+            factory,
+            1702,
+            email_sender=sender,
+            email_recipients=("team@example.com",),
+        )
+    assert sender.sent == []  # nothing committed ⇒ nothing mailed
+
+    # The poller retries the transient failure with the same arguments (its live path).
+    ingest_build(
+        FakeJenkinsClient(),
+        factory,
+        1702,
+        email_sender=sender,
+        email_recipients=("team@example.com",),
+    )
+    assert len(sender.sent) == 1  # exactly one alert across the failed attempt + retry
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 14
 
 
 def test_ingest_fills_llm_hypothesis_with_provider(session_factory):
