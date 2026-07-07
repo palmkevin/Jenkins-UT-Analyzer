@@ -908,7 +908,10 @@
     in-process SQLite store — same code paths, invented data. <code>uta demo</code> serves it locally;
     <code>uta seed-demo</code> seeds a persistent store instead. <a href="../render.yaml">render.yaml</a>
     auto-deploys this image to a free Render web service on every push to <code>main</code>, gated by the
-    same CI check that protects the branch — it is not part of the production system map above.</p>
+    same CI check that protects the branch — it is not part of the production system map above. The
+    <b>control panel is read-only</b> in this deployment: its mutating routes (settings save/revert,
+    on-demand ingest) return <code>403</code> instead of touching the shared store or opening an outbound
+    connection from the public host, while the health/tunables view and triage actions stay live.</p>
   </div>
 </section>
 
