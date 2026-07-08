@@ -184,9 +184,7 @@ def test_setting_revert_message_names_the_default(client):
 
 
 def test_setting_error_uses_flash_not_query_param(client):
-    resp = client.post(
-        "/control/settings", data={"key": "flaky_window_days", "value": "9999"}
-    )
+    resp = client.post("/control/settings", data={"key": "flaky_window_days", "value": "9999"})
     assert resp.headers["location"] == "/control"  # no ?error= any more — one pattern
     page = client.get("/control").text
     assert "must be between" in page and "alert-danger" in page
