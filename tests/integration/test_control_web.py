@@ -163,7 +163,10 @@ def test_no_poll_trigger_when_all_jobs_terminal(client):
 def test_active_job_polls_and_shows_progress(client, factory):
     with session_scope(factory) as s:
         job = IngestJob(
-            build_start=1, build_end=4, builds_total=4, builds_done=1,
+            build_start=1,
+            build_end=4,
+            builds_total=4,
+            builds_done=1,
             status=IngestJobStatus.RUNNING,
         )
         s.add(job)
