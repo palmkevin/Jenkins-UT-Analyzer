@@ -345,6 +345,7 @@ def run_scheduler(
     Each tick goes through :func:`poll_tick`, which re-resolves runtime overrides and stamps the
     heartbeat, so both live-tuning and poller-health surface without a restart.
     """
+
     def _tick() -> list[int]:
         return poll_tick(
             client,
