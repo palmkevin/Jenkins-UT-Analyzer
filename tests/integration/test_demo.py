@@ -51,6 +51,27 @@ def test_removed_test_is_flagged_in_still_failing(queue):
     assert any(row.get("removed") for row in queue["still_failing"])
 
 
+def test_track_divergent_failure_shows_under_its_track_only(session_factory, queue):
+    """Issue #84: rows carry every failing track, and the track filter matches any of them —
+    the py39-only failure appears under ?track=permanent_py39 but not ?track=permanent, while
+    the both-track failures show under either."""
+    py39_only = "ut_core.co_compat.TestClass.test_type_union_annotation"
+    rows = {r["test_id"]: r for r in queue["new"]}
+    assert rows[py39_only]["tracks"] == ["permanent_py39"]
+    both = "ut_billing.bi_round.TestClass.test_invoice_rounding"
+    assert rows[both]["tracks"] == ["permanent", "permanent_py39"]
+
+    def new_names(track: str) -> set[str]:
+        filtered = views.triage_queue(
+            session_factory(), recently_fixed_days=7, limit=200, filters={"track": track}
+        )
+        return {r["test_id"] for r in filtered["new"]}
+
+    assert py39_only not in new_names("permanent")
+    assert py39_only in new_names("permanent_py39")
+    assert both in new_names("permanent") and both in new_names("permanent_py39")
+
+
 def test_acknowledged_and_attributed_failure_is_present(queue):
     tz = next(
         r
@@ -144,6 +165,59 @@ def test_divergent_top_ranked_candidates_in_the_same_run(session_factory):
     assert tz["candidates"]["data"][1]["score"] == 0
 
 
+def test_score_magnitude_tie_break_resolves_to_code(session_factory):
+    """Both candidate kinds match test_discount_tiers, but the tier-3 module match outscores the
+    tier-2 component mention — the margin-aware tie-break (issue #73) resolves it to CODE_CHANGE
+    (previously UNKNOWN) with a visible mid-range confidence, and the seed's one-click Confirm
+    stamps AI_CONFIRMED so the accuracy metric has a confirmed verdict."""
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_pricing.pr_engine.TestClass.test_discount_tiers"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    ep = record["episodes"][0]
+    evidence = ep["evidence"]
+    assert evidence["code_candidates"] and evidence["data_candidates"]
+    assert evidence["relevance"]["top_code"]["score"] == 3.0
+    assert evidence["relevance"]["top_data"]["score"] == 2.0
+    assert ep["predicted_cause"] == "CODE_CHANGE"
+    assert evidence["relevance"]["tie_break"] == "code"
+    assert ep["confidence"] == pytest.approx(0.63)
+    # The seeded Confirm accepted the suggested contact (the build-612 commit's sole author).
+    assert ep["causing_person"] == "P. Nowak"
+    assert ep["cause_provenance"] == "AI_CONFIRMED"
+
+
+def test_every_new_classification_carries_a_confidence(session_factory, queue):
+    """#73's acceptance: confidence is populated (non-None) for every newly classified episode."""
+    session = session_factory()
+    for bucket in ("new", "still_failing", "recently_fixed"):
+        for row in queue[bucket]:
+            if row["predicted_cause"] is None:
+                continue
+            record = views.test_record(session, row["identity_id"])
+            classified = [e for e in record["episodes"] if e["predicted_cause"]]
+            assert classified and all(e["confidence"] is not None for e in classified), row[
+                "test_id"
+            ]
+
+
+def test_control_panel_shows_ai_accuracy(session_factory):
+    """The demo seeds one confirmed (discount-tiers) and one corrected (timezone) AI cause, so the
+    control panel's accuracy metric renders populated (issue #73)."""
+    from uta.config import Settings
+    from uta.web import control
+
+    panel = control.control_panel(session_factory(), Settings())
+    acc = panel["ai_accuracy"]
+    assert acc["has_data"] is True
+    assert acc["all_time"]["cause"]["confirmed"] == 1
+    assert acc["all_time"]["cause"]["corrected"] == 1
+    assert acc["all_time"]["cause"]["precision"] == pytest.approx(0.5)
+
+
 def test_pdf_render_ties_stay_unknown_without_relevance(session_factory):
     """The flaky test's build-612 episode saw both candidate kinds but neither matches it, so
     the tie deliberately stays UNKNOWN (contrast with the invoice-rounding tie-break above)."""
@@ -187,6 +261,27 @@ def test_demo_app_serves_all_views():
         assert resp.status_code == 200, path
         assert resp.text  # non-empty HTML
     assert "test_" in client.get("/").text  # the triage queue lists tests
+
+
+def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
+    """The demo's shop-window for issue #106: the SMTP-outage pair is seeded new & untriaged with
+    identical error text, so each test's record page renders the "apply to all N affected tests"
+    signature-wide attribution control (N=2)."""
+    from uta.web.app import create_app
+
+    session = session_factory()
+    client = TestClient(create_app(session_factory=session_factory))
+    for method in ("test_email_dispatch", "test_sms_dispatch"):
+        ident_id = session.scalar(
+            select(TestIdentity.id).where(
+                TestIdentity.canonical_name == f"ut_notify.nt_dispatch.TestClass.{method}"
+            )
+        )
+        record = views.test_record(session, ident_id)
+        assert record["recurrence"]["open_affected"] == 2
+        page = client.get(f"/tests/{ident_id}").text
+        assert "Apply to all 2 affected tests with this signature" in page
+        assert f'formaction="/signatures/{record["recurrence"]["signature_id"]}/attribute"' in page
 
 
 def test_demo_app_test_record_route():

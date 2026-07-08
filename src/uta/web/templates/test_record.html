@@ -35,11 +35,11 @@
     {% if lc.reopen_count %}<span class="badge">reopened ×{{ lc.reopen_count }}</span>{% endif %}
   </p>
   <p class="meta">
-    First failure (all-time): {{ run_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at|ts }}<br>
-    Last failing run: {{ run_link(lc.last_failing) }} · {{ lc.last_failing_at|ts }}
+    First failure (all-time): {{ run_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at|reltime }}<br>
+    Last failing run: {{ run_link(lc.last_failing) }} · {{ lc.last_failing_at|reltime }}
   </p>
   {% if lc.acknowledged %}
-    <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> at {{ lc.acknowledged_at|ts }}.</p>
+    <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> {{ lc.acknowledged_at|reltime }}.</p>
   {% elif lc.state == "FAILING" %}
     <form method="post" action="/tests/{{ record.identity_id }}/acknowledge">
       <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
@@ -58,9 +58,9 @@
       {% if lc and ep.id == lc.current_episode_id %}<span class="badge">current</span>{% endif %}
     </h3>
     <p class="meta">
-      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at|ts }}<br>
-      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at|ts }}<br>
-      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at|ts }}<br>
+      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at|reltime }}<br>
+      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at|reltime }}<br>
+      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at|reltime }}<br>
       Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
     </p>
 
@@ -88,6 +88,7 @@
 
     <p>
       <strong>Predicted cause:</strong> {{ ep.predicted_cause or "—" }}
+      {% if ep.confidence is not none %} <span class="badge" title="Deterministic confidence: relevance-score gap + KB provenance">confidence {{ "%.2f"|format(ep.confidence) }}</span>{% endif %}
       {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
     </p>
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
@@ -117,7 +118,18 @@
         <option value="{{ s }}"{% if ep.triage_status == s %} selected{% endif %}>{{ s }}</option>
         {% endfor %}
       </select>
-      <p><button class="btn btn-sm btn-primary" type="submit">Save</button></p>
+      {% set rec = record.recurrence %}
+      <p>
+        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+        {% if ep.is_open and lc and ep.id == lc.current_episode_id
+              and rec and rec.open_affected > 1 %}
+        <button class="btn btn-sm btn-outline-primary" type="submit"
+                formaction="/signatures/{{ rec.signature_id }}/attribute"
+                title="Apply cause / reason / Jira ticket / triage status to every open failing test sharing this failure signature (an empty Jira field leaves tickets untouched)">
+          Apply to all {{ rec.open_affected }} affected tests with this signature
+        </button>
+        {% endif %}
+      </p>
     </form>
   </div>
   {% else %}

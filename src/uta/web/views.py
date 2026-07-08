@@ -13,6 +13,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from math import ceil
+from urllib.parse import urlencode
 
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
@@ -36,6 +37,7 @@ from uta.models import (
 )
 from uta.models.enums import LifecycleState
 from uta.web import charts
+from uta.web.actions import open_episodes_for_signature
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
@@ -115,11 +117,18 @@ def latest_run(session: Session) -> dict | None:
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:
-    """Batch variant of the failure-detail lookup, projected down to ``{track, signature_id}``.
+    """Batch variant of the failure-detail lookup, projected down to ``{tracks, signature_id}``.
 
     Used by the triage queue to filter/display by track and to surface the "acknowledge all with
     this signature" bulk action — one query for every episode's characterising failure instead of
     one per row.
+
+    ``tracks`` carries **every** failing track of the ``(identity, run)`` pair — a test normally
+    runs in both tracks, so failing in both is the common case, and collapsing to one row's track
+    made the exact track filter hide genuinely failing tests (issue #84). ``signature_id`` is the
+    first failing row's (track order): the normalizer strips the track prefix, so both tracks'
+    failures hash to the same signature in practice — and the bulk action matches on the
+    signature's error *text*, not its id, so any one of the pair's signatures anchors it equally.
     """
     pairs = {
         (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
@@ -138,12 +147,14 @@ def _failure_infos(
             tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
             TestResult.status.in_(FAILED_STATUSES),
         )
-        .order_by(TestResult.id)
+        .order_by(TestResult.track, TestResult.id)
     ).all()
-    by_pair = {
-        (identity_id, run_id): {"track": track, "signature_id": signature_id}
-        for identity_id, run_id, track, signature_id in rows
-    }
+    by_pair: dict[tuple[int, int], dict] = {}
+    for identity_id, run_id, track, signature_id in rows:
+        info = by_pair.setdefault((identity_id, run_id), {"tracks": [], "signature_id": None})
+        info["tracks"].append(track)
+        if info["signature_id"] is None:
+            info["signature_id"] = signature_id
     return {
         ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
         for ep in episodes
@@ -239,7 +250,7 @@ def _row(
         "predicted_cause": classification.predicted_cause if classification else None,
         "causing_person": attribution.causing_person if attribution else None,
         "reason_text": attribution.reason_text if attribution else None,
-        "track": failure_info["track"] if failure_info else None,
+        "tracks": failure_info["tracks"] if failure_info else [],
         "signature_id": failure_info["signature_id"] if failure_info else None,
     }
 
@@ -247,9 +258,10 @@ def _row(
 def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     """Whether a projected triage row passes the query-param filter set.
 
-    Text filters (``owner``/``suite``) are case-insensitive substring matches; the rest
-    (``track``/``cause``/``triage_status``) are exact; ``flaky`` is a truthy toggle. An absent or
-    empty filter value never excludes a row.
+    Text filters (``owner``/``suite``) are case-insensitive substring matches; ``track`` matches
+    when **any** failing track equals it (a test failing in both tracks must show under either
+    filter — issue #84); ``cause``/``triage_status`` are exact; ``flaky`` is a truthy toggle. An
+    absent or empty filter value never excludes a row.
     """
     owner = filters.get("owner", "").strip().lower()
     if owner and owner not in (row["owner"] or "").lower():
@@ -258,7 +270,7 @@ def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     if suite and suite not in (row["suite"] or "").lower():
         return False
     track = filters.get("track", "").strip()
-    if track and row["track"] != track:
+    if track and track not in row["tracks"]:
         return False
     cause = filters.get("cause", "").strip()
     if cause and row["predicted_cause"] != cause:
@@ -284,6 +296,66 @@ def _sort_rows(rows: list[dict], sort: str | None, *, age_key) -> None:
         rows.sort(key=key)
     else:
         rows.sort(key=age_key, reverse=True)
+
+
+# Chip display names for the triage filter params (issue #77). ``flaky`` is special-cased —
+# it's a toggle, so its chip is a fixed phrase rather than "key: value".
+_CHIP_LABELS = {
+    "owner": "owner",
+    "suite": "suite",
+    "track": "track",
+    "cause": "cause",
+    "triage_status": "status",
+}
+
+
+def _triage_url(filters: dict[str, str], sort: str | None) -> str:
+    """The triage-queue URL encoding the given filter set + sort — the shareable state."""
+    params = {k: v for k, v in filters.items() if v}
+    if sort:
+        params["sort"] = sort
+    query = urlencode(params)
+    return f"/?{query}" if query else "/"
+
+
+def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> list[dict]:
+    """Active-filter chips for the triage queue (issue #77) — pure URL construction.
+
+    One chip per active filter: a ``label`` ("owner: KP", "flaky only") and a ``remove_url``
+    re-requesting the page with that one filter dropped and everything else (including ``sort``)
+    kept, so state stays entirely in the URL.
+    """
+    chips = []
+    for key, name in _CHIP_LABELS.items():
+        value = (filters.get(key) or "").strip()
+        if not value:
+            continue
+        remaining = {k: v for k, v in filters.items() if k != key}
+        chips.append(
+            {"key": key, "label": f"{name}: {value}", "remove_url": _triage_url(remaining, sort)}
+        )
+    if filters.get("flaky"):
+        remaining = {k: v for k, v in filters.items() if k != "flaky"}
+        chips.append(
+            {"key": "flaky", "label": "flaky only", "remove_url": _triage_url(remaining, sort)}
+        )
+    return chips
+
+
+def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[str, dict]:
+    """Column-header sort links for the triage queue (issue #77).
+
+    For each server-supported sort (``name``/``owner``) returns ``{"active": bool, "url": str}``:
+    clicking an inactive header applies that sort, clicking the active one toggles back to the
+    default age order. Filters are preserved either way.
+    """
+    return {
+        key: {
+            "active": (sort or "") == key,
+            "url": _triage_url(filters, None if (sort or "") == key else key),
+        }
+        for key in _SORT_KEYS
+    }
 
 
 def triage_filter_options(session: Session) -> dict:
@@ -315,6 +387,23 @@ def triage_filter_options(session: Session) -> dict:
         }
     )
     return {"owners": owners, "suites": suites}
+
+
+def new_failing_count(session: Session) -> int:
+    """The number of unacknowledged NEW failing tests — the triage queue's "new" bucket size.
+
+    The same predicate :func:`triage_queue` uses for its first bucket (``FAILING`` and not
+    acknowledged), as a single COUNT so the navbar badge (issue #79) can show it on every page
+    without building the whole queue projection.
+    """
+    return session.scalar(
+        select(func.count())
+        .select_from(TestLifecycle)
+        .where(
+            TestLifecycle.state == LifecycleState.FAILING,
+            TestLifecycle.acknowledged.is_(False),
+        )
+    )
 
 
 def triage_queue(
@@ -488,6 +577,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "triage_status": ep.triage_status,
         "jira_ticket": ep.jira_ticket,
         "predicted_cause": classification.predicted_cause if classification else None,
+        "confidence": classification.confidence if classification else None,
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
         "suggested_contact": classification.suggested_contact if classification else None,
         "evidence": evidence,
@@ -594,6 +684,10 @@ def _recurrence(
         session, sig.normalized_text, k=k, cutoff=cutoff, exclude_signature_id=sig.id
     )
     return {
+        "signature_id": sig.id,
+        # Open failing tests currently sharing this signature's error text — >1 lights up the
+        # signature-wide bulk actions ("apply to all N affected tests", issue #106).
+        "open_affected": len(open_episodes_for_signature(session, sig.id)),
         "occurrence_count": sig.occurrence_count,
         "exception_type": sig.exception_type,
         "first_seen": _run_ref(session, sig.first_seen_run_id),

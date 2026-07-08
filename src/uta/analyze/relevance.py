@@ -14,9 +14,9 @@ test record, the classifier tie-break and the LLM prompt can lead with the likel
   entity it choked on names its own suspect. Only the already-persisted key/author fields are ever
   read; raw ``MODDATA`` is never stored, so it cannot surface here.
 
-Scores are deliberately coarse **tiers**, not probabilities — enough to order candidates and to
-break the classifier's "both kinds present" tie, without pretending to a confidence model the KB
-can't back yet. Everything is pure and deterministic: no I/O, no clock.
+Scores are deliberately coarse **tiers**, not probabilities — enough to order candidates, to break
+the classifier's "both kinds present" tie by score magnitude, and to feed its documented confidence
+formula (issue #73). Everything is pure and deterministic: no I/O, no clock.
 """
 
 from __future__ import annotations

@@ -595,15 +595,49 @@ def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory)
         assert "ut_pricing" in options["suites"]
 
 
-def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_factory):
+# ── active-filter chips + header sort links (issue #77) ──────────────────────
+
+
+def test_triage_filter_chips_one_per_active_filter_with_remove_url():
+    chips = views.triage_filter_chips({"owner": "KP", "flaky": "1"}, sort="name")
+    assert [c["label"] for c in chips] == ["owner: KP", "flaky only"]
+    by_key = {c["key"]: c for c in chips}
+    # Each ✕ drops just its own filter and keeps the rest, including the sort.
+    assert by_key["owner"]["remove_url"] == "/?flaky=1&sort=name"
+    assert by_key["flaky"]["remove_url"] == "/?owner=KP&sort=name"
+
+
+def test_triage_filter_chips_empty_when_nothing_active():
+    assert views.triage_filter_chips({}) == []
+
+
+def test_triage_filter_chip_removing_last_filter_links_home():
+    (chip,) = views.triage_filter_chips({"suite": "ut_pricing"})
+    assert chip["label"] == "suite: ut_pricing"
+    assert chip["remove_url"] == "/"
+
+
+def test_triage_sort_links_apply_and_toggle_off():
+    links = views.triage_sort_links({"owner": "KP"})
+    assert links["name"] == {"active": False, "url": "/?owner=KP&sort=name"}
+    assert links["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
+
+    active = views.triage_sort_links({"owner": "KP"}, sort="name")
+    # The active sort marks itself and its link toggles back to the age default.
+    assert active["name"] == {"active": True, "url": "/?owner=KP"}
+    assert active["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
+
+
+def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(
             s,
             1,
-            {"alpha": "FAILED", "beta": "FAILED"},
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
             errors={
                 "alpha": ("boom", "Traceback"),
                 "beta": ("boom", "Traceback"),
+                "gamma": ("boom", "Traceback"),
             },
             fail_tracks={"alpha": ("permanent",), "beta": ("permanent",)},
         )
@@ -612,10 +646,37 @@ def test_triage_row_carries_track_and_signature_for_bulk_by_signature(session_fa
 
         queue = views.triage_queue(s)
         rows = {r["test_id"]: r for r in queue["new"]}
-        assert rows["alpha"]["track"] == "permanent"
+        assert rows["alpha"]["tracks"] == ["permanent"]
         assert rows["alpha"]["signature_id"] is not None
         # Distinct tests with the same error text get distinct signatures (hash includes identity).
         assert rows["alpha"]["signature_id"] != rows["beta"]["signature_id"]
+        # A test failing in both tracks carries both (issue #84) and still anchors one signature —
+        # the normalizer strips the track prefix, so both tracks' failures share it.
+        assert rows["gamma"]["tracks"] == ["permanent", "permanent_py39"]
+        assert rows["gamma"]["signature_id"] is not None
+
+
+def test_triage_track_filter_matches_any_failing_track(session_factory):
+    # Issue #84: "both" fails in both tracks, "single" only in permanent_py39. The exact-track
+    # filter used to keep only one arbitrary track per row, hiding "both" from one of the filters.
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"both": "FAILED", "single": "FAILED"},
+            fail_tracks={"single": ("permanent_py39",)},
+        )
+        apply_run(s, r1, baseline=None)
+
+        by_perm = views.triage_queue(s, filters={"track": "permanent"})
+        assert {r["test_id"] for r in by_perm["new"]} == {"both"}
+
+        by_py39 = views.triage_queue(s, filters={"track": "permanent_py39"})
+        assert {r["test_id"] for r in by_py39["new"]} == {"both", "single"}
+
+        rows = {r["test_id"]: r for r in by_py39["new"]}
+        assert rows["both"]["tracks"] == ["permanent", "permanent_py39"]
+        assert rows["single"]["tracks"] == ["permanent_py39"]
 
 
 # ── run-results failures-only filter (issue #63) ────────────────────────────
@@ -784,3 +845,112 @@ def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
         assert beta_ep.triage_status == "INVESTIGATING"
         assert alpha_ep.attribution.reason_text == "shared root cause"
         assert beta_ep.attribution.reason_text == "shared root cause"
+
+
+# ── signature-wide attribution (issue #106) ──────────────────────────────────
+
+
+def test_attribute_by_signature_applies_to_all_matching_open_episodes(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        count = actions.attribute_by_signature(
+            s,
+            sig_id,
+            "erin",
+            causing_person="frank",
+            reason_text="SMTP relay outage",
+            triage_status="ROOT_CAUSED",
+            jira_ticket="LX-42",
+        )
+        assert count == 2
+        for name in ("alpha", "beta"):
+            ep = _lc(s, name).current_episode
+            assert ep.triage_status == "ROOT_CAUSED"
+            assert ep.jira_ticket == "LX-42"
+            assert ep.attribution.causing_person == "frank"
+            assert ep.attribution.reason_text == "SMTP relay outage"
+            assert ep.attribution.validated_by == "erin"
+            # The conclusion attaches to *that* episode's own signature for KB recurrence.
+            assert ep.attribution.signature_id == actions._episode_signature_id(s, ep)
+        # gamma's failure does not share the signature — entirely untouched.
+        gamma_ep = _lc(s, "gamma").current_episode
+        assert gamma_ep.triage_status == "UNTRIAGED"
+        assert gamma_ep.jira_ticket is None
+        assert gamma_ep.attribution is None
+
+
+def test_attribute_by_signature_mixed_provenance(session_factory):
+    """A signature-wide apply over a mixed set derives provenance per episode: the one with a
+    prior AI suggestion reads as a correction (original AI values retained), the one without as
+    ground-truth entry."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        # Only beta carries an AI suggestion.
+        s.add(
+            Classification(
+                episode_id=_lc(s, "beta").current_episode_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact="dev-dave",
+                llm_hypothesis="trunk commit r123",
+            )
+        )
+        s.flush()
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        count = actions.attribute_by_signature(
+            s, sig_id, "alice", causing_person="real-rita", reason_text="ut_ref table X changed"
+        )
+        assert count == 2
+        alpha_attr = _lc(s, "alpha").current_episode.attribution
+        assert alpha_attr.cause_provenance == Provenance.HUMAN_ENTERED
+        assert alpha_attr.reason_provenance == Provenance.HUMAN_ENTERED
+        assert alpha_attr.original_ai_cause is None
+        beta_attr = _lc(s, "beta").current_episode.attribution
+        assert beta_attr.cause_provenance == Provenance.HUMAN_CORRECTED
+        assert beta_attr.original_ai_cause == "dev-dave"
+        assert beta_attr.reason_provenance == Provenance.HUMAN_CORRECTED
+        assert beta_attr.original_ai_reason == "trunk commit r123"
+
+
+def test_attribute_by_signature_empty_jira_leaves_tickets_untouched(session_factory):
+    """Unlike the single-episode form, an empty Jira field never mass-clears existing tickets."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        beta_ep_id = _lc(s, "beta").current_episode_id
+        actions.set_attribution(s, beta_ep_id, "bob", jira_ticket="LX-7")
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        actions.attribute_by_signature(s, sig_id, "erin", causing_person="frank", jira_ticket="")
+        assert s.get(FailureEpisode, beta_ep_id).jira_ticket == "LX-7"
+
+
+def test_attribute_by_signature_unknown_signature_is_a_noop(session_factory):
+    with session_scope(session_factory) as s:
+        assert actions.attribute_by_signature(s, 424242, "erin", causing_person="frank") == 0

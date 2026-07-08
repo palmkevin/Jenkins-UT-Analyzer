@@ -6,6 +6,7 @@ converted back to aware UTC — the same clock path the live OracleTrackingFeed 
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from tests.fakes import FakeTrackingFeed
@@ -37,6 +38,35 @@ def test_empty_window_returns_nothing():
     start = datetime(2026, 6, 26, 17, 1, tzinfo=UTC)
     end = datetime(2026, 6, 26, 18, 42, tzinfo=UTC)
     assert feed.changes_in_window(start, end) == []
+
+
+def test_fall_back_night_change_before_window_end_is_not_excluded(tmp_path):
+    # Issue #87: fall-back night 2025-10-26 (Europe/Luxembourg) — local 02:00-03:00 occurs twice.
+    # A change at 00:40 UTC stores CREDATIM 02:40 (first pass, CEST); the window ends 01:25 UTC =
+    # naive 02:25 (second pass, CET). With plain conversion 02:40 > 02:25 and the change — 45 min
+    # BEFORE the window end — silently never became a candidate. The fold-safe bounds keep it.
+    row = {
+        "SESSIONLOGID": 1,
+        "LXTABLECODE": "LORDER",
+        "PKLST": "1",
+        "LXTABLECODEREF": None,
+        "PKLSTREF": None,
+        "TYPE": "U",
+        "COMPONENTNAME": "LORDER_CSVC",
+        "CREDATIM": "2025-10-26T02:40:00",
+        "UPDDATIM": None,
+        "USRIDCRE": 1,
+        "USRCODE": "ABC",
+    }
+    fixture = tmp_path / "v_tracking_fall_back.json"
+    fixture.write_text(json.dumps({"rows": [row]}))
+    feed = FakeTrackingFeed(fixture)
+    start = datetime(2025, 10, 25, 13, 25, tzinfo=UTC)  # 12h lookback before the end
+    end = datetime(2025, 10, 26, 1, 25, tzinfo=UTC)
+    changes = feed.changes_in_window(start, end)
+    assert len(changes) == 1
+    # Ambiguous CREDATIM 02:40 reads as the first occurrence (CEST) -> the true 00:40 UTC.
+    assert changes[0].cre_utc == datetime(2025, 10, 26, 0, 40, tzinfo=UTC)
 
 
 def test_no_moddata_leaks_into_feed():

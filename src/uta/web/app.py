@@ -15,20 +15,27 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from starlette.middleware.sessions import SessionMiddleware
 
 from uta.clients import build_email_sender
 from uta.config import Settings, get_settings
 from uta.control import jobs
 from uta.control.health import check_health
-from uta.control.tunables import clear_override, effective_settings, load_overrides, set_override
+from uta.control.tunables import (
+    TUNABLES_BY_KEY,
+    clear_override,
+    effective_settings,
+    load_overrides,
+    set_override,
+)
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
 from uta.delivery.email import EmailSender
 from uta.models.enums import PredictedCause, TriageStatus
@@ -39,6 +46,8 @@ from uta.web.auth import (
     make_oauth,
     register_auth_routes,
 )
+from uta.web.csrf import install_csrf_middleware
+from uta.web.flash import FLASH_COOKIE, clear_flash, get_flash, set_flash
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
 _WEB_DIR = Path(__file__).parent
@@ -85,8 +94,62 @@ def format_duration(value: object) -> str:
     return " ".join(parts)
 
 
+def _relative_text(seconds: float) -> str:
+    """``seconds`` of age → coarse human text ("3 h ago"); negative means a future time."""
+    future = seconds < 0
+    seconds = abs(seconds)
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        n, unit = int(seconds // 60), "min"
+    elif seconds < 86400:
+        n, unit = int(seconds // 3600), "h"
+    else:
+        n = int(seconds // 86400)
+        unit = "day" if n == 1 else "days"
+    return f"in {n} {unit}" if future else f"{n} {unit} ago"
+
+
+def format_reltime(value: object) -> str:
+    """Render a timestamp as relative age with the absolute form in a hover title (issue #79).
+
+    ``<span title="2026-06-29 16:15:46">2 days ago</span>`` — server-side, no JS. Applied where
+    *age* is what the reader cares about (triage first-failed/fixed-at, test-record lifecycle and
+    episode times); tabular run listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
+    and non-datetimes fall through to ``str``, mirroring :func:`format_ts`.
+    """
+    if value is None:
+        return "—"
+    if not isinstance(value, datetime):
+        return str(value)
+    # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - aware).total_seconds()
+    return Markup(f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>')
+
+
 _TEMPLATES.env.filters["ts"] = format_ts
 _TEMPLATES.env.filters["duration"] = format_duration
+_TEMPLATES.env.filters["reltime"] = format_reltime
+
+
+def nav_section(path: str) -> str | None:
+    """Which navbar entry a request path belongs to, for the active-link highlight (issue #79).
+
+    Test-record pages count as Triage (they're the queue's drill-down); ``/search`` and unknown
+    paths highlight nothing.
+    """
+    if path == "/" or path.startswith("/tests"):
+        return "triage"
+    if path.startswith("/runs"):
+        return "runs"
+    if path.startswith("/flaky"):
+        return "flaky"
+    if path.startswith("/kb"):
+        return "kb"
+    if path.startswith("/control"):
+        return "control"
+    return None
 
 
 def _expanded(request: Request) -> list[str]:
@@ -99,6 +162,11 @@ def _expanded(request: Request) -> list[str]:
     return [s for s in raw.split(",") if s]
 
 
+def _n(count: int, noun: str) -> str:
+    """``3 tests`` / ``1 test`` — count-bearing flash messages without pluralization typos."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
 _TRIAGE_FILTER_KEYS = ("owner", "suite", "track", "cause", "triage_status", "flaky")
 
 
@@ -108,7 +176,9 @@ def _triage_filters(request: Request) -> dict[str, str]:
     return {k: v for k, v in request.query_params.items() if k in _TRIAGE_FILTER_KEYS and v}
 
 
-def create_app(session_factory=None, *, email_sender: EmailSender | None = None) -> FastAPI:
+def create_app(
+    session_factory=None, *, email_sender: EmailSender | None = None, demo_mode: bool = False
+) -> FastAPI:
     startup_engine = None
     if session_factory is None:
         settings = get_settings()
@@ -153,6 +223,12 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             max_age=SESSION_MAX_AGE_SECONDS,
         )
 
+    # CSRF guard (issue #88) — unconditional, because it must hold in auth-off mode too (auth-on's
+    # SameSite=Lax cookie only mitigated cross-site POSTs incidentally). Added after the auth block
+    # ⇒ outermost, so cross-site writes are rejected even on auth-exempt paths; it never reads the
+    # session, so sitting outside SessionMiddleware is fine. See uta.web.csrf for the design.
+    install_csrf_middleware(app)
+
     def effective(s) -> Settings:
         """Env settings with the DB threshold overrides applied — the live view of the tunables."""
         return effective_settings(get_settings(), load_overrides(s))
@@ -161,8 +237,14 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         request: Request, template: str, context: dict, *, cfg: Settings | None = None
     ) -> HTMLResponse:
         cfg = cfg or get_settings()
+        # The navbar badge shows the live unacknowledged-new count on every page — one cheap
+        # COUNT query, not the whole triage projection (issue #79).
+        with session_scope(session_factory) as s:
+            triage_new_count = views.new_failing_count(s)
         context = {
             **context,
+            "nav_active": nav_section(request.url.path),
+            "triage_new_count": triage_new_count,
             "actor": current_actor(request),
             "auth_enabled": get_settings().auth_enabled,
             "jira_base_url": cfg.jira_base_url,
@@ -170,8 +252,13 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             "zephyr_test_case_url_prefix": cfg.zephyr_test_case_url_prefix,
             "expand": _expanded(request),
             "row_limit": cfg.ui_row_limit,
+            "flash": get_flash(request),
         }
-        return _TEMPLATES.TemplateResponse(request, template, context)
+        response = _TEMPLATES.TemplateResponse(request, template, context)
+        # One-shot: the render that displayed the flash deletes its cookie, so a reload is clean.
+        if FLASH_COOKIE in request.cookies:
+            clear_flash(response)
+        return response
 
     def back(request: Request, fallback: str = "/") -> RedirectResponse:
         # Post/Redirect/Get: bounce back to the page the action came from.
@@ -219,6 +306,8 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
                 "sort": sort,
                 "options": options,
                 "last_run": last_run,
+                "chips": views.triage_filter_chips(filters, sort or None),
+                "sort_links": views.triage_sort_links(filters, sort or None),
             },
             cfg=cfg,
         )
@@ -291,50 +380,97 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
     # ── Control panel (issue #16) ────────────────────────────────────────────
     # Access is deliberately open for now (honesty system, no auth anywhere yet). These handlers are
     # the single choke point to gate once auth lands — guard them here, not per-call.
+    #
+    # Demo lockdown (issue #89): the public demo serves anonymous visitors off one shared store, so
+    # its control-panel *mutations* are refused — a settings override degrades every other visitor's
+    # view, and an on-demand ingest would build a real Jenkins client and send outbound requests
+    # from a public host. The panel itself still renders; triage actions stay live (the store is
+    # ephemeral and they're part of the demo story).
+    def demo_locked() -> PlainTextResponse | None:
+        if not demo_mode:
+            return None
+        return PlainTextResponse(
+            "This action is disabled in the public demo — the control panel is read-only here.",
+            status_code=403,
+        )
+
     @app.get("/control", response_class=HTMLResponse)
-    def control_view(request: Request, error: str = ""):
+    def control_view(request: Request):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            panel = control.control_panel(s, get_settings(), error=error or None)
-        return render(request, "control.html", {"panel": panel}, cfg=cfg)
+            panel = control.control_panel(s, get_settings())
+        return render(request, "control.html", {"panel": panel, "demo_mode": demo_mode}, cfg=cfg)
+
+    @app.get("/control/jobs", response_class=HTMLResponse)
+    def control_jobs_fragment(request: Request):
+        # The HTMX poll target (issue #78): just the ingest-jobs table, re-fetched every few
+        # seconds while a job is QUEUED/RUNNING. The partial drops its own hx-trigger once all
+        # jobs are terminal, so polling stops without any client-side state.
+        with session_scope(session_factory) as s:
+            ctx = control.jobs_panel(s)
+        return _TEMPLATES.TemplateResponse(request, "_control_jobs.html", ctx)
 
     @app.post("/control/settings")
     def set_setting(request: Request, key: str = Form(...), value: str = Form("")):
+        if (locked := demo_locked()) is not None:
+            return locked
         # Empty value ⇒ revert to the env default; a value ⇒ validated override.
+        resp = RedirectResponse("/control", status_code=303)
+        tunable = TUNABLES_BY_KEY.get(key)
+        label = tunable.label if tunable else key
         try:
             with session_scope(session_factory) as s:
+                # The pre-change effective value, for a "was X" message (whitelisted keys only —
+                # never getattr an arbitrary submitted key, that could echo a secret).
+                old = getattr(effective(s), key) if tunable else None
                 if value.strip() == "":
                     clear_override(s, key)
+                    default = getattr(get_settings(), key) if tunable else None
+                    set_flash(resp, f"{label} reverted to its env default ({default})")
                 else:
                     set_override(s, key, value, actor=current_actor(request))
+                    set_flash(resp, f"{label} overridden: {old} → {tunable.coerce(value)}")
         except ValueError as exc:
-            return RedirectResponse(f"/control?error={quote(str(exc))}", status_code=303)
-        return RedirectResponse("/control", status_code=303)
+            set_flash(resp, str(exc), "error")
+        return resp
 
     @app.post("/control/settings/{key}/reset")
     def reset_setting(request: Request, key: str):
+        if (locked := demo_locked()) is not None:
+            return locked
         with session_scope(session_factory) as s:
             clear_override(s, key)
-        return RedirectResponse("/control", status_code=303)
+        resp = RedirectResponse("/control", status_code=303)
+        tunable = TUNABLES_BY_KEY.get(key)
+        if tunable is not None:
+            default = getattr(get_settings(), key)
+            set_flash(resp, f"{tunable.label} reverted to its env default ({default})")
+        else:
+            set_flash(resp, f"{key!r} is not an overridable setting", "error")
+        return resp
 
     @app.post("/control/ingest")
     def trigger_ingest(request: Request, build_start: int = Form(...), build_end: str = Form("")):
+        if (locked := demo_locked()) is not None:
+            return locked
+        resp = RedirectResponse("/control", status_code=303)
         try:
             end = int(build_end) if build_end.strip() else build_start
         except ValueError:
-            return RedirectResponse(
-                f"/control?error={quote('Build range must be numeric')}", status_code=303
-            )
+            set_flash(resp, "Build range must be numeric", "error")
+            return resp
         with session_scope(session_factory) as s:
             cfg = effective(s)
-        jobs.trigger_ingest(
+        job_id = jobs.trigger_ingest(
             session_factory,
             build_start=build_start,
             build_end=end,
             settings=cfg,
             actor=current_actor(request),
         )
-        return RedirectResponse("/control", status_code=303)
+        builds = f"build #{build_start}" if end == build_start else f"builds #{build_start}–#{end}"
+        set_flash(resp, f"Ingest job #{job_id} queued for {builds}")
+        return resp
 
     # ── Actions (Post/Redirect/Get) ──────────────────────────────────────────
     @app.post("/identity")
@@ -343,8 +479,10 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         name = actor.strip()
         if name:
             resp.set_cookie(ACTOR_COOKIE, name, max_age=60 * 60 * 24 * 365, samesite="lax")
+            set_flash(resp, f"Now acting as {name}")
         else:
             resp.delete_cookie(ACTOR_COOKIE)
+            set_flash(resp, "Acting identity cleared — back to the default actor")
         return resp
 
     # Literal-path bulk routes are registered before their `{id}`-parametrized siblings — FastAPI
@@ -356,45 +494,115 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         identity_ids = [int(v) for v in form.getlist("identity_ids")]
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            actions.bulk_acknowledge(s, identity_ids, actor)
-        return back(request)
+            count = actions.bulk_acknowledge(s, identity_ids, actor)
+        resp = back(request)
+        if count:
+            set_flash(resp, f"Acknowledged {_n(count, 'selected test')}")
+        else:
+            set_flash(resp, "Nothing acknowledged — no tests selected", "error")
+        return resp
 
     @app.post("/tests/{identity_id}/acknowledge")
     def acknowledge(request: Request, identity_id: int):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            actions.acknowledge(s, identity_id, actor)
-        return back(request)
+            ok = actions.acknowledge(s, identity_id, actor)
+        resp = back(request)
+        if ok:
+            set_flash(resp, "Test acknowledged — moved to the Still-failing bucket")
+        else:
+            set_flash(resp, "Nothing acknowledged — the test has never failed", "error")
+        return resp
 
     @app.post("/signatures/{signature_id}/acknowledge")
     def acknowledge_signature(request: Request, signature_id: int):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            actions.acknowledge_by_signature(s, signature_id, actor)
-        return back(request)
+            count = actions.acknowledge_by_signature(s, signature_id, actor)
+        resp = back(request)
+        if count:
+            set_flash(resp, f"Acknowledged {_n(count, 'test')} sharing this failure signature")
+        else:
+            set_flash(resp, "No unacknowledged failing tests share this signature", "error")
+        return resp
+
+    @app.post("/signatures/{signature_id}/attribute")
+    def attribute_signature(
+        request: Request,
+        signature_id: int,
+        causing_person: str = Form(""),
+        reason_text: str = Form(""),
+        triage_status: str = Form(""),
+        jira_ticket: str = Form(""),
+    ):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            count = actions.attribute_by_signature(
+                s,
+                signature_id,
+                actor,
+                causing_person=causing_person,
+                reason_text=reason_text,
+                triage_status=triage_status or None,
+                jira_ticket=jira_ticket,
+            )
+        resp = back(request)
+        if count:
+            parts = []
+            if causing_person.strip():
+                parts.append(f"cause → {causing_person.strip()}")
+            if reason_text.strip():
+                parts.append("reason updated")
+            if triage_status:
+                parts.append(f"triage status → {triage_status}")
+            if jira_ticket.strip():
+                parts.append(f"Jira ticket → {jira_ticket.strip()}")
+            message = f"Updated {_n(count, 'test')} sharing this failure signature"
+            if parts:
+                message += " — " + ", ".join(parts)
+            set_flash(resp, message)
+        else:
+            set_flash(resp, "No open failing tests share this signature", "error")
+        return resp
 
     @app.post("/episodes/bulk/attribute")
     async def bulk_attribute(request: Request):
         form = await request.form()
         episode_ids = [int(v) for v in form.getlist("episode_ids")]
         actor = current_actor(request)
+        triage_status = str(form.get("triage_status", "")) or None
         with session_scope(session_factory) as s:
-            actions.bulk_set_attribution(
+            count = actions.bulk_set_attribution(
                 s,
                 episode_ids,
                 actor,
                 causing_person=str(form.get("causing_person", "")),
                 reason_text=str(form.get("reason_text", "")),
-                triage_status=str(form.get("triage_status", "")) or None,
+                triage_status=triage_status,
             )
-        return back(request)
+        resp = back(request)
+        if count:
+            message = f"Updated {_n(count, 'selected test')}"
+            if triage_status:
+                message += f" — triage status → {triage_status}"
+            set_flash(resp, message)
+        else:
+            set_flash(resp, "Nothing updated — no tests selected", "error")
+        return resp
 
     @app.post("/episodes/{episode_id}/confirm")
     def confirm(request: Request, episode_id: int):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            actions.confirm(s, episode_id, actor)
-        return back(request)
+            attr = actions.confirm(s, episode_id, actor)
+            confirmed_cause = attr.causing_person if attr else None
+        resp = back(request)
+        if attr is not None:
+            suffix = f" — cause → {confirmed_cause}" if confirmed_cause else ""
+            set_flash(resp, f"AI suggestion confirmed{suffix}")
+        else:
+            set_flash(resp, "Episode not found — nothing confirmed", "error")
+        return resp
 
     @app.post("/episodes/{episode_id}/attribute")
     def attribute(
@@ -407,7 +615,7 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
     ):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            actions.set_attribution(
+            attr = actions.set_attribution(
                 s,
                 episode_id,
                 actor,
@@ -416,7 +624,22 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
                 triage_status=triage_status or None,
                 jira_ticket=jira_ticket,
             )
-        return back(request)
+        resp = back(request)
+        if attr is None:
+            set_flash(resp, "Episode not found — nothing saved", "error")
+            return resp
+        parts = []
+        if causing_person.strip():
+            parts.append(f"cause → {causing_person.strip()}")
+        if reason_text.strip():
+            parts.append("reason updated")
+        if triage_status:
+            parts.append(f"triage status → {triage_status}")
+        if jira_ticket.strip():
+            parts.append(f"Jira ticket → {jira_ticket.strip()}")
+        message = "Saved — " + ", ".join(parts) if parts else "Saved (no changes submitted)"
+        set_flash(resp, message)
+        return resp
 
     return app
 

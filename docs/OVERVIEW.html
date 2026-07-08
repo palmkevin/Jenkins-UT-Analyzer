@@ -202,7 +202,9 @@
         bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
-        one-click <b>“acknowledge all with this signature”</b> per New-bucket row — run summaries (results
+        one-click <b>“acknowledge all with this signature”</b> per New-bucket row, and its attribution twin
+        on the per-test record page (apply cause/reason/Jira ticket/triage status to every open failing test
+        sharing the signature) — run summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
         optional <b>failures-only</b> filter), a
         <b><code>/runs</code> job-runs list</b> (also paginated — every ingested run newest-first — status,
@@ -213,7 +215,9 @@
         (navbar box, substring match on canonical name — a unique match redirects straight to the record),
         and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
-        ingest/retention knobs — never secrets or URLs), trigger an <b>on-demand ingest</b> of a build or
+        ingest/retention knobs — never secrets or URLs), an <b>AI-suggestion accuracy</b> table (confirmed vs
+        corrected triage verdicts per conclusion field — cause / reason — all-time and over a 30-day window,
+        with a precision figure), trigger an <b>on-demand ingest</b> of a build or
         range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM; also the recovery
         path for a quarantined build — a successful re-ingest clears its record), and view poller health
         (last poll, last <b>successful</b> poll, high-water mark, last error) plus a <b>build quarantine</b>
@@ -222,7 +226,10 @@
         <code>ERROR</code>, and serves a real <b><code>/health</code></b> — DB ping + poller-heartbeat
         freshness, 503 if the DB is down or no successful poll landed within the configured staleness
         window (a deployment with no poller, like the public demo, reports poller “never” and stays
-        healthy). With <code>AUTH_ENABLED=true</code>, a fail-closed middleware gates every route
+        healthy). Every state-changing request (POST/PUT/PATCH/DELETE) also passes an app-wide
+        <b>CSRF guard</b> — a cross-site browser origin (<code>Sec-Fetch-Site</code>/<code>Origin</code>
+        evidence) gets a 403 before it reaches any route — the same check whether
+        <code>AUTH_ENABLED</code> is on or off. With <code>AUTH_ENABLED=true</code>, a fail-closed middleware gates every route
         except <code>/health</code>, <code>/login</code>, <code>/auth/callback</code>, <code>/logout</code>
         and <code>/static/</code> — an unauthenticated browser GET bounces to <code>/login</code>, a
         non-GET gets a plain 401 — and the header swaps the free-text actor form for “signed in as
@@ -426,7 +433,9 @@
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
   thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
-  so a re-ingest never re-mails a historical regression.</p>
+  so a re-ingest never re-mails a historical regression. If the re-ingested build is older than the
+  current newest complete run, the lifecycle/classification pass itself is skipped too (see
+  <a href="#analysis">Analysis</a>) — only the run/results/KB signatures are persisted.</p>
   <ol class="flow">
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
       <code>lastCompletedBuild</code>, minus any <b>quarantined</b> builds. The cursor is the DB itself —
@@ -462,9 +471,14 @@
 
 <section id="analysis">
   <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete runs only</span></h2>
-  <p class="lead">A run is analysed only when it is <b>complete</b> (finished, and all expected shards reported).
-  Incomplete runs are stored and shown but skipped as a baseline, so partial runs never produce phantom
-  regressions.</p>
+  <p class="lead">A run is analysed only when it is <b>complete</b>: all expected shards reported <i>and</i>
+  each shard's stage actually finished running its tests (an aborted/cancelled UT stage keeps the run
+  incomplete, even though its shard is present). Incomplete runs are stored and shown but skipped as a
+  baseline, so partial runs never produce phantom regressions. The lifecycle/classification/hypothesis pass
+  also only ever runs for the <b>newest</b> complete run — re-ingesting an older, already-superseded build
+  (e.g. the control panel's quarantine-recovery re-ingest) still persists its run, results and KB
+  signatures, but never replays into current lifecycle state, so history can’t reopen a since-fixed
+  episode or clear an acknowledgement.</p>
   <div class="grid g2">
     <div class="card">
       <h3>Lifecycle &amp; episodes</h3>
@@ -485,13 +499,20 @@
       <code>CODE_CHANGE</code> / <code>DATA_CHANGE</code> / <code>INFRASTRUCTURE</code> / <code>UNKNOWN</code> —
       from the window-filtered code &amp; data candidates, each scored for <b>relevance to that
       specific test</b> (changed-path overlap with its module/stack frames; changed entity/component
-      named in its error text — coarse tiers, not a probability). When both kinds are present,
-      relevance breaks the tie: if only one kind has a candidate relevant to this test, that kind
-      wins; otherwise it's <code>UNKNOWN</code>. When the cause is <code>CODE_CHANGE</code> and every
+      named in its error text — coarse tiers, not a probability). When both kinds are present, the
+      tie is broken by <b>score magnitude</b>: the top code candidate's relevance score is compared
+      against the top data candidate's, and the stronger kind wins once it leads by a full relevance
+      tier — otherwise it's <code>UNKNOWN</code>. When the cause is <code>CODE_CHANGE</code> and every
       candidate SVN commit shares one author (or <code>DATA_CHANGE</code> and every candidate shares one
       <code>V_TRACKING</code> <code>USRCODE</code>), that person becomes the <b>suggested contact</b> — otherwise
-      it is left blank rather than guessed. The evidence (including the tie-break and top matches)
-      stands on its own; the human attributes the final cause.</p>
+      it is left blank rather than guessed. Every classification also carries a deterministic
+      <b>confidence</b> in <code>[0, 1]</code> (a “confidence 0.63”-style badge on the per-test
+      record): a flat 0.9 for <code>INFRASTRUCTURE</code>, a flat 0.2 for <code>UNKNOWN</code>, and for
+      <code>CODE_CHANGE</code>/<code>DATA_CHANGE</code> a base of 0.5 plus a term for how decisively the
+      relevance scores favored the winning kind and a term for the strongest knowledge-base provenance
+      already attached to this failure's signature — validated human knowledge feeding back into future
+      predictions (see <a href="#learning">Learning loop</a>). The evidence (including the tie-break,
+      top matches and confidence inputs) stands on its own; the human attributes the final cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
@@ -525,18 +546,27 @@
   </div>
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
-  mention, most relevant first — rather than one flat run-wide list; see Classification above),
-  ownership, linked ZEPHYR test case(s), LLM hypothesis, error type, stack trace) plus the editable
-  fields the human owns
+  mention, most relevant first — rather than one flat run-wide list; see Classification above), the
+  predicted cause's <b>confidence</b> badge, ownership, linked ZEPHYR test case(s), LLM hypothesis,
+  error type, stack trace) plus the editable fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
-  AI suggestion. Every action is stamped with the acting <code>actor</code>.</p>
+  AI suggestion. When the current failure's signature also afflicts other open failing tests, a second
+  submit button, <b>"apply to all N affected tests with this signature"</b>, applies the same cause /
+  reason / Jira ticket / triage status to all of them in one action (an empty Jira field leaves their
+  tickets untouched, so a shared-outage form can't mass-clear unrelated ones); provenance is still derived
+  per test against that test's own AI suggestion &mdash; the attribution twin of the New bucket's
+  acknowledge-all-with-this-signature control. Every action is stamped with the acting
+  <code>actor</code>.</p>
 </section>
 
 <section id="learning">
   <h2><span class="n">4</span>Learning loop <span class="muted" style="font-size:14px">— knowledge base</span></h2>
   <p class="lead">The human’s explanations become a growing, queryable asset — turning one-off knowledge into
-  better future predictions, with no vector database.</p>
+  better future predictions, with no vector database. Two feedback paths close the loop: validated KB
+  provenance raises a future classification's <b>confidence</b> (see <a href="#analysis">Analysis</a>),
+  and every confirm/correct verdict is scored as an <b>AI-suggestion accuracy</b> metric on the control
+  panel.</p>
   <table class="kv">
     <tr><th>Failure signature</th><td>Test identity + <b>normalized</b> error text (numbers, hex, timestamps,
       IPs, temp paths, line numbers masked; exception type + top stack frames kept). Stored with a hash for
@@ -548,9 +578,16 @@
     <tr><th>Provenance tiers</th><td>Every conclusion is weighted by how it was reached:
       <code>AI_UNCONFIRMED</code> (weak) · <code>AI_CONFIRMED</code> · <code>HUMAN_CORRECTED</code> (strongest —
       the AI was wrong) · <code>HUMAN_ENTERED</code>. Only validated conclusions feed prediction, so the model
-      never reinforces its own guesses.</td></tr>
+      never reinforces its own guesses. The strongest provenance weight attached to a failure's signature also
+      feeds the classification <b>confidence</b> formula for that signature's future occurrences.</td></tr>
     <tr><th>RAG hypothesis</th><td>The top-k similar cases are rendered into the LLM prompt, so its one-line
       hypothesis improves as the KB grows.</td></tr>
+    <tr><th>AI-suggestion accuracy</th><td>The control panel counts <code>AI_CONFIRMED</code> vs
+      <code>HUMAN_CORRECTED</code> triage verdicts per conclusion field (cause / reason), all-time and over a
+      30-day window, and derives <b>precision = confirmed ÷ (confirmed + corrected)</b>.
+      <code>HUMAN_ENTERED</code> conclusions are excluded — with no AI suggestion in play they say nothing
+      about AI quality. This is how <code>Attribution.original_ai_cause</code>/<code>original_ai_reason</code>
+      (retained on correction) get consumed, closing the loop back to the monitor.</td></tr>
   </table>
 </section>
 
@@ -560,8 +597,11 @@
     <p>Because every commit triggers a run, a per-run digest would be constant noise. The tool emails <b>only
     when a processed run introduces ≥1 new failing test</b> (a regression vs the baseline). Runs with no new
     failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
-    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. A
-    recovery notice (“back to green”) is a separate, optional toggle. Everything else stays in the dashboard.</p>
+    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. When
+    <code>APP_BASE_URL</code> is set, each new failure is followed by a deep link to its per-test record and the
+    message ends with a link to the run's dashboard summary alongside the Jenkins URL; unset (the default), the
+    email stays exactly as before, link-free. A recovery notice (“back to green”) is a separate, optional toggle
+    and gets the same dashboard run link when configured. Everything else stays in the dashboard.</p>
     <p>A second, distinct <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) rides the same
     SMTP seam but is about the pipeline itself, not test results: the poller sends one when a build is
     <b>quarantined or skipped</b> (retention 404), and the <code>web</code> app's <code>/health</code> check
@@ -594,9 +634,11 @@
       passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
     <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
       <code>V_TRACKING</code>), infra indicators, ownership — each linked to the failure that generated it.</td></tr>
-    <tr><th>Classifications</th><td>Predicted cause, the LLM hypothesis, and a deterministic <b>suggested
-      contact</b> — the single author/<code>USRCODE</code> behind all candidates for the winning cause, left
-      blank whenever authorship is mixed or unknown (never guessed).</td></tr>
+    <tr><th>Classifications</th><td>Predicted cause, a deterministic <b>confidence</b> in <code>[0, 1]</code>
+      (its formula inputs stored in the evidence JSON — relevance-score gap and knowledge-base provenance
+      weight), the LLM hypothesis, and a deterministic <b>suggested contact</b> — the single
+      author/<code>USRCODE</code> behind all candidates for the winning cause, left blank whenever authorship
+      is mixed or unknown (never guessed).</td></tr>
     <tr><th>Human input</th><td>Causing person, reason text, triage status, Jira ticket, acknowledger; every
       conclusion carries a <b>provenance tier</b> (<code>AI_UNCONFIRMED</code> / <code>AI_CONFIRMED</code> /
       <code>HUMAN_CORRECTED</code> / <code>HUMAN_ENTERED</code>), the original AI value when corrected, and who/when.</td></tr>
@@ -670,8 +712,9 @@
       <td>Path to a PEM CA bundle to verify Jenkins' cert against. Takes precedence over
       <code>JENKINS_VERIFY_TLS</code> when set (verification stays on, against this bundle).</td></tr>
     <tr><td><code>EXPECTED_SHARDS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
-      <td>Shards (tracks) a run must report to be considered <b>complete</b> — incomplete runs are
-      stored but skipped as an analysis baseline.</td></tr>
+      <td>Shards (tracks) a run must report — each having actually <b>finished</b> its stage
+      (an ABORTED/cancelled shard doesn't count) — to be considered <b>complete</b>; incomplete
+      runs are stored but skipped as an analysis baseline.</td></tr>
     <tr><td><code>INGEST_UNITTEST_STAGES</code></td><td><code>true</code></td>
       <td>Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS,
       Uniface) — parsed from each stage's <code>wfapi/log</code> behind the same interface as the
@@ -724,6 +767,11 @@
     <tr><td><code>EMAIL_RECOVERY_NOTICE</code></td><td><code>false</code></td>
       <td>Also send a "back to green" notice when a run has zero new failures after a prior
       regression; off by default (silence already means "no worse than before").</td></tr>
+    <tr><td><code>APP_BASE_URL</code></td><td>empty</td>
+      <td>Externally reachable base URL of the dashboard. When set, regression (and recovery)
+      emails carry dashboard deep links — a per-test record link beside each new failure, and a
+      run summary link beside the Jenkins URL. Empty (the default) keeps emails link-free, exactly
+      as before.</td></tr>
   </table>
 
   <h3>Auth / Keycloak OIDC — optional, flag-gated (Phase 2)</h3>
@@ -887,7 +935,10 @@
     in-process SQLite store — same code paths, invented data. <code>uta demo</code> serves it locally;
     <code>uta seed-demo</code> seeds a persistent store instead. <a href="../render.yaml">render.yaml</a>
     auto-deploys this image to a free Render web service on every push to <code>main</code>, gated by the
-    same CI check that protects the branch — it is not part of the production system map above.</p>
+    same CI check that protects the branch — it is not part of the production system map above. The
+    <b>control panel is read-only</b> in this deployment: its mutating routes (settings save/revert,
+    on-demand ingest) return <code>403</code> instead of touching the shared store or opening an outbound
+    connection from the public host, while the health/tunables view and triage actions stay live.</p>
   </div>
 </section>
 

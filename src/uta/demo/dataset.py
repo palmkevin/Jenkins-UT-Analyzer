@@ -2,14 +2,24 @@
 
 The goal is a *small but complete* run history that lights up every dashboard surface without any
 external system: new & acknowledged failures, a recently-fixed test, a flaky oscillator, a removed
-test, a newly-added test, plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
+test, a newly-added test, a track-divergent failure (py39-only, so the triage queue shows a single
+track badge next to the both-track rows and the ?track= filter has something to include/exclude —
+issue #84), plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
 a recurring KB signature with fuzzy-similar neighbours, and a shared-outage pair (two new,
-unacknowledged tests with identical error text) exercising the triage queue's filters and its
-"acknowledge all with this signature" bulk action (issue #63). The per-test **relevance ranking**
-(issue #50) is exercised in both directions: ``test_invoice_rounding``'s top-ranked candidate is
-the commit touching its own module (path overlap), while ``test_timezone_convert``'s is the
+unacknowledged tests with identical error text) exercising the triage queue's filters, its
+"acknowledge all with this signature" bulk action (issue #63) and the test record's signature-wide
+"apply to all N affected tests" attribution (issue #106) — the pair is deliberately left
+untriaged in the seed so both signature-wide controls stay exercisable live. The per-test
+**relevance ranking** (issue #50) is exercised in both directions: ``test_invoice_rounding``'s
+top-ranked candidate is the commit touching its own module (path overlap), while
+``test_timezone_convert``'s is the
 ``LORDER`` data change its error text names (entity mention) — two failures of the same run
 history whose likely culprits visibly differ — and ``test_pdf_render`` shows the no-match case.
+``test_discount_tiers`` adds the score-magnitude tie-break (issue #73): both candidate kinds match
+it, but the tier-3 module match outscores the tier-2 component mention, so it classifies as
+CODE_CHANGE (with a visible confidence) instead of UNKNOWN; the seed Confirms that suggestion and
+the timezone test's seeded attribution is a correction, so the control panel's AI-accuracy metric
+shows both verdict kinds.
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``
@@ -27,13 +37,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from uta.ingest.clock import to_ut_ref_local
+from uta.ingest.clock import (
+    to_ut_ref_local,
+    to_ut_ref_local_window_end,
+    to_ut_ref_local_window_start,
+)
 from uta.refdb.oracle import DataChange, _row_to_change
 
 # ── The story, as status strings ────────────────────────────────────────────────────────────────
 # One character per build (oldest -> newest). P=passed, F=failed, S=skipped, x=absent (not present
 # in that run — either not yet added, or removed). Every test runs in *both* tracks with the same
-# status. 14 builds.
+# status, except a ``fail_only_track`` spec, whose failures apply to that one track (it passes in
+# the other) — the singular form of the triage queue's per-failing-track badges (issue #84).
+# 14 builds.
 _N_BUILDS = 14
 FIRST_BUILD = 601
 
@@ -52,6 +68,9 @@ class TestSpec:
     # Extra ZEPHYR test cases this test is also referenced by (beyond the primary LX-T4<line>);
     # lets the demo exercise the multi-case rendering. Only emitted when ``owner`` is set.
     extra_zephyr_ids: tuple[str, ...] = ()
+    # When set, the schedule's F characters apply to this track only (the test passes in the
+    # other) — a track-divergent failure, e.g. a genuine Python-3.9-only incompatibility.
+    fail_only_track: str | None = None
 
     @property
     def canonical_name(self) -> str:
@@ -120,6 +139,21 @@ _SPECS: tuple[TestSpec, ...] = (
         owner="mel",
         extra_zephyr_ids=("LX-T5120",),
     ),
+    # Score-magnitude tie-break (issue #73): opens in build 612, whose window carries BOTH candidate
+    # kinds and BOTH match this test — the commit touches its own module ut_pricing/pr_engine.py
+    # (tier-3 module match) while the error text names the AC_CSVC2 *component* (tier-2 mention).
+    # The old boolean tie-break collapsed this to UNKNOWN; the margin-aware comparison resolves it
+    # to CODE_CHANGE with a visible mid-range confidence. The seed then Confirms the suggestion, so
+    # the AI-accuracy panel shows a confirmed verdict next to the timezone test's corrected one.
+    TestSpec(
+        "ut_pricing.pr_engine.TestClass",
+        "test_discount_tiers",
+        "PPPPPPPPPPPFFF",
+        exc_type="AssertionError",
+        message="tier lookup failed after AC_CSVC2 refresh: expected 3 rows got 0",
+        line=152,
+        owner="kam",
+    ),
     # Flaky oscillator: alternating pass/fail -> high transition rate -> flaky flag + leaderboard.
     # Also the UNKNOWN examples: its build-612 episode has both candidate kinds but neither is
     # relevant to it (no path overlap, no entity mention), so the tie stays UNKNOWN; its current
@@ -151,10 +185,27 @@ _SPECS: tuple[TestSpec, ...] = (
         line=64,
         owner="mel",
     ),
+    # Track-divergent failure (issue #84): passes on `permanent`, fails only on the py39 track —
+    # a `X | Y` union annotation Python 3.9 can't evaluate. Its triage row shows the *single*
+    # track badge next to the both-track rows above, and the ?track= filter visibly includes or
+    # excludes it. Opens in build 613 (code candidates only) -> CODE_CHANGE.
+    TestSpec(
+        "ut_core.co_compat.TestClass",
+        "test_type_union_annotation",
+        "PPPPPPPPPPPPFF",
+        exc_type="TypeError",
+        message="unsupported operand type(s) for |: 'type' and 'type'",
+        line=34,
+        owner="tha",
+        fail_only_track="permanent_py39",
+    ),
     # One incident, two tests: both new & unacknowledged, both naming the *same* outage in their
     # error text -> distinct signatures (identity is part of the hash) but identical normalized
     # text, exactly what the triage queue's "Acknowledge all with this signature" bulk action
-    # (issue #63) targets. A fresh suite/owner also widens the filter bar's dropdown options.
+    # (issue #63) and the test record's signature-wide "apply to all N affected tests"
+    # attribution (issue #106) target. Deliberately left untriaged by the seed so both controls
+    # render and stay clickable in the live demo. A fresh suite/owner also widens the filter
+    # bar's dropdown options.
     TestSpec(
         "ut_notify.nt_dispatch.TestClass",
         "test_email_dispatch",
@@ -313,6 +364,8 @@ class SyntheticJenkins:
                 char = self._present(spec, index)
                 if char is None:
                     continue
+                if char == "F" and spec.fail_only_track and track != spec.fail_only_track:
+                    char = "P"  # track-divergent spec: the failure hits one track only
                 cases.append(_case(spec, track, char, index))
             suites.append(
                 {
@@ -421,8 +474,8 @@ class SyntheticTrackingFeed:
                 )
 
     def changes_in_window(self, start_utc: datetime, end_utc: datetime) -> list[DataChange]:
-        lo = to_ut_ref_local(start_utc)
-        hi = to_ut_ref_local(end_utc)
+        lo = to_ut_ref_local_window_start(start_utc)
+        hi = to_ut_ref_local_window_end(end_utc)
         rows = [r for r in self._rows if lo <= r["CREDATIM"] <= hi]
         rows.sort(key=lambda r: r["CREDATIM"])
         return [_row_to_change(r) for r in rows]

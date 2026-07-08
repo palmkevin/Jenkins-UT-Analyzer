@@ -13,12 +13,24 @@ Rule (ordered, documented because it is the whole commitment):
    coincidental commit/data change).
 2. **CODE_CHANGE** if code candidates are present and data candidates are not.
 3. **DATA_CHANGE** if data candidates are present and code candidates are not.
-4. Both kinds present: **relevance breaks the tie** — if exactly one kind has a candidate that
-   matches *this* test (changed path overlaps the test's module/stack frames, or the changed
-   entity is named in the error text), that kind wins; the tie-break is recorded in the evidence.
-5. **UNKNOWN** otherwise — both kinds relevant, neither relevant, or no candidates at all. There
-   is deliberately **no confidence number**: the coarse relevance tiers can order candidates but a
-   calibrated confidence still needs the knowledge-base learning loop (deferred).
+4. Both kinds present: **relevance breaks the tie by score magnitude** (issue #73) — the top code
+   candidate's relevance score is compared against the top data candidate's, and the stronger kind
+   wins when it leads by at least :data:`TIE_BREAK_MARGIN` (one full relevance tier). A tier-3
+   module-level code match therefore beats a tier-2 component data mention instead of collapsing to
+   UNKNOWN; the tie-break is recorded in the evidence.
+5. **UNKNOWN** otherwise — scores within the margin (including both zero), or no candidates at all.
+
+Every classification also carries a **confidence** in ``[0, 1]`` — deterministic and documented,
+not a learned model (see :func:`_confidence`):
+
+- ``INFRASTRUCTURE``: flat **0.9** — the INFRA error type is read directly off the failure.
+- ``CODE_CHANGE`` / ``DATA_CHANGE``: ``0.5 + 0.4 * gap + 0.1 * kb``, where ``gap`` is the relevance
+  score lead of the winning kind's top candidate over the losing kind's, normalized by the top
+  tier (:data:`~uta.analyze.relevance.SCORE_MODULE`), and ``kb`` is the strongest KB provenance
+  weight attached to this failure's signature, normalized by the ``HUMAN_CORRECTED`` maximum
+  (:data:`~uta.kb.retrieval.PROVENANCE_WEIGHT`) — validated human knowledge about this exact
+  failure raises confidence.
+- ``UNKNOWN``: flat **0.2** — ambiguity is the finding; nothing boosts confidence in it.
 
 A **suggested contact** rides along when the winning cause has exactly one author in play: the SVN
 commit author for ``CODE_CHANGE``, the ``V_TRACKING`` ``USRCODE`` for ``DATA_CHANGE``. Anything
@@ -34,8 +46,9 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from uta.analyze.relevance import RankedChanges, rank_candidates
+from uta.analyze.relevance import SCORE_MODULE, RankedChanges, rank_candidates
 from uta.ingest.ut_report import FAILED_STATUSES
+from uta.kb.retrieval import PROVENANCE_WEIGHT, strongest_provenance_weight
 from uta.models import (
     Classification,
     CodeChangeCandidate,
@@ -44,7 +57,20 @@ from uta.models import (
     TestIdentity,
     TestResult,
 )
-from uta.models.enums import ErrorType, PredictedCause
+from uta.models.enums import ErrorType, PredictedCause, Provenance
+
+# The score lead the top candidate of one kind needs over the other kind's to win a "both kinds
+# present" tie — one full relevance tier, so equal-tier matches stay UNKNOWN while any genuinely
+# stronger match (module vs component, entity vs package, match vs no match) resolves the tie.
+TIE_BREAK_MARGIN = 1.0
+
+# Confidence formula weights (documented in the module docstring).
+_BASE_CONFIDENCE = 0.5  # a predicted cause with no relevance lead starts here
+_GAP_WEIGHT = 0.4  # how much a full-tier relevance lead is worth
+_KB_WEIGHT = 0.1  # how much fully-validated KB knowledge of this signature is worth
+_INFRA_CONFIDENCE = 0.9  # INFRA is read directly off the failure's error type
+_UNKNOWN_CONFIDENCE = 0.2  # ambiguity is the finding
+_MAX_PROVENANCE_WEIGHT = PROVENANCE_WEIGHT[Provenance.HUMAN_CORRECTED]
 
 
 def _sole_author(candidates: Iterable[CodeChangeCandidate | DataChangeCandidate]) -> str | None:
@@ -105,6 +131,33 @@ def _top_evidence(top) -> dict | None:
     }
 
 
+def _signature_provenance_weight(session: Session, failures: list[TestResult]) -> int:
+    """The strongest KB provenance weight attached to this failure's signature (0 when unknown).
+
+    The pipeline records signatures before classifying, so a recurring failure's result already
+    links to the signature carrying past (possibly human-validated) conclusions.
+    """
+    signature_id = next((r.signature_id for r in failures if r.signature_id is not None), None)
+    return strongest_provenance_weight(session, signature_id)
+
+
+def _confidence(
+    cause: str, *, win_score: float, lose_score: float, kb_provenance_weight: int
+) -> float:
+    """The documented deterministic confidence formula (issue #73) — see the module docstring.
+
+    ``win_score``/``lose_score`` are the top relevance scores of the predicted kind and the other
+    kind (0 when that kind has no candidates), so the gap term also rewards an unopposed match.
+    """
+    if cause == PredictedCause.INFRASTRUCTURE:
+        return _INFRA_CONFIDENCE
+    if cause == PredictedCause.UNKNOWN:
+        return _UNKNOWN_CONFIDENCE
+    gap = min(1.0, max(0.0, win_score - lose_score) / SCORE_MODULE)
+    kb = kb_provenance_weight / _MAX_PROVENANCE_WEIGHT
+    return round(min(1.0, _BASE_CONFIDENCE + _GAP_WEIGHT * gap + _KB_WEIGHT * kb), 2)
+
+
 def classify_episode(
     session: Session, run: Run, identity_id: int, episode_id: int
 ) -> Classification:
@@ -114,6 +167,8 @@ def classify_episode(
     failures = _failing_results(session, run, identity_id)
     infra = any(r.error_type == ErrorType.INFRA for r in failures)
     ranked = _rank_for_failure(session, run, identity_id, failures)
+    code_score = ranked.top_code.score if ranked.top_code else 0.0
+    data_score = ranked.top_data.score if ranked.top_data else 0.0
 
     tie_break: str | None = None
     if infra:
@@ -122,10 +177,10 @@ def classify_episode(
         cause = PredictedCause.CODE_CHANGE
     elif data_n and not code_n:
         cause = PredictedCause.DATA_CHANGE
-    elif code_n and data_n and ranked.code_relevant and not ranked.data_relevant:
+    elif code_n and data_n and code_score - data_score >= TIE_BREAK_MARGIN:
         cause = PredictedCause.CODE_CHANGE
         tie_break = "code"
-    elif code_n and data_n and ranked.data_relevant and not ranked.code_relevant:
+    elif code_n and data_n and data_score - code_score >= TIE_BREAK_MARGIN:
         cause = PredictedCause.DATA_CHANGE
         tie_break = "data"
     else:
@@ -133,10 +188,18 @@ def classify_episode(
 
     if cause == PredictedCause.CODE_CHANGE:
         contact = _sole_author(run.code_changes)
+        win_score, lose_score = code_score, data_score
     elif cause == PredictedCause.DATA_CHANGE:
         contact = _sole_author(run.data_changes)
+        win_score, lose_score = data_score, code_score
     else:
         contact = None
+        win_score, lose_score = 0.0, 0.0
+
+    kb_weight = _signature_provenance_weight(session, failures)
+    confidence = _confidence(
+        cause, win_score=win_score, lose_score=lose_score, kb_provenance_weight=kb_weight
+    )
 
     evidence = {
         "code_candidates": code_n,
@@ -150,11 +213,17 @@ def classify_episode(
             "top_code": _top_evidence(ranked.top_code),
             "top_data": _top_evidence(ranked.top_data),
         },
+        # The confidence formula's inputs, so the number is auditable from the record page.
+        "confidence": {
+            "win_score": win_score,
+            "lose_score": lose_score,
+            "kb_provenance_weight": kb_weight,
+        },
     }
     classification = Classification(
         episode_id=episode_id,
         predicted_cause=cause,
-        confidence=None,  # deferred (needs the KB learning loop to calibrate)
+        confidence=confidence,
         suggested_contact=contact,
         evidence=json.dumps(evidence),
     )

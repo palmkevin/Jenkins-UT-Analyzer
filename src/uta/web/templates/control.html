@@ -13,9 +13,13 @@
   {% endif %}
 </p>
 
-{% if panel.error %}
-<div class="alert alert-danger py-2">{{ panel.error }}</div>
+{% if demo_mode %}
+<div class="alert alert-info py-2">
+  <strong>Read-only in the public demo.</strong> Settings overrides and on-demand ingest are
+  disabled here (the store is shared by every visitor); triage actions on the dashboard stay live.
+</div>
 {% endif %}
+
 
 <!-- ── Poller health ─────────────────────────────────────────────────────── -->
 <h2>Poller health</h2>
@@ -39,6 +43,42 @@
   {% else %}
   <p class="empty mb-0">The scheduled poller has not reported a tick yet.
     {% if panel.poller.high_water_mark %}High-water mark: #{{ panel.poller.high_water_mark }}.{% endif %}</p>
+  {% endif %}
+</div>
+
+<!-- ── AI suggestion accuracy (issue #73) ────────────────────────────────── -->
+<h2>AI suggestion accuracy</h2>
+<div class="card">
+  <p class="meta">
+    How the AI's suggestions fare against human triage verdicts: a one-click <strong>Confirm</strong>
+    counts as confirmed, an edit that overrides the suggestion counts as corrected (the original AI
+    value is retained). Human entries with no AI suggestion in play are excluded — they say nothing
+    about AI quality.
+  </p>
+  {% if panel.ai_accuracy.has_data %}
+  {% macro accuracy_row(label, b) -%}
+    <tr>
+      <td>{{ label }}</td>
+      <td><span class="badge text-bg-success">{{ b.confirmed }}</span></td>
+      <td><span class="badge text-bg-warning">{{ b.corrected }}</span></td>
+      <td>{% if b.precision is not none %}{{ "%.0f%%"|format(b.precision * 100) }}{% else %}—{% endif %}</td>
+    </tr>
+  {%- endmacro %}
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0" style="max-width: 36rem">
+    <thead>
+      <tr><th></th><th>Confirmed</th><th>Corrected</th><th>Precision</th></tr>
+    </thead>
+    <tbody>
+      {{ accuracy_row("Cause — last " ~ panel.ai_accuracy.window_days ~ " days", panel.ai_accuracy.recent.cause) }}
+      {{ accuracy_row("Cause — all time", panel.ai_accuracy.all_time.cause) }}
+      {{ accuracy_row("Reason — last " ~ panel.ai_accuracy.window_days ~ " days", panel.ai_accuracy.recent.reason) }}
+      {{ accuracy_row("Reason — all time", panel.ai_accuracy.all_time.reason) }}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty mb-0">No AI suggestion has been confirmed or corrected yet.</p>
   {% endif %}
 </div>
 
@@ -96,40 +136,14 @@
              name="build_end" placeholder="single build">
     </div>
     <div class="col-auto">
-      <button class="btn btn-sm btn-primary" type="submit">Run ingest</button>
+      <button class="btn btn-sm btn-primary" type="submit"{% if demo_mode %} disabled{% endif %}>Run ingest</button>
     </div>
   </form>
 </div>
 
-{% if panel.jobs %}
-<div class="table-responsive">
-<table class="table table-sm align-middle">
-  <thead>
-    <tr><th>#</th><th>Range</th><th>Status</th><th>Progress</th><th>By</th><th>Started</th><th>Finished</th></tr>
-  </thead>
-  <tbody>
-    {% for job in panel.jobs %}
-    <tr>
-      <td>{{ job.id }}</td>
-      <td>#{{ job.range }}</td>
-      <td>
-        {% if job.status == "DONE" %}<span class="badge text-bg-success">done</span>
-        {% elif job.status == "ERROR" %}<span class="badge text-bg-danger">error</span>
-        {% elif job.status == "RUNNING" %}<span class="badge text-bg-info">running</span>
-        {% else %}<span class="badge">queued</span>{% endif %}
-        {% if job.error %}<br><code>{{ job.error }}</code>{% endif %}
-      </td>
-      <td>{{ job.builds_done }} / {{ job.builds_total }}</td>
-      <td>{{ job.requested_by or "—" }}</td>
-      <td>{{ job.started_at|ts }}</td>
-      <td>{{ job.finished_at|ts }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-<p class="more">Reload to refresh job status.</p>
-{% endif %}
+{% with jobs = panel.jobs, jobs_active = panel.jobs_active %}
+{% include "_control_jobs.html" %}
+{% endwith %}
 
 <!-- ── Tunable thresholds ────────────────────────────────────────────────── -->
 <h2>Tunable thresholds</h2>
@@ -154,14 +168,14 @@
             <input class="form-control form-control-sm" style="width: 8rem" type="number"
                    name="value" value="{{ row.current }}"
                    min="{{ row.min }}" max="{{ row.max }}" step="{{ row.step }}">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+            <button class="btn btn-sm btn-outline-primary" type="submit"{% if demo_mode %} disabled{% endif %}>Save</button>
           </form>
         </td>
         <td><code>{{ row.default }}</code></td>
         <td>
           {% if row.overridden %}
           <form method="post" action="/control/settings/{{ row.key }}/reset">
-            <button class="btn btn-sm btn-outline-secondary" type="submit">Revert</button>
+            <button class="btn btn-sm btn-outline-secondary" type="submit"{% if demo_mode %} disabled{% endif %}>Revert</button>
           </form>
           {% endif %}
         </td>
