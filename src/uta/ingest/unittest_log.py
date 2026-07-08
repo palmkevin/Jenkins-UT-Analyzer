@@ -88,8 +88,7 @@ def _status_of(rest: str, *, test_id: str) -> str:
     if r.startswith(("fail", "error")):
         return "FAILED"
     logger.warning(
-        "unittest_log: unrecognized outcome tail (%d chars, content withheld) on status line"
-        " of %s",
+        "unittest_log: unrecognized outcome tail (%d chars, content withheld) on status line of %s",
         len(rest),
         test_id,
     )
