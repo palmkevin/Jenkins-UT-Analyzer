@@ -13,6 +13,14 @@
   {% endif %}
 </p>
 
+{% if demo_mode %}
+<div class="alert alert-info py-2">
+  <strong>Read-only in the public demo.</strong> Settings overrides and on-demand ingest are
+  disabled here (the store is shared by every visitor); triage actions on the dashboard stay live.
+</div>
+{% endif %}
+
+
 <!-- ── Poller health ─────────────────────────────────────────────────────── -->
 <h2>Poller health</h2>
 <div class="card">
@@ -128,7 +136,7 @@
              name="build_end" placeholder="single build">
     </div>
     <div class="col-auto">
-      <button class="btn btn-sm btn-primary" type="submit">Run ingest</button>
+      <button class="btn btn-sm btn-primary" type="submit"{% if demo_mode %} disabled{% endif %}>Run ingest</button>
     </div>
   </form>
 </div>
@@ -160,14 +168,14 @@
             <input class="form-control form-control-sm" style="width: 8rem" type="number"
                    name="value" value="{{ row.current }}"
                    min="{{ row.min }}" max="{{ row.max }}" step="{{ row.step }}">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+            <button class="btn btn-sm btn-outline-primary" type="submit"{% if demo_mode %} disabled{% endif %}>Save</button>
           </form>
         </td>
         <td><code>{{ row.default }}</code></td>
         <td>
           {% if row.overridden %}
           <form method="post" action="/control/settings/{{ row.key }}/reset">
-            <button class="btn btn-sm btn-outline-secondary" type="submit">Revert</button>
+            <button class="btn btn-sm btn-outline-secondary" type="submit"{% if demo_mode %} disabled{% endif %}>Revert</button>
           </form>
           {% endif %}
         </td>

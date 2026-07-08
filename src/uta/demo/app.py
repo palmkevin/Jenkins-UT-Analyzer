@@ -54,8 +54,15 @@ def build_demo_session_factory(database_url: str | None = None) -> sessionmaker[
 
 
 def create_demo_app(database_url: str | None = None):
-    """The FastAPI app backed by a fresh, seeded demo store."""
-    return create_app(session_factory=build_demo_session_factory(database_url))
+    """The FastAPI app backed by a fresh, seeded demo store.
+
+    ``demo_mode=True`` locks down the control panel's mutations (issue #89): the demo is public and
+    unauthenticated, so anonymous settings overrides — which degrade the shared store for every
+    other visitor — and on-demand ingest — which would build a real Jenkins client and send
+    outbound requests from the public host — return 403. The panel still renders fully populated,
+    and triage actions stay live (the store is ephemeral).
+    """
+    return create_app(session_factory=build_demo_session_factory(database_url), demo_mode=True)
 
 
 app = create_demo_app()

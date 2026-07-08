@@ -14,7 +14,7 @@ from tests.unit.test_control import _MultiBuildFake
 from uta.control import jobs
 from uta.control.jobs import trigger_ingest as _real_trigger
 from uta.db import session_scope
-from uta.demo.app import build_demo_session_factory
+from uta.demo.app import build_demo_session_factory, create_demo_app
 from uta.demo.dataset import FIRST_BUILD
 from uta.models import IngestJob, SettingOverride
 from uta.models.enums import IngestJobStatus
@@ -140,6 +140,67 @@ def test_trigger_ingest_route_dispatches_job(client, factory, monkeypatch):
         assert job.build_start == 1 and job.build_end == 1
     # The job history is shown on the panel.
     assert "Ingest / re-analysis" in client.get("/control").text
+
+
+# ── Demo lockdown (issue #89) ────────────────────────────────────────────────
+# The *public demo app* (create_demo_app → demo_mode=True) refuses the control-panel mutations:
+# the store is shared by every anonymous visitor, and the ingest route would otherwise build a
+# real Jenkins client and send outbound requests from the public host. Everything above this
+# section runs the normal create_app on the same demo store and must keep working unchanged.
+
+
+@pytest.fixture(scope="module")
+def demo_client():
+    return TestClient(create_demo_app(_MEMORY))
+
+
+def test_demo_control_page_still_renders_populated(demo_client):
+    """Read side untouched: the demo keeps showcasing the whole panel — only mutation is blocked."""
+    text = demo_client.get("/control").text
+    assert "Control panel" in text
+    assert "has not reported a tick yet" not in text  # poller heartbeat panel
+    assert "override(s) active" in text  # seeded override badge
+    assert "quarantined" in text  # build-quarantine table
+    assert "done" in text and "error" in text  # ingest-job history badges
+    # The lockdown is shown honestly: a notice plus disabled form buttons.
+    assert "Read-only in the public demo" in text
+    assert 'type="submit" disabled' in text
+
+
+def test_demo_rejects_settings_override_post(demo_client):
+    resp = demo_client.post(
+        "/control/settings",
+        data={"key": "flaky_window_days", "value": "45"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+    assert "disabled in the public demo" in resp.text
+    # Nothing persisted: only the two seeded overrides (kb_top_k, ui_row_limit) light the badge.
+    text = demo_client.get("/control").text
+    assert text.count(">overridden<") == 2
+
+
+def test_demo_rejects_settings_reset_post(demo_client):
+    resp = demo_client.post("/control/settings/kb_top_k/reset", follow_redirects=False)
+    assert resp.status_code == 403
+    assert "disabled in the public demo" in resp.text
+    # The seeded override survives.
+    assert "override(s) active" in demo_client.get("/control").text
+
+
+def test_demo_rejects_ingest_post_and_never_builds_a_jenkins_client(demo_client, monkeypatch):
+    def _explode(settings):  # pragma: no cover — the assertion is that this never runs
+        raise AssertionError("demo mode must never construct a Jenkins client")
+
+    monkeypatch.setattr(jobs, "build_client", _explode)
+
+    resp = demo_client.post(
+        "/control/ingest", data={"build_start": "1", "build_end": "999"}, follow_redirects=False
+    )
+    assert resp.status_code == 403
+    assert "disabled in the public demo" in resp.text
+    # No job row was created either — the guard runs before any dispatch.
+    assert "#1–999" not in demo_client.get("/control").text
 
 
 # ── HTMX job polling (issue #78) ─────────────────────────────────────────────

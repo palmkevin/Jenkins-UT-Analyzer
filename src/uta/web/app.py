@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -176,7 +176,9 @@ def _triage_filters(request: Request) -> dict[str, str]:
     return {k: v for k, v in request.query_params.items() if k in _TRIAGE_FILTER_KEYS and v}
 
 
-def create_app(session_factory=None, *, email_sender: EmailSender | None = None) -> FastAPI:
+def create_app(
+    session_factory=None, *, email_sender: EmailSender | None = None, demo_mode: bool = False
+) -> FastAPI:
     startup_engine = None
     if session_factory is None:
         settings = get_settings()
@@ -376,12 +378,26 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
     # ── Control panel (issue #16) ────────────────────────────────────────────
     # Access is deliberately open for now (honesty system, no auth anywhere yet). These handlers are
     # the single choke point to gate once auth lands — guard them here, not per-call.
+    #
+    # Demo lockdown (issue #89): the public demo serves anonymous visitors off one shared store, so
+    # its control-panel *mutations* are refused — a settings override degrades every other visitor's
+    # view, and an on-demand ingest would build a real Jenkins client and send outbound requests
+    # from a public host. The panel itself still renders; triage actions stay live (the store is
+    # ephemeral and they're part of the demo story).
+    def demo_locked() -> PlainTextResponse | None:
+        if not demo_mode:
+            return None
+        return PlainTextResponse(
+            "This action is disabled in the public demo — the control panel is read-only here.",
+            status_code=403,
+        )
+
     @app.get("/control", response_class=HTMLResponse)
     def control_view(request: Request):
         with session_scope(session_factory) as s:
             cfg = effective(s)
             panel = control.control_panel(s, get_settings())
-        return render(request, "control.html", {"panel": panel}, cfg=cfg)
+        return render(request, "control.html", {"panel": panel, "demo_mode": demo_mode}, cfg=cfg)
 
     @app.get("/control/jobs", response_class=HTMLResponse)
     def control_jobs_fragment(request: Request):
@@ -394,6 +410,8 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
 
     @app.post("/control/settings")
     def set_setting(request: Request, key: str = Form(...), value: str = Form("")):
+        if (locked := demo_locked()) is not None:
+            return locked
         # Empty value ⇒ revert to the env default; a value ⇒ validated override.
         resp = RedirectResponse("/control", status_code=303)
         tunable = TUNABLES_BY_KEY.get(key)
@@ -416,6 +434,8 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
 
     @app.post("/control/settings/{key}/reset")
     def reset_setting(request: Request, key: str):
+        if (locked := demo_locked()) is not None:
+            return locked
         with session_scope(session_factory) as s:
             clear_override(s, key)
         resp = RedirectResponse("/control", status_code=303)
@@ -429,6 +449,8 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
 
     @app.post("/control/ingest")
     def trigger_ingest(request: Request, build_start: int = Form(...), build_end: str = Form("")):
+        if (locked := demo_locked()) is not None:
+            return locked
         resp = RedirectResponse("/control", status_code=303)
         try:
             end = int(build_end) if build_end.strip() else build_start
