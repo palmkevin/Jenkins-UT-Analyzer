@@ -103,7 +103,7 @@ def jobs_panel(session: Session) -> dict:
     }
 
 
-def control_panel(session: Session, base_settings: Settings, *, error: str | None = None) -> dict:
+def control_panel(session: Session, base_settings: Settings) -> dict:
     """The full control-panel context: tunables, poller health, quarantine, jobs, AI accuracy."""
     overrides = load_overrides(session)
     hb = read_heartbeat(session)
@@ -126,5 +126,4 @@ def control_panel(session: Session, base_settings: Settings, *, error: str | Non
         "quarantine_after_attempts": base_settings.quarantine_after_attempts,
         **jobs_panel(session),
         "ai_accuracy": ai_accuracy(session),
-        "error": error,
     }

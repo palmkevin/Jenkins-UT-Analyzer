@@ -10,8 +10,10 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
+from tests.builders import make_run
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
 from tests.fakes.email import RecordingEmailSender
+from uta.analyze.baseline import select_baseline
 from uta.db import session_scope
 from uta.ingest.pipeline import _dedupe_cases, data_change_window, ingest_build
 from uta.ingest.ut_report import FAILED_STATUSES, TestCaseResult
@@ -40,6 +42,33 @@ def test_ingest_persists_run_and_results(session_factory):
         assert n == 14
         tracks = set(s.scalars(select(TestResult.track)).all())
         assert tracks == {"permanent", "permanent_py39"}
+
+
+class _AbortedShardFakeJenkins(FakeJenkinsClient):
+    """A build interrupted mid-way through the py39 UT shard: ``wfapi/describe`` still lists both
+    UT stages, but the interrupted one carries status ABORTED (issue #83)."""
+
+    def wfapi(self, build: int) -> dict:
+        payload = super().wfapi(build)
+        for stage in payload["stages"]:
+            if stage["name"] == "devUTs: Execute - permanent_py39":
+                stage["status"] = "ABORTED"
+        return payload
+
+
+def test_ingest_aborted_shard_run_is_incomplete_and_never_a_baseline(session_factory):
+    """Both shards present but one ABORTED ⇒ not complete, no analysis, never the baseline."""
+    ingest_build(_AbortedShardFakeJenkins(), session_factory, 1702, expected_shards=2)
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is False
+        assert {sh.track: sh.status for sh in run.shards}["permanent_py39"] == "ABORTED"
+        # The partial run is persisted but gated out of the analysis…
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 14
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
+        # …and a later run never diffs against it.
+        later = make_run(s, 1703, {}, started_at=run.started_at + timedelta(hours=24))
+        assert select_baseline(s, later) is None
 
 
 def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
@@ -435,6 +464,213 @@ def test_ingest_parallel_fetch_matches_serial_output(session_factory):
         assert s.scalar(select(func.count()).select_from(TestResult)) == 22
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 9
         assert s.scalar(select(func.count()).select_from(Classification)) == 9
+
+
+class _ScriptedJenkins:
+    """A fixtures-free multi-build fake: each build maps test name -> JUnit status (PASSED/FAILED).
+
+    Duck-types the pipeline's ``JenkinsClient`` protocol (the golden-fixtures fake serves a single
+    build, so cross-build scenarios script their own history here). Every run is **complete** (both
+    track shards report), and build #N starts N hours after a fixed epoch, so build-number order ==
+    start-time order, as on the real job. The ``builds`` dict is held by reference — a test may
+    mutate a build's statuses to simulate a re-run with different content.
+    """
+
+    _EPOCH_MS = 1_780_000_000_000  # fixed, arbitrary epoch millis (UTC)
+
+    def __init__(self, builds: dict[int, dict[str, str]]) -> None:
+        self.builds = builds
+
+    def _statuses(self, build: int) -> dict[str, str]:
+        if build not in self.builds:
+            raise KeyError(f"no scripted build {build}")
+        return self.builds[build]
+
+    def _start_millis(self, build: int) -> int:
+        return self._EPOCH_MS + build * 3_600_000
+
+    def build_meta(self, build: int) -> dict:
+        self._statuses(build)
+        return {
+            "number": build,
+            "result": "UNSTABLE",
+            "url": f"http://jenkins/{build}/",
+            "timestamp": self._start_millis(build),
+            "duration": 3_600_000,
+        }
+
+    def test_report(self, build: int) -> dict:
+        suites = [
+            {
+                "name": "nose2-junit",
+                "enclosingBlockNames": [track],
+                "cases": [
+                    {
+                        "className": "pkg.Cls",
+                        "name": name,
+                        "status": status,
+                        "duration": 0.1,
+                        "errorDetails": "boom" if status == "FAILED" else None,
+                        "errorStackTrace": "ValueError: boom" if status == "FAILED" else None,
+                    }
+                    for name, status in self._statuses(build).items()
+                ],
+            }
+            for track in ("permanent", "permanent_py39")
+        ]
+        return {"suites": suites}
+
+    def change_sets(self, build: int) -> dict:
+        self._statuses(build)
+        return {"changeSets": []}
+
+    def wfapi(self, build: int) -> dict:
+        start = self._start_millis(build)
+        self._statuses(build)
+        return {
+            "id": str(build),
+            "name": f"#{build}",
+            "status": "UNSTABLE",
+            "startTimeMillis": start,
+            "durationMillis": 3_600_000,
+            "stages": [
+                {
+                    "id": str(300 + i),
+                    "name": f"devUTs: Execute - {track}",
+                    "status": "SUCCESS",
+                    "startTimeMillis": start,
+                    "durationMillis": 3_000_000,
+                }
+                for i, track in enumerate(("permanent", "permanent_py39"))
+            ],
+        }
+
+    def stage_describe(self, build: int, node_id: str) -> dict:
+        return {"id": str(node_id), "stageFlowNodes": []}
+
+    def stage_log(self, build: int, node_id: str) -> dict:
+        return {"nodeId": str(node_id), "text": ""}
+
+    def last_completed_build(self) -> int | None:
+        return max(self.builds)
+
+
+def _lifecycle_snapshot(session) -> tuple[dict, dict]:
+    """Every lifecycle + episode fact a historical re-ingest must leave untouched (issue #82)."""
+    lifecycles = {
+        lc.identity.canonical_name: (
+            lc.state,
+            lc.reopen_count,
+            lc.acknowledged,
+            lc.acknowledged_by,
+            lc.current_episode_id,
+            lc.last_failing_run_id,
+        )
+        for lc in session.scalars(select(TestLifecycle)).all()
+    }
+    episodes = {
+        (ep.identity.canonical_name, ep.episode_number): (
+            ep.is_open,
+            ep.first_failure_run_id,
+            ep.last_failing_run_id,
+            ep.fixed_in_run_id,
+            ep.age_runs,
+        )
+        for ep in session.scalars(select(FailureEpisode)).all()
+    }
+    return lifecycles, episodes
+
+
+def test_historical_reingest_skips_lifecycle(session_factory):
+    """Re-ingesting an older build (the quarantine-recovery path, issue #82) keeps the run's data
+    but must not drive the lifecycle: the old diff would open phantom episodes and close live ones.
+
+    Timeline: #103 was quarantined and skipped; #102 and #104-#106 ingested. ``t_fix`` failed in
+    #104 and was fixed by #105 (episode closed, then acknowledged); ``t_live`` has been failing
+    since #102 (live open episode); ``t_calm`` always passes. The recovered #103 disagrees on all
+    three: ``t_fix`` FAILED (would reopen a phantom episode and clear the ack), ``t_live`` PASSED
+    (would close the live episode "in the past"), ``t_calm`` FAILED (would invent lifecycle state
+    for a healthy test).
+    """
+    fake = _ScriptedJenkins(
+        {
+            102: {"t_fix": "PASSED", "t_live": "FAILED", "t_calm": "PASSED"},
+            103: {"t_fix": "FAILED", "t_live": "PASSED", "t_calm": "FAILED"},
+            104: {"t_fix": "FAILED", "t_live": "FAILED", "t_calm": "PASSED"},
+            105: {"t_fix": "PASSED", "t_live": "FAILED", "t_calm": "PASSED"},
+            106: {"t_fix": "PASSED", "t_live": "FAILED", "t_calm": "PASSED"},
+        }
+    )
+    for n in (102, 104, 105, 106):
+        ingest_build(fake, session_factory, n)
+
+    with session_scope(session_factory) as s:
+        # A human acknowledged the fixed test — the phantom reopen would have cleared this.
+        lc = s.scalar(
+            select(TestLifecycle)
+            .join(TestLifecycle.identity)
+            .where(TestIdentity.canonical_name == "pkg.Cls.t_fix")
+        )
+        assert lc.state == LifecycleState.FIXED
+        lc.acknowledged = True
+        lc.acknowledged_by = "alice"
+
+    with session_scope(session_factory) as s:
+        before = _lifecycle_snapshot(s)
+        classifications_before = s.scalar(select(func.count()).select_from(Classification))
+
+    # The recovery re-ingest — with a sender wired, to prove the notify step is skipped too.
+    sender = RecordingEmailSender()
+    ingest_build(
+        fake, session_factory, 103, email_sender=sender, email_recipients=("team@example.com",)
+    )
+    assert sender.sent == []  # a historical diff is never mailed
+
+    with session_scope(session_factory) as s:
+        # Lifecycle states, episodes, episode numbers and acknowledgements: all untouched —
+        # in particular no phantom episode for t_fix, no closure of t_live's live episode, and
+        # still no lifecycle row at all for the healthy t_calm.
+        assert _lifecycle_snapshot(s) == before
+        assert s.scalar(select(func.count()).select_from(Classification)) == classifications_before
+
+        # The run itself is fully persisted: results (3 tests x 2 tracks), KB signatures on the
+        # failures, and the display baseline stamped so the run page shows its diff.
+        run = s.scalar(select(Run).where(Run.build_number == 103))
+        assert run is not None and run.complete is True
+        results = s.scalars(select(TestResult).where(TestResult.run_id == run.id)).all()
+        assert len(results) == 6
+        failing = [r for r in results if r.status in FAILED_STATUSES]
+        assert failing and all(r.signature_id is not None for r in failing)
+        baseline = s.scalar(select(Run).where(Run.build_number == 102))
+        assert run.baseline_run_id == baseline.id
+
+
+def test_reingest_newest_build_still_analyzed(session_factory):
+    """Re-ingesting the **newest** build stays the documented idempotent analysis path.
+
+    Same content twice ⇒ identical lifecycle/episode state; corrected content (the fake's build
+    now passes) ⇒ the analysis still runs and closes the episode — proving the historical-skip
+    guard is strictly "older than the newest complete run", never the newest build itself.
+    """
+    fake = _ScriptedJenkins({104: {"t": "FAILED"}, 105: {"t": "FAILED"}})
+    ingest_build(fake, session_factory, 104)
+    ingest_build(fake, session_factory, 105)
+
+    with session_scope(session_factory) as s:
+        before = _lifecycle_snapshot(s)
+
+    ingest_build(fake, session_factory, 105)  # same content — idempotent, analysis included
+    with session_scope(session_factory) as s:
+        assert _lifecycle_snapshot(s) == before
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 1
+
+    fake.builds[105] = {"t": "PASSED"}  # the re-run build now passes
+    ingest_build(fake, session_factory, 105)
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 105))
+        ep = s.scalar(select(FailureEpisode))
+        assert ep.is_open is False and ep.fixed_in_run_id == run.id
+        assert s.scalar(select(TestLifecycle)).state == LifecycleState.FIXED
 
 
 class _FailingReportFake(FakeJenkinsClient):
