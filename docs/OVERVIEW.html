@@ -597,8 +597,11 @@
     <p>Because every commit triggers a run, a per-run digest would be constant noise. The tool emails <b>only
     when a processed run introduces ≥1 new failing test</b> (a regression vs the baseline). Runs with no new
     failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
-    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. A
-    recovery notice (“back to green”) is a separate, optional toggle. Everything else stays in the dashboard.</p>
+    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. When
+    <code>APP_BASE_URL</code> is set, each new failure is followed by a deep link to its per-test record and the
+    message ends with a link to the run's dashboard summary alongside the Jenkins URL; unset (the default), the
+    email stays exactly as before, link-free. A recovery notice (“back to green”) is a separate, optional toggle
+    and gets the same dashboard run link when configured. Everything else stays in the dashboard.</p>
     <p>A second, distinct <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) rides the same
     SMTP seam but is about the pipeline itself, not test results: the poller sends one when a build is
     <b>quarantined or skipped</b> (retention 404), and the <code>web</code> app's <code>/health</code> check
@@ -764,6 +767,11 @@
     <tr><td><code>EMAIL_RECOVERY_NOTICE</code></td><td><code>false</code></td>
       <td>Also send a "back to green" notice when a run has zero new failures after a prior
       regression; off by default (silence already means "no worse than before").</td></tr>
+    <tr><td><code>APP_BASE_URL</code></td><td>empty</td>
+      <td>Externally reachable base URL of the dashboard. When set, regression (and recovery)
+      emails carry dashboard deep links — a per-test record link beside each new failure, and a
+      run summary link beside the Jenkins URL. Empty (the default) keeps emails link-free, exactly
+      as before.</td></tr>
   </table>
 
   <h3>Auth / Keycloak OIDC — optional, flag-gated (Phase 2)</h3>

@@ -155,6 +155,7 @@ def ingest_build(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     email_recovery_notice: bool = False,
+    app_base_url: str = "",
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
     kb_similarity_cutoff: float = 0.3,
@@ -382,7 +383,11 @@ def ingest_build(
             # describes old facts (issue #82).
             if not historical and email_sender is not None and email_recipients:
                 pending_alert = build_regression_report(
-                    session, run, email_recipients, recovery_notice=email_recovery_notice
+                    session,
+                    run,
+                    email_recipients,
+                    recovery_notice=email_recovery_notice,
+                    app_base_url=app_base_url,
                 )
 
     # The alert goes out only once the run is durably committed, and a send failure is swallowed
