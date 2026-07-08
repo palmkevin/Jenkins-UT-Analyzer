@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}UT Analyzer{% endblock %}</title>
   <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <script src="/static/bulk-select.js" defer></script>
   <script>
     // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.
     // No saved choice yet -> follow the OS/browser preference (prefers-color-scheme).
@@ -54,6 +55,7 @@
     .badge.removed { background: #fde2e2; color: #b00020; }
     .badge.flaky { background: #fff3cd; color: #8a6d00; }
     .badge.match { background: #d7f0db; color: #137333; }
+    .badge.track { background: #dde8f7; color: #1a4b8c; }
 
     /* Collapsible sections (native <details>/<summary>) styled as cards. */
     .card { display: block; padding: 1rem 1.25rem; margin-bottom: 1rem; --bs-card-bg: var(--uta-surface); }
@@ -98,6 +100,7 @@
     [data-bs-theme="dark"] .badge.removed { background: #4a1f24; color: #ff6b6b; }
     [data-bs-theme="dark"] .badge.flaky { background: #4a3c0a; color: #ffd866; }
     [data-bs-theme="dark"] .badge.match { background: #16412a; color: #4ade80; }
+    [data-bs-theme="dark"] .badge.track { background: #1c3355; color: #8ab4f8; }
     [data-bs-theme="dark"] summary:hover { color: #fff; }
     [data-bs-theme="dark"] .more { color: #9aa1a9; }
     [data-bs-theme="dark"] .timeline-chart polyline.FAILED { stroke: #ff6b6b; }
@@ -146,6 +149,14 @@
     {% endif %}
   </nav>
   <main class="container-fluid px-4">
+    {% if flash %}
+    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2"
+         role="alert">
+      {{ flash.message }}
+      <button type="button" class="btn-close" aria-label="Close"
+              onclick="this.closest('.alert').remove()"></button>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <script>

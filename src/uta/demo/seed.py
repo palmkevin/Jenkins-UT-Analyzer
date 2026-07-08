@@ -94,7 +94,7 @@ def _seed_control_state(
         # Overrides in effect — demonstrate the badge/Revert without perturbing the seeded
         # triage/flaky numbers (kb_top_k only widens how many similar KB cases a test page lists).
         session.add(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
-        # Drop the row cap below a demo run's 30 result rows so the run page's server-side
+        # Drop the row cap below a demo run's 32 result rows so the run page's server-side
         # pagination (issue #52) is visible in the live demo. Triage buckets are far smaller, so
         # they render unchanged.
         session.add(SettingOverride(key="ui_row_limit", value="20", updated_by=_DEMO_ACTOR))

@@ -86,11 +86,14 @@ def test_invalid_override_is_rejected_with_error(client, factory):
         "/control/settings", data={"key": "expected_shards", "value": "999"}, follow_redirects=False
     )
     assert resp.status_code == 303
-    assert "error=" in resp.headers["location"]
+    assert resp.headers["location"] == "/control"
     with session_scope(factory) as s:
         assert s.get(SettingOverride, "expected_shards") is None
-    # The error surfaces on the panel.
-    assert "must be between" in client.get(resp.headers["location"]).text
+    # The error surfaces on the panel as a one-shot flash banner (issue #75).
+    page = client.get(resp.headers["location"]).text
+    assert "must be between" in page and "alert-danger" in page
+    # …and only once: a reload doesn't re-show it.
+    assert "must be between" not in client.get("/control").text
 
 
 def test_non_whitelisted_key_is_rejected(client, factory):
@@ -104,12 +107,12 @@ def test_non_whitelisted_key_is_rejected(client, factory):
 
 def test_override_reflected_in_a_view_on_next_load(client, factory):
     """The acceptance check: change the row cap and the run view honours it on the next load."""
-    build = FIRST_BUILD + 11  # a complete run with 30 result rows
-    # The demo seeds ui_row_limit=20, so the run page arrives already paginated (30 rows → 2 pages).
+    build = FIRST_BUILD + 11  # a complete run with 32 result rows
+    # The demo seeds ui_row_limit=20, so the run page arrives already paginated (32 rows → 2 pages).
     assert "Page 1 of 2" in client.get(f"/runs/{build}").text
 
     client.post("/control/settings", data={"key": "ui_row_limit", "value": "1"})
-    assert "Page 1 of 30" in client.get(f"/runs/{build}").text  # cap now bites — view reflects it
+    assert "Page 1 of 32" in client.get(f"/runs/{build}").text  # cap now bites — view reflects it
 
     client.post("/control/settings/ui_row_limit/reset")
     # Reverted to the env default (50): everything fits on one page again — no pager.

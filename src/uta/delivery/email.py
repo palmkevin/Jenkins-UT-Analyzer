@@ -9,12 +9,17 @@ counts as context.
 A **recovery notice** ("back to green") is an optional, separately-toggleable exception.
 
 The SMTP boundary sits behind :class:`EmailSender` so the offline suite drives a fake and never
-opens a socket. ``maybe_notify`` is the single entry point; the poller passes a real sender for
-live runs, while back-fill passes none (so historical regressions are never re-mailed).
+opens a socket. The alert is two-phased around the ingest commit (issue #81):
+:func:`build_regression_report` composes the message *inside* the ingest transaction (it needs the
+session), and :func:`send_alert` delivers it *after* the transaction commits, swallowing any send
+failure — so an SMTP outage can never fail or roll back an ingest, and a commit failure means
+nothing was sent yet. The poller passes a real sender for live runs, while back-fill and the
+on-demand re-ingest job pass none (so historical regressions are never re-mailed).
 """
 
 from __future__ import annotations
 
+import logging
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage as _MimeMessage
@@ -25,6 +30,8 @@ from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
 from uta.models import Classification, FailureEpisode, Run, TestIdentity
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -170,18 +177,21 @@ def send_ops_alert(
     return message
 
 
-def maybe_notify(
-    session: Session,
-    run: Run,
-    sender: EmailSender | None,
-    recipients: tuple[str, ...],
-    *,
-    recovery_notice: bool = False,
-) -> EmailMessage | None:
-    """Build and (if a sender + recipients are present) send the regression email. Returns it."""
-    if sender is None or not recipients:
-        return None
-    message = build_regression_report(session, run, recipients, recovery_notice=recovery_notice)
-    if message is not None:
+def send_alert(sender: EmailSender, message: EmailMessage) -> bool:
+    """Send a composed alert, swallowing any failure. Returns whether it went out.
+
+    Called by the ingest pipeline **after** the run's transaction has committed: the alert is
+    best-effort delivery of already-persisted facts, so a send failure must never fail — let alone
+    roll back — the ingest (the same discipline the LLM providers apply to enrichment). The failure
+    is logged and the alert dropped; the regression stays visible on the dashboard.
+    """
+    try:
         sender.send(message)
-    return message
+    except Exception:  # noqa: BLE001 — alerting is best-effort; never break ingest (issue #81)
+        logger.warning(
+            "alert %r failed to send — the run is persisted, the alert is dropped",
+            message.subject,
+            exc_info=True,
+        )
+        return False
+    return True
