@@ -10,8 +10,10 @@ identically — the "same ingest interface" the plan reserved for these stages, 
 redesign.
 
 It assumes **verbose** unittest output (``-v``): one ``method (dotted.path) ... <outcome>`` line per
-test. Failure/error tracebacks are read from the trailing ``====``-delimited blocks; a test that
-appears only in a block (e.g. a non-verbose run) is still surfaced as FAILED. (Tests with docstrings
+test. Failure/error tracebacks are read from the trailing ``====``-delimited blocks; a block is
+**authoritative** — it overrides the test's status-line outcome (stdout printed mid-test can garble
+the tail), and a test that appears only in a block (e.g. a non-verbose run) is still surfaced as
+FAILED. (Tests with docstrings
 render the docstring on the status line in verbose mode; these stages don't use them, so that form
 is intentionally not parsed — such a test still surfaces from its failure block if it fails.)
 
@@ -63,13 +65,16 @@ def _strip_console_html(text: str) -> str:
     return html.unescape(text)
 
 
-def _status_of(rest: str, *, line: str) -> str:
+def _status_of(rest: str, *, test_id: str) -> str:
     """Map a verbose-line outcome tail to our status vocabulary (PASSED/FAILED/SKIPPED).
 
     An unrecognized tail means the nose2/unittest output format drifted from what this regex-based
-    parser expects. Defaulting that to PASSED would silently turn a real failure green — the worst
-    failure mode for this tool — so it's logged loudly and mapped to SKIPPED (a neutral "hole",
-    consistent with how the rest of the pipeline already treats SKIPPED/absent results) instead.
+    parser expects — or the test printed to stdout mid-run, gluing arbitrary text onto its status
+    line. Defaulting that to PASSED would silently turn a real failure green — the worst failure
+    mode for this tool — so it's logged loudly and mapped to SKIPPED (a neutral "hole", consistent
+    with how the rest of the pipeline already treats SKIPPED/absent results) instead. The tail
+    itself is **not** logged: in these legacy LIMS suites stdout may carry patient data (see the
+    medical-data invariant), so only the test identity and the tail's size are recorded.
     """
     r = rest.strip().lower()
     if r == "ok":
@@ -82,7 +87,11 @@ def _status_of(rest: str, *, line: str) -> str:
         return "FAILED"  # an xfail that passed — unittest counts this as a failure
     if r.startswith(("fail", "error")):
         return "FAILED"
-    logger.warning("unittest_log: unrecognized outcome tail %r in line: %s", rest, line)
+    logger.warning(
+        "unittest_log: unrecognized outcome tail (%d chars, content withheld) on status line of %s",
+        len(rest),
+        test_id,
+    )
     return "SKIPPED"
 
 
@@ -158,7 +167,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
         key = _split_identity(m.group("name"), m.group("path"))
         if key not in outcomes:
             order.append(key)
-        outcomes[key] = _status_of(m.group("rest"), line=line)
+        outcomes[key] = _status_of(m.group("rest"), test_id=".".join(key))
 
     blocks = _parse_blocks(lines)
 
@@ -183,7 +192,14 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
             owner_initials=owner,
         )
 
-    results = [_case(cls, name, outcomes[(cls, name)]) for (cls, name) in order]
+    # A parsed FAIL/ERROR block is authoritative: a test that prints to stdout mid-run garbles
+    # its status line's tail (mapped to the SKIPPED "hole" above), but unittest only emits a
+    # ``====`` traceback block for a test that actually failed/errored — so the block overrides
+    # whatever the status line said, keeping the real failure from persisting as a hole.
+    results = [
+        _case(cls, name, "FAILED" if (cls, name) in blocks else outcomes[(cls, name)])
+        for (cls, name) in order
+    ]
     # A failure block with no verbose status line (non-verbose run) still surfaces as FAILED.
     for cls, name in blocks:
         if (cls, name) not in outcomes:

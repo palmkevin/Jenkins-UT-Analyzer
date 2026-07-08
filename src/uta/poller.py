@@ -20,6 +20,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import httpx
 from sqlalchemy import exc as sa_exc
@@ -42,6 +43,9 @@ from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
 from uta.retention import prune
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.blocking import BlockingScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +345,6 @@ def run_scheduler(
     Each tick goes through :func:`poll_tick`, which re-resolves runtime overrides and stamps the
     heartbeat, so both live-tuning and poller-health surface without a restart.
     """
-    from apscheduler.schedulers.blocking import BlockingScheduler
 
     def _tick() -> list[int]:
         return poll_tick(
@@ -354,10 +357,23 @@ def run_scheduler(
             hypothesis_provider=hypothesis_provider,
         )
 
-    scheduler = BlockingScheduler()
-    scheduler.add_job(
-        _tick, "interval", seconds=base_settings.poll_interval_seconds, next_run_time=None
-    )
-    # Run an immediate pass on startup so a fresh poller doesn't idle until the first interval.
+    scheduler = build_scheduler(_tick, base_settings.poll_interval_seconds)
+    # Run an immediate pass on startup so a fresh poller doesn't idle until the first interval;
+    # the interval trigger then first fires at now + interval.
     _tick()
     scheduler.start()
+
+
+def build_scheduler(tick: Callable[[], object], interval_seconds: int) -> BlockingScheduler:
+    """Build the (unstarted) scheduler with the tick job registered on the poll interval.
+
+    Split from :func:`run_scheduler` so tests can assert on the registered job without calling
+    ``start()`` (which blocks forever). Beware APScheduler's ``next_run_time=None`` idiom: an
+    explicit ``None`` adds the job *paused* — it would never fire (issue #80). Omitting it lets
+    the scheduler compute the first fire time from the trigger on ``start()``.
+    """
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    scheduler = BlockingScheduler()
+    scheduler.add_job(tick, "interval", seconds=interval_seconds)
+    return scheduler
