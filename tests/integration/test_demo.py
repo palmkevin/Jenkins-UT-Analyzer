@@ -263,6 +263,27 @@ def test_demo_app_serves_all_views():
     assert "test_" in client.get("/").text  # the triage queue lists tests
 
 
+def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
+    """The demo's shop-window for issue #106: the SMTP-outage pair is seeded new & untriaged with
+    identical error text, so each test's record page renders the "apply to all N affected tests"
+    signature-wide attribution control (N=2)."""
+    from uta.web.app import create_app
+
+    session = session_factory()
+    client = TestClient(create_app(session_factory=session_factory))
+    for method in ("test_email_dispatch", "test_sms_dispatch"):
+        ident_id = session.scalar(
+            select(TestIdentity.id).where(
+                TestIdentity.canonical_name == f"ut_notify.nt_dispatch.TestClass.{method}"
+            )
+        )
+        record = views.test_record(session, ident_id)
+        assert record["recurrence"]["open_affected"] == 2
+        page = client.get(f"/tests/{ident_id}").text
+        assert "Apply to all 2 affected tests with this signature" in page
+        assert f'formaction="/signatures/{record["recurrence"]["signature_id"]}/attribute"' in page
+
+
 def test_demo_app_test_record_route():
     from uta.web.app import create_app
 

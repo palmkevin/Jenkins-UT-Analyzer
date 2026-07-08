@@ -37,6 +37,7 @@ from uta.models import (
 )
 from uta.models.enums import LifecycleState
 from uta.web import charts
+from uta.web.actions import open_episodes_for_signature
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
@@ -671,6 +672,10 @@ def _recurrence(
         session, sig.normalized_text, k=k, cutoff=cutoff, exclude_signature_id=sig.id
     )
     return {
+        "signature_id": sig.id,
+        # Open failing tests currently sharing this signature's error text — >1 lights up the
+        # signature-wide bulk actions ("apply to all N affected tests", issue #106).
+        "open_affected": len(open_episodes_for_signature(session, sig.id)),
         "occurrence_count": sig.occurrence_count,
         "exception_type": sig.exception_type,
         "first_seen": _run_ref(session, sig.first_seen_run_id),

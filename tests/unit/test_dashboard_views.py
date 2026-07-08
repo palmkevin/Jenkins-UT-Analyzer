@@ -828,3 +828,112 @@ def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
         assert beta_ep.triage_status == "INVESTIGATING"
         assert alpha_ep.attribution.reason_text == "shared root cause"
         assert beta_ep.attribution.reason_text == "shared root cause"
+
+
+# ── signature-wide attribution (issue #106) ──────────────────────────────────
+
+
+def test_attribute_by_signature_applies_to_all_matching_open_episodes(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        count = actions.attribute_by_signature(
+            s,
+            sig_id,
+            "erin",
+            causing_person="frank",
+            reason_text="SMTP relay outage",
+            triage_status="ROOT_CAUSED",
+            jira_ticket="LX-42",
+        )
+        assert count == 2
+        for name in ("alpha", "beta"):
+            ep = _lc(s, name).current_episode
+            assert ep.triage_status == "ROOT_CAUSED"
+            assert ep.jira_ticket == "LX-42"
+            assert ep.attribution.causing_person == "frank"
+            assert ep.attribution.reason_text == "SMTP relay outage"
+            assert ep.attribution.validated_by == "erin"
+            # The conclusion attaches to *that* episode's own signature for KB recurrence.
+            assert ep.attribution.signature_id == actions._episode_signature_id(s, ep)
+        # gamma's failure does not share the signature — entirely untouched.
+        gamma_ep = _lc(s, "gamma").current_episode
+        assert gamma_ep.triage_status == "UNTRIAGED"
+        assert gamma_ep.jira_ticket is None
+        assert gamma_ep.attribution is None
+
+
+def test_attribute_by_signature_mixed_provenance(session_factory):
+    """A signature-wide apply over a mixed set derives provenance per episode: the one with a
+    prior AI suggestion reads as a correction (original AI values retained), the one without as
+    ground-truth entry."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        # Only beta carries an AI suggestion.
+        s.add(
+            Classification(
+                episode_id=_lc(s, "beta").current_episode_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact="dev-dave",
+                llm_hypothesis="trunk commit r123",
+            )
+        )
+        s.flush()
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        count = actions.attribute_by_signature(
+            s, sig_id, "alice", causing_person="real-rita", reason_text="ut_ref table X changed"
+        )
+        assert count == 2
+        alpha_attr = _lc(s, "alpha").current_episode.attribution
+        assert alpha_attr.cause_provenance == Provenance.HUMAN_ENTERED
+        assert alpha_attr.reason_provenance == Provenance.HUMAN_ENTERED
+        assert alpha_attr.original_ai_cause is None
+        beta_attr = _lc(s, "beta").current_episode.attribution
+        assert beta_attr.cause_provenance == Provenance.HUMAN_CORRECTED
+        assert beta_attr.original_ai_cause == "dev-dave"
+        assert beta_attr.reason_provenance == Provenance.HUMAN_CORRECTED
+        assert beta_attr.original_ai_reason == "trunk commit r123"
+
+
+def test_attribute_by_signature_empty_jira_leaves_tickets_untouched(session_factory):
+    """Unlike the single-episode form, an empty Jira field never mass-clears existing tickets."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        beta_ep_id = _lc(s, "beta").current_episode_id
+        actions.set_attribution(s, beta_ep_id, "bob", jira_ticket="LX-7")
+        sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
+
+        actions.attribute_by_signature(s, sig_id, "erin", causing_person="frank", jira_ticket="")
+        assert s.get(FailureEpisode, beta_ep_id).jira_ticket == "LX-7"
+
+
+def test_attribute_by_signature_unknown_signature_is_a_noop(session_factory):
+    with session_scope(session_factory) as s:
+        assert actions.attribute_by_signature(s, 424242, "erin", causing_person="frank") == 0

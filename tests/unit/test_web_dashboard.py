@@ -363,6 +363,84 @@ def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
             assert lc.acknowledged_by == "erin"
 
 
+def test_attribute_by_signature_route_attributes_matching_tests(session_factory):
+    from uta.kb.store import record_signatures_for_run
+    from uta.web import actions
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        sig_id = actions._episode_signature_id(
+            s, get_identity(s, "alpha").lifecycle.current_episode
+        )
+        alpha_ident_id = get_identity(s, "alpha").id
+
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    client.cookies.set("uta_actor", "erin")
+    resp = client.post(
+        f"/signatures/{sig_id}/attribute",
+        data={
+            "causing_person": "frank",
+            "reason_text": "shared outage",
+            "triage_status": "ROOT_CAUSED",
+            "jira_ticket": "LX-42",
+        },
+        headers={"referer": f"/tests/{alpha_ident_id}"},
+    )
+    # Post/Redirect/Get: bounce back to the page the form was submitted from.
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/tests/{alpha_ident_id}"
+    with session_scope(session_factory) as s:
+        for name in ("alpha", "beta"):
+            ep = get_identity(s, name).lifecycle.current_episode
+            assert ep.triage_status == "ROOT_CAUSED"
+            assert ep.jira_ticket == "LX-42"
+            assert ep.attribution.causing_person == "frank"
+            assert ep.attribution.reason_text == "shared outage"
+            assert ep.attribution.validated_by == "erin"
+        gamma_ep = get_identity(s, "gamma").lifecycle.current_episode
+        assert gamma_ep.triage_status == "UNTRIAGED"
+        assert gamma_ep.attribution is None
+
+
+def test_signature_wide_attribute_button_renders_only_for_shared_signatures(session_factory):
+    from uta.kb.store import record_signatures_for_run
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+    # alpha's signature also afflicts beta → the second submit button offers the bulk apply.
+    alpha_page = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
+    assert "Apply to all 2 affected tests with this signature" in alpha_page
+    assert 'formaction="/signatures/' in alpha_page
+    # gamma's failure is unique → per-episode Save only.
+    gamma_page = client.get(f"/tests/{_identity_id(session_factory, 'gamma')}").text
+    assert "affected tests with this signature" not in gamma_page
+    assert 'formaction="/signatures/' not in gamma_page
+
+
 def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})

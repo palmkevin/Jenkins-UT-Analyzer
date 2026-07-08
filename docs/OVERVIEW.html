@@ -202,7 +202,9 @@
         bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
-        one-click <b>“acknowledge all with this signature”</b> per New-bucket row — run summaries (results
+        one-click <b>“acknowledge all with this signature”</b> per New-bucket row, and its attribution twin
+        on the per-test record page (apply cause/reason/Jira ticket/triage status to every open failing test
+        sharing the signature) — run summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
         optional <b>failures-only</b> filter), a
         <b><code>/runs</code> job-runs list</b> (also paginated — every ingested run newest-first — status,
@@ -549,7 +551,13 @@
   error type, stack trace) plus the editable fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
-  AI suggestion. Every action is stamped with the acting <code>actor</code>.</p>
+  AI suggestion. When the current failure's signature also afflicts other open failing tests, a second
+  submit button, <b>"apply to all N affected tests with this signature"</b>, applies the same cause /
+  reason / Jira ticket / triage status to all of them in one action (an empty Jira field leaves their
+  tickets untouched, so a shared-outage form can't mass-clear unrelated ones); provenance is still derived
+  per test against that test's own AI suggestion &mdash; the attribution twin of the New bucket's
+  acknowledge-all-with-this-signature control. Every action is stamped with the acting
+  <code>actor</code>.</p>
 </section>
 
 <section id="learning">

@@ -15,10 +15,12 @@ from sqlalchemy.pool import StaticPool
 from uta.db import Base, make_session_factory
 from uta.web.app import create_app
 
-# One control-panel write and one triage write — both must be behind the same app-wide guard.
-# Empty store is fine: reset is a no-op for an unset key, acknowledge for an unknown identity.
+# One control-panel write and two triage writes — all must be behind the same app-wide guard.
+# Empty store is fine: reset is a no-op for an unset key, acknowledge/attribute for an unknown
+# identity/signature.
 CONTROL_POST = "/control/settings/ui_row_limit/reset"
 TRIAGE_POST = "/tests/1/acknowledge"
+SIGNATURE_ATTRIBUTE_POST = "/signatures/1/attribute"
 
 
 @pytest.fixture
@@ -34,7 +36,7 @@ def client():
     return TestClient(create_app(session_factory=sf), follow_redirects=False)
 
 
-@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST])
+@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST, SIGNATURE_ATTRIBUTE_POST])
 def test_cross_site_fetch_post_is_rejected(client, path):
     resp = client.post(path, headers={"Sec-Fetch-Site": "cross-site"})
     assert resp.status_code == 403
@@ -46,7 +48,7 @@ def test_same_site_fetch_post_is_rejected(client):
     assert resp.status_code == 403
 
 
-@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST])
+@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST, SIGNATURE_ATTRIBUTE_POST])
 def test_mismatching_origin_post_is_rejected(client, path):
     resp = client.post(path, headers={"Origin": "https://evil.example"})
     assert resp.status_code == 403
@@ -72,7 +74,7 @@ def test_null_origin_post_is_rejected(client):
         {},  # non-browser client (curl, scripts, this TestClient)
     ],
 )
-@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST])
+@pytest.mark.parametrize("path", [CONTROL_POST, TRIAGE_POST, SIGNATURE_ATTRIBUTE_POST])
 def test_legitimate_posts_pass_through(client, path, headers):
     resp = client.post(path, headers=headers)
     assert resp.status_code == 303  # the routes' normal Post/Redirect/Get bounce

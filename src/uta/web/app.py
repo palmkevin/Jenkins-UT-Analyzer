@@ -524,6 +524,45 @@ def create_app(
             set_flash(resp, "No unacknowledged failing tests share this signature", "error")
         return resp
 
+    @app.post("/signatures/{signature_id}/attribute")
+    def attribute_signature(
+        request: Request,
+        signature_id: int,
+        causing_person: str = Form(""),
+        reason_text: str = Form(""),
+        triage_status: str = Form(""),
+        jira_ticket: str = Form(""),
+    ):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            count = actions.attribute_by_signature(
+                s,
+                signature_id,
+                actor,
+                causing_person=causing_person,
+                reason_text=reason_text,
+                triage_status=triage_status or None,
+                jira_ticket=jira_ticket,
+            )
+        resp = back(request)
+        if count:
+            parts = []
+            if causing_person.strip():
+                parts.append(f"cause → {causing_person.strip()}")
+            if reason_text.strip():
+                parts.append("reason updated")
+            if triage_status:
+                parts.append(f"triage status → {triage_status}")
+            if jira_ticket.strip():
+                parts.append(f"Jira ticket → {jira_ticket.strip()}")
+            message = f"Updated {_n(count, 'test')} sharing this failure signature"
+            if parts:
+                message += " — " + ", ".join(parts)
+            set_flash(resp, message)
+        else:
+            set_flash(resp, "No open failing tests share this signature", "error")
+        return resp
+
     @app.post("/episodes/bulk/attribute")
     async def bulk_attribute(request: Request):
         form = await request.form()

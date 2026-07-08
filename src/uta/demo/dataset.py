@@ -6,10 +6,13 @@ test, a newly-added test, a track-divergent failure (py39-only, so the triage qu
 track badge next to the both-track rows and the ?track= filter has something to include/exclude —
 issue #84), plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
 a recurring KB signature with fuzzy-similar neighbours, and a shared-outage pair (two new,
-unacknowledged tests with identical error text) exercising the triage queue's filters and its
-"acknowledge all with this signature" bulk action (issue #63). The per-test **relevance ranking**
-(issue #50) is exercised in both directions: ``test_invoice_rounding``'s top-ranked candidate is
-the commit touching its own module (path overlap), while ``test_timezone_convert``'s is the
+unacknowledged tests with identical error text) exercising the triage queue's filters, its
+"acknowledge all with this signature" bulk action (issue #63) and the test record's signature-wide
+"apply to all N affected tests" attribution (issue #106) — the pair is deliberately left
+untriaged in the seed so both signature-wide controls stay exercisable live. The per-test
+**relevance ranking** (issue #50) is exercised in both directions: ``test_invoice_rounding``'s
+top-ranked candidate is the commit touching its own module (path overlap), while
+``test_timezone_convert``'s is the
 ``LORDER`` data change its error text names (entity mention) — two failures of the same run
 history whose likely culprits visibly differ — and ``test_pdf_render`` shows the no-match case.
 ``test_discount_tiers`` adds the score-magnitude tie-break (issue #73): both candidate kinds match
@@ -199,7 +202,10 @@ _SPECS: tuple[TestSpec, ...] = (
     # One incident, two tests: both new & unacknowledged, both naming the *same* outage in their
     # error text -> distinct signatures (identity is part of the hash) but identical normalized
     # text, exactly what the triage queue's "Acknowledge all with this signature" bulk action
-    # (issue #63) targets. A fresh suite/owner also widens the filter bar's dropdown options.
+    # (issue #63) and the test record's signature-wide "apply to all N affected tests"
+    # attribution (issue #106) target. Deliberately left untriaged by the seed so both controls
+    # render and stay clickable in the live demo. A fresh suite/owner also widens the filter
+    # bar's dropdown options.
     TestSpec(
         "ut_notify.nt_dispatch.TestClass",
         "test_email_dispatch",
