@@ -65,6 +65,17 @@ class SmtpEmailSender:
             smtp.send_message(mime)
 
 
+def _dashboard_url(base_url: str, path: str) -> str | None:
+    """Absolute dashboard deep link, or ``None`` when no base URL is configured (issue #108).
+
+    Joins robustly whether or not the configured base carries a trailing slash, so
+    ``http://host:8000/`` + ``/runs/5`` never yields ``//runs/5``.
+    """
+    if not base_url.strip():
+        return None
+    return f"{base_url.strip().rstrip('/')}{path}"
+
+
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
     return session.scalar(
         select(Classification)
@@ -93,6 +104,7 @@ def _new_failure_lines(session: Session, run: Run, regression_ids: list[int]) ->
         classification = _latest_classification(session, episode.id) if episode else None
         out.append(
             {
+                "identity_id": identity_id,
                 "test_id": ident.canonical_name if ident else str(identity_id),
                 "owner": ident.owner_initials if ident else None,
                 "predicted_cause": classification.predicted_cause if classification else "UNKNOWN",
@@ -109,11 +121,17 @@ def build_regression_report(
     recipients: tuple[str, ...],
     *,
     recovery_notice: bool = False,
+    app_base_url: str = "",
 ) -> EmailMessage | None:
     """The email for a processed run, or ``None`` if nothing should be sent.
 
     Returns a message only when the run introduced ≥1 new failing test, or — if ``recovery_notice``
     is on — when the run is back to green (no new failures and no failing tests at all).
+
+    When ``app_base_url`` is set (issue #108) the body carries dashboard deep links — each new
+    failure links to its per-test record (``/tests/{identity_id}``) and the message links the run
+    summary (``/runs/{build}``) beside the Jenkins URL. Unset (the default), the body is exactly
+    link-free, as before.
     """
     baseline = (
         session.get(Run, run.baseline_run_id)
@@ -122,15 +140,19 @@ def build_regression_report(
     )
     diff = compute_diff(session, run, baseline)
     new_failures = _new_failure_lines(session, run, diff.regressions)
+    run_link = _dashboard_url(app_base_url, f"/runs/{run.build_number}")
 
     if not new_failures:
         if recovery_notice and run.total_failed == 0 and not diff.still_failing:
+            body = (
+                f"Build #{run.build_number} introduced no new failures and has no failing "
+                f"tests.\nNewly fixed this run: {len(diff.newly_fixed)}.\n{run.url}\n"
+            )
+            if run_link:
+                body += f"Dashboard: {run_link}\n"
             return EmailMessage(
                 subject=f"UT back to green — build #{run.build_number}",
-                body=(
-                    f"Build #{run.build_number} introduced no new failures and has no failing "
-                    f"tests.\nNewly fixed this run: {len(diff.newly_fixed)}.\n{run.url}\n"
-                ),
+                body=body,
                 recipients=recipients,
             )
         return None
@@ -144,12 +166,17 @@ def build_regression_report(
         contact = f" — contact: {nf['suggested_contact']}" if nf["suggested_contact"] else ""
         owner = f" (owner {nf['owner']})" if nf["owner"] else ""
         lines.append(f"  • {nf['test_id']}{owner} — cause: {nf['predicted_cause']}{contact}")
+        test_link = _dashboard_url(app_base_url, f"/tests/{nf['identity_id']}")
+        if test_link:
+            lines.append(f"    {test_link}")
     lines += [
         "",
         f"Still failing: {len(diff.still_failing)}   Newly fixed: {len(diff.newly_fixed)}"
         f"   Removed: {len(diff.removed)}",
         run.url or "",
     ]
+    if run_link:
+        lines.append(f"Dashboard: {run_link}")
     return EmailMessage(
         subject=f"UT regressions — build #{run.build_number}: {len(new_failures)} new failing",
         body="\n".join(lines) + "\n",

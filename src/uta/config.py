@@ -58,6 +58,10 @@ class Settings(BaseSettings):
 
     # ── App ──────────────────────────────────────────────────────────────────
     app_default_actor: str = "test-user"
+    # Externally reachable base URL of this dashboard, e.g. http://host:8000 — enables deep links
+    # into the per-test record / run summary in alert emails when set. Empty (default) keeps the
+    # emails link-free.
+    app_base_url: str = ""
     flaky_transition_threshold: float = 0.3
     flaky_window_days: int = 30  # oscillation window for the flaky score
     pgtrgm_similarity_cutoff: float = 0.3

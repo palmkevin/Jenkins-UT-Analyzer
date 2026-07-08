@@ -163,6 +163,7 @@ chosen provider with no key falls back to a no-op. Only the live `uta poll` path
 | Variable | Default | Purpose |
 |---|---|---|
 | `APP_DEFAULT_ACTOR` | `test-user` | Default acting user (phase-1 self-declared identity via the `uta_actor` cookie). |
+| `APP_BASE_URL` | *(empty)* | Externally reachable base URL of the dashboard (e.g. `http://host:8000`). **Enables deep links in alert emails when set**; empty keeps them link-free. |
 | `FLAKY_TRANSITION_THRESHOLD` | `0.3` | Oscillation score (`transitions ÷ runs`) at/above which a test is flagged **flaky**. |
 | `FLAKY_WINDOW_DAYS` | `30` | Window for the flaky score and failure-history counts. |
 | `PGTRGM_SIMILARITY_CUTOFF` | `0.3` | Minimum trigram similarity for KB "similar past cases". |
