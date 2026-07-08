@@ -34,7 +34,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from uta.ingest.clock import to_ut_ref_local
+from uta.ingest.clock import (
+    to_ut_ref_local,
+    to_ut_ref_local_window_end,
+    to_ut_ref_local_window_start,
+)
 from uta.refdb.oracle import DataChange, _row_to_change
 
 # ── The story, as status strings ────────────────────────────────────────────────────────────────
@@ -464,8 +468,8 @@ class SyntheticTrackingFeed:
                 )
 
     def changes_in_window(self, start_utc: datetime, end_utc: datetime) -> list[DataChange]:
-        lo = to_ut_ref_local(start_utc)
-        hi = to_ut_ref_local(end_utc)
+        lo = to_ut_ref_local_window_start(start_utc)
+        hi = to_ut_ref_local_window_end(end_utc)
         rows = [r for r in self._rows if lo <= r["CREDATIM"] <= hi]
         rows.sort(key=lambda r: r["CREDATIM"])
         return [_row_to_change(r) for r in rows]

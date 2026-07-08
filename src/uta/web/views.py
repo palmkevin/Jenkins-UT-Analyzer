@@ -13,6 +13,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from math import ceil
+from urllib.parse import urlencode
 
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
@@ -282,6 +283,66 @@ def _sort_rows(rows: list[dict], sort: str | None, *, age_key) -> None:
         rows.sort(key=key)
     else:
         rows.sort(key=age_key, reverse=True)
+
+
+# Chip display names for the triage filter params (issue #77). ``flaky`` is special-cased —
+# it's a toggle, so its chip is a fixed phrase rather than "key: value".
+_CHIP_LABELS = {
+    "owner": "owner",
+    "suite": "suite",
+    "track": "track",
+    "cause": "cause",
+    "triage_status": "status",
+}
+
+
+def _triage_url(filters: dict[str, str], sort: str | None) -> str:
+    """The triage-queue URL encoding the given filter set + sort — the shareable state."""
+    params = {k: v for k, v in filters.items() if v}
+    if sort:
+        params["sort"] = sort
+    query = urlencode(params)
+    return f"/?{query}" if query else "/"
+
+
+def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> list[dict]:
+    """Active-filter chips for the triage queue (issue #77) — pure URL construction.
+
+    One chip per active filter: a ``label`` ("owner: KP", "flaky only") and a ``remove_url``
+    re-requesting the page with that one filter dropped and everything else (including ``sort``)
+    kept, so state stays entirely in the URL.
+    """
+    chips = []
+    for key, name in _CHIP_LABELS.items():
+        value = (filters.get(key) or "").strip()
+        if not value:
+            continue
+        remaining = {k: v for k, v in filters.items() if k != key}
+        chips.append(
+            {"key": key, "label": f"{name}: {value}", "remove_url": _triage_url(remaining, sort)}
+        )
+    if filters.get("flaky"):
+        remaining = {k: v for k, v in filters.items() if k != "flaky"}
+        chips.append(
+            {"key": "flaky", "label": "flaky only", "remove_url": _triage_url(remaining, sort)}
+        )
+    return chips
+
+
+def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[str, dict]:
+    """Column-header sort links for the triage queue (issue #77).
+
+    For each server-supported sort (``name``/``owner``) returns ``{"active": bool, "url": str}``:
+    clicking an inactive header applies that sort, clicking the active one toggles back to the
+    default age order. Filters are preserved either way.
+    """
+    return {
+        key: {
+            "active": (sort or "") == key,
+            "url": _triage_url(filters, None if (sort or "") == key else key),
+        }
+        for key in _SORT_KEYS
+    }
 
 
 def triage_filter_options(session: Session) -> dict:

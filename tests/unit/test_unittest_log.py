@@ -123,8 +123,66 @@ def test_unrecognized_outcome_tail_does_not_default_to_passed(caplog):
         (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
     assert case.status == "SKIPPED"
     assert case.status != "PASSED"
+    warnings = [r.message for r in caplog.records if "unrecognized outcome tail" in r.message]
+    assert warnings
+    # The warning names the test but withholds the tail itself — stdout glued onto a status
+    # line in these legacy LIMS suites may carry patient data (medical-data invariant).
+    assert any("m.C.t_weird" in msg for msg in warnings)
+    assert not any("xyzzy" in msg for msg in warnings)
+
+
+def test_fail_block_overrides_garbled_status_line(caplog):
+    """A test that prints to stdout garbles its status-line tail (→ SKIPPED hole), but its
+    ``FAIL:`` traceback block is authoritative — the case must surface as FAILED with the
+    block's details, not persist as a hole."""
+    text = (
+        "test_x (pkg.mod.Klass) ... some stdout the test printed\n"
+        "======================================================================\n"
+        "FAIL: test_x (pkg.mod.Klass)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/pkg/test_mod.py", line 12, in test_x\n'
+        "    self.assertTrue(False)\n"
+        "AssertionError: False is not true\n"
+        "\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 1 test in 0.001s\n"
+        "\n"
+        "FAILED (failures=1)\n"
+    )
+    with caplog.at_level("WARNING"):
+        (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.test_id == "pkg.mod.Klass.test_x"
+    assert case.status == "FAILED"
+    assert case.error_details == "AssertionError: False is not true"
+    assert case.line == 12
+    # The garbled tail still warns (format drift is worth knowing about), it just can't
+    # swallow the failure any more.
     assert any("unrecognized outcome tail" in r.message for r in caplog.records)
-    assert any("xyzzy" in r.message for r in caplog.records)
+
+
+def test_error_block_overrides_garbled_status_line():
+    """Same as the FAIL case: an ``ERROR:`` block wins over the garbled status line."""
+    text = (
+        "test_y (pkg.mod.Klass) ... more printed junk\n"
+        "======================================================================\n"
+        "ERROR: test_y (pkg.mod.Klass)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/pkg/test_mod.py", line 34, in test_y\n'
+        "    lookup[key]\n"
+        "KeyError: 'REDACTED'\n"
+        "\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 1 test in 0.001s\n"
+        "\n"
+        "FAILED (errors=1)\n"
+    )
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.test_id == "pkg.mod.Klass.test_y"
+    assert case.status == "FAILED"
+    assert case.error_details == "KeyError: 'REDACTED'"
+    assert case.line == 34
 
 
 def test_empty_log_yields_no_cases():
