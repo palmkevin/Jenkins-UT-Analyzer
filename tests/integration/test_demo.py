@@ -51,6 +51,27 @@ def test_removed_test_is_flagged_in_still_failing(queue):
     assert any(row.get("removed") for row in queue["still_failing"])
 
 
+def test_track_divergent_failure_shows_under_its_track_only(session_factory, queue):
+    """Issue #84: rows carry every failing track, and the track filter matches any of them —
+    the py39-only failure appears under ?track=permanent_py39 but not ?track=permanent, while
+    the both-track failures show under either."""
+    py39_only = "ut_core.co_compat.TestClass.test_type_union_annotation"
+    rows = {r["test_id"]: r for r in queue["new"]}
+    assert rows[py39_only]["tracks"] == ["permanent_py39"]
+    both = "ut_billing.bi_round.TestClass.test_invoice_rounding"
+    assert rows[both]["tracks"] == ["permanent", "permanent_py39"]
+
+    def new_names(track: str) -> set[str]:
+        filtered = views.triage_queue(
+            session_factory(), recently_fixed_days=7, limit=200, filters={"track": track}
+        )
+        return {r["test_id"] for r in filtered["new"]}
+
+    assert py39_only not in new_names("permanent")
+    assert py39_only in new_names("permanent_py39")
+    assert both in new_names("permanent") and both in new_names("permanent_py39")
+
+
 def test_acknowledged_and_attributed_failure_is_present(queue):
     tz = next(
         r
