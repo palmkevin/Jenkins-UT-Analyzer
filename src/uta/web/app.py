@@ -293,6 +293,7 @@ def create_app(
                 sort=sort or None,
             )
             options = views.triage_filter_options(s)
+            last_run = views.latest_run(s)
         options["tracks"] = ["permanent", "permanent_py39"]
         options["causes"] = list(PredictedCause)
         options["triage_statuses"] = list(TriageStatus)
@@ -304,6 +305,7 @@ def create_app(
                 "filters": filters,
                 "sort": sort,
                 "options": options,
+                "last_run": last_run,
                 "chips": views.triage_filter_chips(filters, sort or None),
                 "sort_links": views.triage_sort_links(filters, sort or None),
             },

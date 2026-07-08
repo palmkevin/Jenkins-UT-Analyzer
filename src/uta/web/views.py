@@ -102,6 +102,18 @@ def _run_refs(session: Session, run_ids: Collection[int]) -> dict[int, dict]:
     return {run_id: {"id": run_id, "build": build, "url": url} for run_id, build, url in rows}
 
 
+def latest_run(session: Session) -> dict | None:
+    """The most recent run we hold, as ``{build, url, started_at}`` (or ``None`` on an empty store).
+
+    Newest-first by ``started_at`` then ``id`` — the same ordering :func:`job_runs` uses, so the
+    Triage header and the Runs list never disagree about which build is latest.
+    """
+    run = session.scalar(select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(1))
+    if run is None:
+        return None
+    return {"build": run.build_number, "url": run.url, "started_at": run.started_at}
+
+
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:

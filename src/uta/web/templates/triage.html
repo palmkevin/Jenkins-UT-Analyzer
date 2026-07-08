@@ -27,6 +27,15 @@
   <span class="count">{{ queue.counts.still_failing }}</span> still failing ·
   <span class="count">{{ queue.counts.recently_fixed }}</span> recently fixed
 </p>
+<p class="meta">
+  Last ingested run:
+  {% if last_run %}
+    <a href="/runs/{{ last_run.build }}">#{{ last_run.build }}</a>
+    (started {{ last_run.started_at|ts }})
+  {% else %}
+    none yet
+  {% endif %}
+</p>
 
 <form class="row row-cols-auto g-2 align-items-end mb-3" method="get" action="/">
   <div class="col">
