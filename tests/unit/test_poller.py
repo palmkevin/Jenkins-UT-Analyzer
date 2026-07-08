@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient
 from uta.db import session_scope
 from uta.models import Run
-from uta.poller import builds_to_ingest, highest_ingested_build, poll_once
+from uta.poller import build_scheduler, builds_to_ingest, highest_ingested_build, poll_once
 
 
 class _MultiBuildFake(FakeJenkinsClient):
@@ -93,3 +95,16 @@ def test_poll_once_skips_build_with_404_detail(session_factory):
     assert highest_ingested_build(session_factory) == 3
     # A subsequent tick with nothing new above the mark is a no-op (no retry of #2).
     assert poll_once(client, session_factory) == []
+
+
+def test_scheduler_job_is_not_paused():
+    # Regression for issue #80: an explicit ``next_run_time=None`` adds the job *paused* in
+    # APScheduler 3.x, so the poller ran its one startup tick and then never fired again.
+    # ``start()`` blocks forever on a BlockingScheduler, so assert on the unstarted registration:
+    # a paused job carries ``next_run_time is None``, a healthy pending job either has a concrete
+    # first fire time or leaves it unset for the scheduler to compute from the trigger on start.
+    scheduler = build_scheduler(lambda: [], interval_seconds=60)
+    (job,) = scheduler.get_jobs()
+    assert getattr(job, "next_run_time", "unset — computed on start()") is not None
+    # And the interval trigger itself has a next fire time, so the job will actually recur.
+    assert job.trigger.get_next_fire_time(None, datetime.now(UTC)) is not None

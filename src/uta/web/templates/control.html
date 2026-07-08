@@ -13,10 +13,6 @@
   {% endif %}
 </p>
 
-{% if panel.error %}
-<div class="alert alert-danger py-2">{{ panel.error }}</div>
-{% endif %}
-
 <!-- ── Poller health ─────────────────────────────────────────────────────── -->
 <h2>Poller health</h2>
 <div class="card">
@@ -137,35 +133,9 @@
   </form>
 </div>
 
-{% if panel.jobs %}
-<div class="table-responsive">
-<table class="table table-sm align-middle">
-  <thead>
-    <tr><th>#</th><th>Range</th><th>Status</th><th>Progress</th><th>By</th><th>Started</th><th>Finished</th></tr>
-  </thead>
-  <tbody>
-    {% for job in panel.jobs %}
-    <tr>
-      <td>{{ job.id }}</td>
-      <td>#{{ job.range }}</td>
-      <td>
-        {% if job.status == "DONE" %}<span class="badge text-bg-success">done</span>
-        {% elif job.status == "ERROR" %}<span class="badge text-bg-danger">error</span>
-        {% elif job.status == "RUNNING" %}<span class="badge text-bg-info">running</span>
-        {% else %}<span class="badge">queued</span>{% endif %}
-        {% if job.error %}<br><code>{{ job.error }}</code>{% endif %}
-      </td>
-      <td>{{ job.builds_done }} / {{ job.builds_total }}</td>
-      <td>{{ job.requested_by or "—" }}</td>
-      <td>{{ job.started_at|ts }}</td>
-      <td>{{ job.finished_at|ts }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-<p class="more">Reload to refresh job status.</p>
-{% endif %}
+{% with jobs = panel.jobs, jobs_active = panel.jobs_active %}
+{% include "_control_jobs.html" %}
+{% endwith %}
 
 <!-- ── Tunable thresholds ────────────────────────────────────────────────── -->
 <h2>Tunable thresholds</h2>

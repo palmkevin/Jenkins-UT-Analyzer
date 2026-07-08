@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import UTC
 
+import pytest
+
 from uta.ingest.wfapi import find_log_step_node, find_unittest_stages, parse_wfapi
+
+
+def _with_ut_stage_status(payload: dict, track: str, status: str) -> dict:
+    """The fixture payload with one UT shard stage's status replaced."""
+    payload = copy.deepcopy(payload)
+    for stage in payload["stages"]:
+        if stage["name"] == f"devUTs: Execute - {track}":
+            stage["status"] = status
+            return payload
+    raise AssertionError(f"no UT stage for track {track!r} in fixture")
 
 
 def test_both_ut_shards_parsed(wfapi_1702):
@@ -23,6 +36,25 @@ def test_completeness_uses_expected_shard_count(wfapi_1702):
     run = parse_wfapi(wfapi_1702)
     assert run.is_complete(expected_shards=2)
     assert not run.is_complete(expected_shards=3)
+
+
+@pytest.mark.parametrize("status", ["SUCCESS", "UNSTABLE", "FAILED"])
+def test_completeness_accepts_finished_stage_statuses(wfapi_1702, status):
+    """UNSTABLE/FAILED are test outcomes, not truncation — the shard still ran to the end."""
+    run = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
+    assert run.is_complete(expected_shards=2)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["ABORTED", "IN_PROGRESS", "PAUSED", "PAUSED_PENDING_INPUT", "NOT_EXECUTED", "SOME_NEW_STATUS"],
+)
+def test_completeness_rejects_unfinished_stage_statuses(wfapi_1702, status):
+    """An aborted build still lists both UT stages, so the shard count alone lies (issue #83);
+    unknown statuses fail safe to incomplete."""
+    run = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
+    assert set(run.shards) == {"permanent", "permanent_py39"}  # both stages present…
+    assert not run.is_complete(expected_shards=2)  # …yet the run is not complete
 
 
 def test_window_spans_all_shards(wfapi_1702):
