@@ -357,6 +357,44 @@ def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
             assert ep.triage_status == "INVESTIGATING"
 
 
+# ── instant, self-describing filters (issue #77) ────────────────────────────
+
+
+def test_triage_filter_controls_auto_submit(multi_owner_client):
+    page = multi_owner_client.get("/").text
+    # The three selects + the flaky toggle resubmit the GET form on change.
+    assert page.count('onchange="this.form.submit()"') == 4
+
+
+def test_triage_active_filter_chips_render_with_remove_links(multi_owner_client):
+    page = multi_owner_client.get("/?owner=AB&flaky=1").text
+    assert "owner: AB" in page
+    assert "flaky only" in page
+    assert 'href="/?flaky=1"' in page  # ✕ on the owner chip keeps the flaky filter
+    assert 'href="/?owner=AB"' in page  # ✕ on the flaky chip keeps the owner filter
+
+
+def test_triage_no_chips_without_filters(multi_owner_client):
+    assert "active-filters" not in multi_owner_client.get("/").text
+
+
+def test_triage_sort_header_links_and_active_marker(multi_owner_client):
+    page = multi_owner_client.get("/?owner=AB").text
+    assert 'href="/?owner=AB&amp;sort=name"' in page  # Test header applies name sort
+    assert 'href="/?owner=AB&amp;sort=owner"' in page  # Owner header applies owner sort
+    assert "▲" not in page  # no marker while the age default is active
+
+    sorted_page = multi_owner_client.get("/?owner=AB&sort=name").text
+    assert "▲" in sorted_page
+    # The active header toggles back to the age default, keeping the filter.
+    assert 'href="/?owner=AB"' in sorted_page
+
+
+def test_triage_sort_persists_through_filter_form(multi_owner_client):
+    page = multi_owner_client.get("/?sort=owner").text
+    assert '<input type="hidden" name="sort" value="owner">' in page
+
+
 @pytest.fixture
 def both_buckets_page(session_factory):
     """Triage page with both bulk tables rendered: alpha acknowledged (still failing), beta new."""
