@@ -212,7 +212,14 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         return render(
             request,
             "triage.html",
-            {"queue": queue, "filters": filters, "sort": sort, "options": options},
+            {
+                "queue": queue,
+                "filters": filters,
+                "sort": sort,
+                "options": options,
+                "chips": views.triage_filter_chips(filters, sort or None),
+                "sort_links": views.triage_sort_links(filters, sort or None),
+            },
             cfg=cfg,
         )
 
