@@ -90,6 +90,19 @@ def _quarantine_dict(row) -> dict:
     }
 
 
+def jobs_panel(session: Session) -> dict:
+    """Just the ingest-jobs slice — the HTMX poll fragment re-renders only this (issue #78).
+
+    ``jobs_active`` gates the poll: the fragment carries an ``hx-trigger`` only while a job is
+    QUEUED/RUNNING, so once every job is terminal the swapped-in fragment stops the loop.
+    """
+    jobs = [_job_dict(j) for j in recent_jobs(session)]
+    return {
+        "jobs": jobs,
+        "jobs_active": any(j["status"] in ("QUEUED", "RUNNING") for j in jobs),
+    }
+
+
 def control_panel(session: Session, base_settings: Settings) -> dict:
     """The full control-panel context: tunables, poller health, quarantine, jobs, AI accuracy."""
     overrides = load_overrides(session)
@@ -111,6 +124,6 @@ def control_panel(session: Session, base_settings: Settings) -> dict:
         },
         "quarantine": [_quarantine_dict(q) for q in list_quarantine(session)],
         "quarantine_after_attempts": base_settings.quarantine_after_attempts,
-        "jobs": [_job_dict(j) for j in recent_jobs(session)],
+        **jobs_panel(session),
         "ai_accuracy": ai_accuracy(session),
     }

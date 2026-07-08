@@ -17,6 +17,7 @@ from uta.db import session_scope
 from uta.demo.app import build_demo_session_factory
 from uta.demo.dataset import FIRST_BUILD
 from uta.models import IngestJob, SettingOverride
+from uta.models.enums import IngestJobStatus
 
 _MEMORY = "sqlite+pysqlite:///:memory:"
 
@@ -139,3 +140,51 @@ def test_trigger_ingest_route_dispatches_job(client, factory, monkeypatch):
         assert job.build_start == 1 and job.build_end == 1
     # The job history is shown on the panel.
     assert "Ingest / re-analysis" in client.get("/control").text
+
+
+# ── HTMX job polling (issue #78) ─────────────────────────────────────────────
+
+
+def test_jobs_fragment_returns_only_the_partial(client):
+    resp = client.get("/control/jobs")
+    assert resp.status_code == 200
+    assert 'id="ingest-jobs"' in resp.text
+    # Just the fragment — none of the page chrome around it.
+    assert "<html" not in resp.text
+    assert "Tunable thresholds" not in resp.text
+
+
+def test_no_poll_trigger_when_all_jobs_terminal(client):
+    # The demo seeds only terminal jobs (DONE + ERROR): the fragment carries no hx-trigger, so
+    # a browser landing on the final state never starts the polling loop.
+    assert "hx-trigger" not in client.get("/control/jobs").text
+    page = client.get("/control").text
+    assert "hx-trigger" not in page
+    assert "Reload to refresh job status" not in page  # the manual-reload hint is gone
+
+
+def test_active_job_polls_and_shows_progress(client, factory):
+    with session_scope(factory) as s:
+        job = IngestJob(
+            build_start=1,
+            build_end=4,
+            builds_total=4,
+            builds_done=1,
+            status=IngestJobStatus.RUNNING,
+        )
+        s.add(job)
+        s.flush()
+        job_id = job.id
+    try:
+        fragment = client.get("/control/jobs").text
+        # An active job renders the poll trigger — the swap loop keeps refreshing itself.
+        assert 'hx-get="/control/jobs"' in fragment
+        assert 'hx-trigger="every 3s"' in fragment
+        # …and a progress bar at builds_done/builds_total (1/4 → 25%).
+        assert "progress-bar" in fragment
+        assert "width: 25%" in fragment
+        # The full page embeds the same fragment, so the initial load starts the loop.
+        assert 'hx-trigger="every 3s"' in client.get("/control").text
+    finally:
+        with session_scope(factory) as s:  # module-scoped factory — don't leak the RUNNING job
+            s.delete(s.get(IngestJob, job_id))

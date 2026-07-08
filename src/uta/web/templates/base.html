@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}UT Analyzer{% endblock %}</title>
   <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <!-- htmx 2.0.10, vendored (no CDN at runtime; from the htmx.org npm tarball) — issue #78. -->
+  <script src="/static/htmx.min.js" defer></script>
   <script src="/static/bulk-select.js" defer></script>
   <script>
     // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.

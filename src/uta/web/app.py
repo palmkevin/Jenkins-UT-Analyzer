@@ -314,6 +314,15 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             panel = control.control_panel(s, get_settings())
         return render(request, "control.html", {"panel": panel}, cfg=cfg)
 
+    @app.get("/control/jobs", response_class=HTMLResponse)
+    def control_jobs_fragment(request: Request):
+        # The HTMX poll target (issue #78): just the ingest-jobs table, re-fetched every few
+        # seconds while a job is QUEUED/RUNNING. The partial drops its own hx-trigger once all
+        # jobs are terminal, so polling stops without any client-side state.
+        with session_scope(session_factory) as s:
+            ctx = control.jobs_panel(s)
+        return _TEMPLATES.TemplateResponse(request, "_control_jobs.html", ctx)
+
     @app.post("/control/settings")
     def set_setting(request: Request, key: str = Form(...), value: str = Form("")):
         # Empty value ⇒ revert to the env default; a value ⇒ validated override.
