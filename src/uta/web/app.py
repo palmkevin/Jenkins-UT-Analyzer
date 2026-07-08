@@ -44,6 +44,7 @@ from uta.web.auth import (
     make_oauth,
     register_auth_routes,
 )
+from uta.web.csrf import install_csrf_middleware
 from uta.web.flash import FLASH_COOKIE, clear_flash, get_flash, set_flash
 from uta.web.identity import ACTOR_COOKIE, current_actor
 
@@ -163,6 +164,12 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
             https_only=True,  # TLS terminates at Traefik; the cookie never travels in clear
             max_age=SESSION_MAX_AGE_SECONDS,
         )
+
+    # CSRF guard (issue #88) — unconditional, because it must hold in auth-off mode too (auth-on's
+    # SameSite=Lax cookie only mitigated cross-site POSTs incidentally). Added after the auth block
+    # ⇒ outermost, so cross-site writes are rejected even on auth-exempt paths; it never reads the
+    # session, so sitting outside SessionMiddleware is fine. See uta.web.csrf for the design.
+    install_csrf_middleware(app)
 
     def effective(s) -> Settings:
         """Env settings with the DB threshold overrides applied — the live view of the tunables."""
