@@ -2,7 +2,9 @@
 
 The goal is a *small but complete* run history that lights up every dashboard surface without any
 external system: new & acknowledged failures, a recently-fixed test, a flaky oscillator, a removed
-test, a newly-added test, plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
+test, a newly-added test, a track-divergent failure (py39-only, so the triage queue shows a single
+track badge next to the both-track rows and the ?track= filter has something to include/exclude —
+issue #84), plus each deterministic cause (CODE / DATA / INFRASTRUCTURE / UNKNOWN),
 a recurring KB signature with fuzzy-similar neighbours, and a shared-outage pair (two new,
 unacknowledged tests with identical error text) exercising the triage queue's filters and its
 "acknowledge all with this signature" bulk action (issue #63). The per-test **relevance ranking**
@@ -42,7 +44,9 @@ from uta.refdb.oracle import DataChange, _row_to_change
 # ── The story, as status strings ────────────────────────────────────────────────────────────────
 # One character per build (oldest -> newest). P=passed, F=failed, S=skipped, x=absent (not present
 # in that run — either not yet added, or removed). Every test runs in *both* tracks with the same
-# status. 14 builds.
+# status, except a ``fail_only_track`` spec, whose failures apply to that one track (it passes in
+# the other) — the singular form of the triage queue's per-failing-track badges (issue #84).
+# 14 builds.
 _N_BUILDS = 14
 FIRST_BUILD = 601
 
@@ -61,6 +65,9 @@ class TestSpec:
     # Extra ZEPHYR test cases this test is also referenced by (beyond the primary LX-T4<line>);
     # lets the demo exercise the multi-case rendering. Only emitted when ``owner`` is set.
     extra_zephyr_ids: tuple[str, ...] = ()
+    # When set, the schedule's F characters apply to this track only (the test passes in the
+    # other) — a track-divergent failure, e.g. a genuine Python-3.9-only incompatibility.
+    fail_only_track: str | None = None
 
     @property
     def canonical_name(self) -> str:
@@ -174,6 +181,20 @@ _SPECS: tuple[TestSpec, ...] = (
         message="unexpected segment count: expected 5 got 4",
         line=64,
         owner="mel",
+    ),
+    # Track-divergent failure (issue #84): passes on `permanent`, fails only on the py39 track —
+    # a `X | Y` union annotation Python 3.9 can't evaluate. Its triage row shows the *single*
+    # track badge next to the both-track rows above, and the ?track= filter visibly includes or
+    # excludes it. Opens in build 613 (code candidates only) -> CODE_CHANGE.
+    TestSpec(
+        "ut_core.co_compat.TestClass",
+        "test_type_union_annotation",
+        "PPPPPPPPPPPPFF",
+        exc_type="TypeError",
+        message="unsupported operand type(s) for |: 'type' and 'type'",
+        line=34,
+        owner="tha",
+        fail_only_track="permanent_py39",
     ),
     # One incident, two tests: both new & unacknowledged, both naming the *same* outage in their
     # error text -> distinct signatures (identity is part of the hash) but identical normalized
@@ -337,6 +358,8 @@ class SyntheticJenkins:
                 char = self._present(spec, index)
                 if char is None:
                     continue
+                if char == "F" and spec.fail_only_track and track != spec.fail_only_track:
+                    char = "P"  # track-divergent spec: the failure hits one track only
                 cases.append(_case(spec, track, char, index))
             suites.append(
                 {

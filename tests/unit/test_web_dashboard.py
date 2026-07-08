@@ -280,6 +280,34 @@ def test_triage_filter_bar_options_render(multi_owner_client):
     assert "ut_billing" in page
 
 
+def test_triage_track_filter_keeps_both_track_failure_and_renders_badges(session_factory):
+    # Issue #84: "t_both" fails in both tracks (the normal case) — it must show under *either*
+    # track filter, with one badge per failing track; "t_py39only" fails in permanent_py39 only.
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"t_both": "FAILED", "t_py39only": "FAILED"},
+            fail_tracks={"t_py39only": ("permanent_py39",)},
+        )
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+    perm = client.get("/?track=permanent").text
+    assert "t_both" in perm
+    assert "t_py39only" not in perm
+    assert "not yet acknowledged (1)" in perm
+
+    py39 = client.get("/?track=permanent_py39").text
+    assert "t_both" in py39 and "t_py39only" in py39
+    assert "not yet acknowledged (2)" in py39
+
+    # The row lists every failing track as a badge (dropdown options aside, the badge markup is
+    # specific to the row rendering).
+    assert '<span class="badge track">permanent</span>' in py39
+    assert '<span class="badge track">permanent_py39</span>' in py39
+
+
 def test_triage_filter_survives_acknowledge_round_trip(multi_owner_client, session_factory):
     ident_id = _identity_id(session_factory, "alpha")
     resp = multi_owner_client.post(
