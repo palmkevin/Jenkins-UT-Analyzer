@@ -602,9 +602,7 @@ def test_historical_reingest_skips_lifecycle(session_factory):
         # in particular no phantom episode for t_fix, no closure of t_live's live episode, and
         # still no lifecycle row at all for the healthy t_calm.
         assert _lifecycle_snapshot(s) == before
-        assert (
-            s.scalar(select(func.count()).select_from(Classification)) == classifications_before
-        )
+        assert s.scalar(select(func.count()).select_from(Classification)) == classifications_before
 
         # The run itself is fully persisted: results (3 tests x 2 tracks), KB signatures on the
         # failures, and the display baseline stamped so the run page shows its diff.
