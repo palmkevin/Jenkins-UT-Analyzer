@@ -224,7 +224,10 @@
         <code>ERROR</code>, and serves a real <b><code>/health</code></b> — DB ping + poller-heartbeat
         freshness, 503 if the DB is down or no successful poll landed within the configured staleness
         window (a deployment with no poller, like the public demo, reports poller “never” and stays
-        healthy). With <code>AUTH_ENABLED=true</code>, a fail-closed middleware gates every route
+        healthy). Every state-changing request (POST/PUT/PATCH/DELETE) also passes an app-wide
+        <b>CSRF guard</b> — a cross-site browser origin (<code>Sec-Fetch-Site</code>/<code>Origin</code>
+        evidence) gets a 403 before it reaches any route — the same check whether
+        <code>AUTH_ENABLED</code> is on or off. With <code>AUTH_ENABLED=true</code>, a fail-closed middleware gates every route
         except <code>/health</code>, <code>/login</code>, <code>/auth/callback</code>, <code>/logout</code>
         and <code>/static/</code> — an unauthenticated browser GET bounces to <code>/login</code>, a
         non-GET gets a plain 401 — and the header swaps the free-text actor form for “signed in as
@@ -428,7 +431,9 @@
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
   thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
-  so a re-ingest never re-mails a historical regression.</p>
+  so a re-ingest never re-mails a historical regression. If the re-ingested build is older than the
+  current newest complete run, the lifecycle/classification pass itself is skipped too (see
+  <a href="#analysis">Analysis</a>) — only the run/results/KB signatures are persisted.</p>
   <ol class="flow">
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
       <code>lastCompletedBuild</code>, minus any <b>quarantined</b> builds. The cursor is the DB itself —
@@ -464,9 +469,14 @@
 
 <section id="analysis">
   <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete runs only</span></h2>
-  <p class="lead">A run is analysed only when it is <b>complete</b> (finished, and all expected shards reported).
-  Incomplete runs are stored and shown but skipped as a baseline, so partial runs never produce phantom
-  regressions.</p>
+  <p class="lead">A run is analysed only when it is <b>complete</b>: all expected shards reported <i>and</i>
+  each shard's stage actually finished running its tests (an aborted/cancelled UT stage keeps the run
+  incomplete, even though its shard is present). Incomplete runs are stored and shown but skipped as a
+  baseline, so partial runs never produce phantom regressions. The lifecycle/classification/hypothesis pass
+  also only ever runs for the <b>newest</b> complete run — re-ingesting an older, already-superseded build
+  (e.g. the control panel's quarantine-recovery re-ingest) still persists its run, results and KB
+  signatures, but never replays into current lifecycle state, so history can’t reopen a since-fixed
+  episode or clear an acknowledgement.</p>
   <div class="grid g2">
     <div class="card">
       <h3>Lifecycle &amp; episodes</h3>
@@ -691,8 +701,9 @@
       <td>Path to a PEM CA bundle to verify Jenkins' cert against. Takes precedence over
       <code>JENKINS_VERIFY_TLS</code> when set (verification stays on, against this bundle).</td></tr>
     <tr><td><code>EXPECTED_SHARDS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
-      <td>Shards (tracks) a run must report to be considered <b>complete</b> — incomplete runs are
-      stored but skipped as an analysis baseline.</td></tr>
+      <td>Shards (tracks) a run must report — each having actually <b>finished</b> its stage
+      (an ABORTED/cancelled shard doesn't count) — to be considered <b>complete</b>; incomplete
+      runs are stored but skipped as an analysis baseline.</td></tr>
     <tr><td><code>INGEST_UNITTEST_STAGES</code></td><td><code>true</code></td>
       <td>Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS,
       Uniface) — parsed from each stage's <code>wfapi/log</code> behind the same interface as the
