@@ -426,7 +426,7 @@ def test_triage_badge_shows_new_count_on_every_page(client):
     # One unacknowledged new failing test ("alpha") → a red 1 on the Triage nav link everywhere.
     for path in ("/", "/runs", "/flaky", "/kb", "/control"):
         page = client.get(path).text
-        assert 'text-bg-danger' in page
+        assert "text-bg-danger" in page
         assert ">1</span>" in page
 
 

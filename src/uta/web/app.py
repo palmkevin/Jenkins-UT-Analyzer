@@ -118,9 +118,7 @@ def format_reltime(value: object) -> str:
     # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     age = (datetime.now(UTC) - aware).total_seconds()
-    return Markup(
-        f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>'
-    )
+    return Markup(f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>')
 
 
 _TEMPLATES.env.filters["ts"] = format_ts
