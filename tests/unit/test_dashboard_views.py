@@ -358,6 +358,23 @@ def test_job_runs_totals_and_poller_next(session_factory):
         assert poller["next_poll_at"] == last + timedelta(seconds=300)
 
 
+def test_latest_run_returns_newest_build_by_started_at(session_factory):
+    with session_scope(session_factory) as s:
+        make_run(s, 1, {"a": "PASSED"})
+        r2 = make_run(s, 2, {"a": "PASSED"})  # later build => later started_at
+        s.flush()
+
+        latest = views.latest_run(s)
+        assert latest["build"] == 2
+        assert latest["url"] == r2.url
+        assert views._aware(latest["started_at"]) == r2.started_at
+
+
+def test_latest_run_empty_store_is_none(session_factory):
+    with session_scope(session_factory) as s:
+        assert views.latest_run(s) is None
+
+
 def test_job_runs_empty_store_and_no_heartbeat(session_factory):
     with session_scope(session_factory) as s:
         result = views.job_runs(s, poll_interval_seconds=300)

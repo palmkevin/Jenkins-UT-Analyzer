@@ -206,13 +206,20 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
                 sort=sort or None,
             )
             options = views.triage_filter_options(s)
+            last_run = views.latest_run(s)
         options["tracks"] = ["permanent", "permanent_py39"]
         options["causes"] = list(PredictedCause)
         options["triage_statuses"] = list(TriageStatus)
         return render(
             request,
             "triage.html",
-            {"queue": queue, "filters": filters, "sort": sort, "options": options},
+            {
+                "queue": queue,
+                "filters": filters,
+                "sort": sort,
+                "options": options,
+                "last_run": last_run,
+            },
             cfg=cfg,
         )
 
