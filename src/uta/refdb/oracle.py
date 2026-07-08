@@ -1,8 +1,9 @@
 """Oracle ``ut_ref`` read-only access — the V_TRACKING data-change feed.
 
 ``V_TRACKING`` is a consolidated view (author already resolved as ``USRCODE``). Its ``CREDATIM`` is
-naive **Europe/Luxembourg** wall-clock, so a UTC app-side window is converted with
-:func:`uta.ingest.clock.to_ut_ref_local` before it becomes a ``CREDATIM BETWEEN`` predicate.
+naive **Europe/Luxembourg** wall-clock, so a UTC app-side window is converted with the fold-safe
+:func:`uta.ingest.clock.to_ut_ref_local_window_start` / ``…_window_end`` pair before it becomes a
+``CREDATIM BETWEEN`` predicate (a plain conversion would drop rows across the fall-back fold).
 
 The :class:`TrackingFeed` protocol is the seam: production uses :class:`OracleTrackingFeed`
 (``oracledb`` thin), the offline suite uses a fixtures-backed fake. ``MODDATA`` is intentionally
@@ -15,7 +16,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from uta.ingest.clock import from_ut_ref_local, to_ut_ref_local
+from uta.ingest.clock import (
+    from_ut_ref_local,
+    to_ut_ref_local_window_end,
+    to_ut_ref_local_window_start,
+)
 
 # MODDATA deliberately excluded (raw medical data).
 _COLUMNS = (
@@ -91,8 +96,8 @@ class OracleTrackingFeed:
         self._password = password
 
     def changes_in_window(self, start_utc: datetime, end_utc: datetime) -> list[DataChange]:
-        win_start = to_ut_ref_local(start_utc)
-        win_end = to_ut_ref_local(end_utc)
+        win_start = to_ut_ref_local_window_start(start_utc)
+        win_end = to_ut_ref_local_window_end(end_utc)
         with self._oracledb.connect(
             user=self._user, password=self._password, dsn=self._dsn
         ) as conn:
