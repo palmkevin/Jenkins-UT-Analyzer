@@ -149,6 +149,14 @@
     {% endif %}
   </nav>
   <main class="container-fluid px-4">
+    {% if flash %}
+    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2"
+         role="alert">
+      {{ flash.message }}
+      <button type="button" class="btn-close" aria-label="Close"
+              onclick="this.closest('.alert').remove()"></button>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <script>

@@ -86,11 +86,14 @@ def test_invalid_override_is_rejected_with_error(client, factory):
         "/control/settings", data={"key": "expected_shards", "value": "999"}, follow_redirects=False
     )
     assert resp.status_code == 303
-    assert "error=" in resp.headers["location"]
+    assert resp.headers["location"] == "/control"
     with session_scope(factory) as s:
         assert s.get(SettingOverride, "expected_shards") is None
-    # The error surfaces on the panel.
-    assert "must be between" in client.get(resp.headers["location"]).text
+    # The error surfaces on the panel as a one-shot flash banner (issue #75).
+    page = client.get(resp.headers["location"]).text
+    assert "must be between" in page and "alert-danger" in page
+    # …and only once: a reload doesn't re-show it.
+    assert "must be between" not in client.get("/control").text
 
 
 def test_non_whitelisted_key_is_rejected(client, factory):
