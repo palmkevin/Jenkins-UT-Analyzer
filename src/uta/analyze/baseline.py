@@ -77,6 +77,27 @@ def select_baseline(session: Session, run: Run) -> Run | None:
     )
 
 
+def has_newer_complete_run(session: Session, run: Run) -> bool:
+    """Whether a **complete** run with a higher ``build_number`` than ``run`` is already stored.
+
+    The lifecycle state machine only ever advances forward: its transitions mutate the *current*
+    ``TestLifecycle``/``FailureEpisode`` rows, so they may only be driven by the newest run. When
+    this returns ``True`` the run is a **historical re-ingest** (e.g. the quarantine-recovery path,
+    issue #82) whose diff describes old facts — applying it would open phantom episodes for
+    long-fixed tests, close live episodes "in the past", and clear acknowledgements. The ordering
+    is ``build_number`` (unique, monotonic in Jenkins); **strictly** greater, so re-ingesting the
+    newest build itself stays on the normal idempotent analysis path.
+    """
+    return (
+        session.scalar(
+            select(Run.id)
+            .where(Run.complete.is_(True), Run.build_number > run.build_number)
+            .limit(1)
+        )
+        is not None
+    )
+
+
 @dataclass
 class RunDiff:
     """The diff of a run against its baseline, at test-identity granularity."""
