@@ -117,29 +117,27 @@ def _error_key(normalized_text: str) -> str:
     return "\n".join(line for line in normalized_text.splitlines() if ":<LINE> in " not in line)
 
 
-def acknowledge_by_signature(session: Session, signature_id: int, actor: str) -> int:
-    """Acknowledge every unacknowledged **failing** test sharing ``signature_id``'s error text.
+def open_episodes_for_signature(
+    session: Session, signature_id: int, *, unacknowledged_only: bool = False
+) -> list[tuple[TestLifecycle, FailureEpisode]]:
+    """Every **failing** test's current open episode sharing ``signature_id``'s error text.
 
-    The high-leverage bulk action for the one-cause-many-tests case (issue #63): one click on a
-    New-bucket row clears every other New test whose current failure has the same exception
-    type + message (see :func:`_error_key`) — one outage, many tests, one click. Returns 0 if the
-    signature is unknown. The candidate set (unacknowledged failing tests) is small, so this is a
-    handful of queries, not a scan of the whole store.
+    The episode-targeting core of the signature-wide bulk actions (acknowledge #63, attribute
+    #106): a candidate matches when its current failure has the same exception type + message
+    (see :func:`_error_key`) as the source signature. Returns ``[]`` if the signature is unknown.
+    The candidate set (failing tests) is small, so this is a handful of queries, not a scan of
+    the whole store.
     """
     source = session.get(FailureSignature, signature_id)
     if source is None:
-        return 0
+        return []
     key = _error_key(source.normalized_text)
 
-    now = _now()
-    count = 0
-    candidates = session.scalars(
-        select(TestLifecycle).where(
-            TestLifecycle.state == LifecycleState.FAILING,
-            TestLifecycle.acknowledged.is_(False),
-        )
-    ).all()
-    for lc in candidates:
+    criteria = [TestLifecycle.state == LifecycleState.FAILING]
+    if unacknowledged_only:
+        criteria.append(TestLifecycle.acknowledged.is_(False))
+    matches: list[tuple[TestLifecycle, FailureEpisode]] = []
+    for lc in session.scalars(select(TestLifecycle).where(*criteria)).all():
         ep = lc.current_episode
         if ep is None:
             continue
@@ -149,6 +147,21 @@ def acknowledge_by_signature(session: Session, signature_id: int, actor: str) ->
         candidate_sig = session.get(FailureSignature, candidate_sig_id)
         if candidate_sig is None or _error_key(candidate_sig.normalized_text) != key:
             continue
+        matches.append((lc, ep))
+    return matches
+
+
+def acknowledge_by_signature(session: Session, signature_id: int, actor: str) -> int:
+    """Acknowledge every unacknowledged **failing** test sharing ``signature_id``'s error text.
+
+    The high-leverage bulk action for the one-cause-many-tests case (issue #63): one click on a
+    New-bucket row clears every other New test whose current failure has the same exception
+    type + message (see :func:`open_episodes_for_signature`) — one outage, many tests, one click.
+    Returns 0 if the signature is unknown.
+    """
+    now = _now()
+    count = 0
+    for lc, _ep in open_episodes_for_signature(session, signature_id, unacknowledged_only=True):
         lc.acknowledged = True
         lc.acknowledged_by = actor
         lc.acknowledged_at = now
@@ -279,4 +292,42 @@ def bulk_set_attribution(
         )
         if attr is not None:
             count += 1
+    return count
+
+
+def attribute_by_signature(
+    session: Session,
+    signature_id: int,
+    actor: str,
+    *,
+    causing_person: str | None = None,
+    reason_text: str | None = None,
+    triage_status: str | None = None,
+    jira_ticket: str | None = None,
+) -> int:
+    """Apply one root-cause conclusion to every open failing episode sharing a signature (#106).
+
+    The attribution twin of :func:`acknowledge_by_signature` — same episode targeting
+    (:func:`open_episodes_for_signature`), but instead of acknowledging, each matching test's
+    current open episode gets the ordinary :func:`set_attribution` treatment. Provenance is still
+    derived **per episode** against that episode's own AI suggestion (a mixed set yields a mix of
+    ``HUMAN_CORRECTED`` / ``HUMAN_ENTERED``), and each conclusion attaches to that episode's own
+    signature row for KB recurrence retrieval. One deviation from the single-episode form: an
+    empty ``jira_ticket`` leaves tickets **untouched** rather than clearing them — mass-clearing
+    unrelated tickets from a shared-outage form would be a foot-gun. Returns the number of
+    episodes attributed (0 if the signature is unknown or nothing matches).
+    """
+    ticket = jira_ticket.strip() if jira_ticket and jira_ticket.strip() else None
+    count = 0
+    for _lc, ep in open_episodes_for_signature(session, signature_id):
+        set_attribution(
+            session,
+            ep.id,
+            actor,
+            causing_person=causing_person,
+            reason_text=reason_text,
+            triage_status=triage_status,
+            jira_ticket=ticket,
+        )
+        count += 1
     return count

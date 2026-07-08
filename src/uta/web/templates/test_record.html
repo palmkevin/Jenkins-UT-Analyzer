@@ -118,7 +118,18 @@
         <option value="{{ s }}"{% if ep.triage_status == s %} selected{% endif %}>{{ s }}</option>
         {% endfor %}
       </select>
-      <p><button class="btn btn-sm btn-primary" type="submit">Save</button></p>
+      {% set rec = record.recurrence %}
+      <p>
+        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+        {% if ep.is_open and lc and ep.id == lc.current_episode_id
+              and rec and rec.open_affected > 1 %}
+        <button class="btn btn-sm btn-outline-primary" type="submit"
+                formaction="/signatures/{{ rec.signature_id }}/attribute"
+                title="Apply cause / reason / Jira ticket / triage status to every open failing test sharing this failure signature (an empty Jira field leaves tickets untouched)">
+          Apply to all {{ rec.open_affected }} affected tests with this signature
+        </button>
+        {% endif %}
+      </p>
     </form>
   </div>
   {% else %}

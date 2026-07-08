@@ -131,6 +131,44 @@ def test_acknowledge_by_signature_message_carries_count(session_factory):
     assert "Acknowledged 2 tests sharing this failure signature" in client.get("/").text
 
 
+def test_attribute_by_signature_message_carries_count(session_factory):
+    from uta.kb.store import record_signatures_for_run
+    from uta.web import actions
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        sig_id = actions._episode_signature_id(
+            s, get_identity(s, "alpha").lifecycle.current_episode
+        )
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    client.post(
+        f"/signatures/{sig_id}/attribute",
+        data={"causing_person": "frank", "triage_status": "ROOT_CAUSED"},
+        headers={"referer": "/"},
+    )
+    page = client.get("/").text
+    assert (
+        "Updated 2 tests sharing this failure signature — cause → frank, "
+        "triage status → ROOT_CAUSED" in page
+    )
+
+
+def test_attribute_by_signature_unknown_signature_is_an_error_flash(client):
+    client.post(
+        "/signatures/424242/attribute", data={"causing_person": "x"}, headers={"referer": "/"}
+    )
+    page = client.get("/").text
+    assert "No open failing tests share this signature" in page
+    assert "alert-danger" in page
+
+
 def test_attribute_message_lists_what_was_saved(client, seeded):
     ep_id = _episode_id(seeded, "alpha")
     client.post(
