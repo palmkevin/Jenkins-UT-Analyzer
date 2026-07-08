@@ -395,6 +395,51 @@ def test_triage_sort_persists_through_filter_form(multi_owner_client):
     assert '<input type="hidden" name="sort" value="owner">' in page
 
 
+@pytest.fixture
+def both_buckets_page(session_factory):
+    """Triage page with both bulk tables rendered: alpha acknowledged (still failing), beta new."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    alpha_id = _identity_id(session_factory, "alpha")
+    resp = client.post(f"/tests/{alpha_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    return client.get("/").text
+
+
+def test_bulk_selection_hooks_present_in_both_tables(both_buckets_page):
+    """The JS contract (issue #76): select-all header checkbox and per-row data hooks, per table."""
+    page = both_buckets_page
+    for form_id in ("bulk-ack-new", "bulk-attr-still"):
+        assert f'data-bulk-select-all="{form_id}"' in page
+        assert f'data-bulk-item="{form_id}"' in page
+    # The behaviour script itself is wired into the page.
+    assert '<script src="/static/bulk-select.js" defer></script>' in page
+
+
+def test_bulk_buttons_render_disabled_with_count_hooks(both_buckets_page):
+    """Bulk buttons ship disabled (zero selected) and carry the live-count label hooks."""
+    import re
+
+    for form_id, label in (
+        ("bulk-ack-new", "Acknowledge selected"),
+        ("bulk-attr-still", "Apply to selected"),
+    ):
+        m = re.search(rf'<button[^>]*data-bulk-button="{form_id}"[^>]*>', both_buckets_page)
+        assert m, f"no bulk button for {form_id}"
+        assert "disabled" in m.group(0)
+        assert f'data-bulk-label="{label}"' in m.group(0)
+
+
+def test_bulk_select_js_is_served(session_factory):
+    client = TestClient(create_app(session_factory=session_factory))
+    resp = client.get("/static/bulk-select.js")
+    assert resp.status_code == 200
+    assert "data-bulk-select-all" in resp.text
+    assert "indeterminate" in resp.text
+
+
 def test_search_redirects_on_unique_match(multi_owner_client, session_factory):
     ident_id = _identity_id(session_factory, "alpha")
     resp = multi_owner_client.get("/search?q=alpha")

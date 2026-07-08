@@ -101,11 +101,11 @@
 <form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
-  <thead><tr><th></th><th>{{ sort_th("Test", "name") }}</th><th>{{ sort_th("Owner", "owner") }}</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
+  <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-ack-new" aria-label="select all new failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>{{ sort_th("Owner", "owner") }}</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
   <tbody>
     {% for row in queue.new %}
     <tr>
-      <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
+      <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" data-bulk-item="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
       <td>{{ test_link(row) }}</td>
       <td>{{ row.owner or "" }}</td>
       <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|ts }}</td>
@@ -128,7 +128,8 @@
   </tbody>
 </table>
 </div>
-<button type="submit" form="bulk-ack-new" class="btn btn-sm btn-outline-primary mb-3">Acknowledge selected</button>
+<button type="submit" form="bulk-ack-new" class="btn btn-sm btn-outline-primary mb-3"
+        data-bulk-button="bulk-ack-new" data-bulk-label="Acknowledge selected" disabled>Acknowledge selected</button>
 {{ ui.more_hint("new", queue.counts.new, queue.new|length, expand) }}
 {% endif %}
 
@@ -139,13 +140,13 @@
 <form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
-  <thead><tr><th></th><th>{{ sort_th("Test", "name") }}</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
+  <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-attr-still" aria-label="select all still-failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>
   <tbody>
     {% for row in queue.still_failing %}
     <tr>
       <td>
         {% if row.episode_id %}
-        <input type="checkbox" name="episode_ids" value="{{ row.episode_id }}" form="bulk-attr-still" aria-label="select {{ row.test_id }}">
+        <input type="checkbox" name="episode_ids" value="{{ row.episode_id }}" form="bulk-attr-still" data-bulk-item="bulk-attr-still" aria-label="select {{ row.test_id }}">
         {% endif %}
       </td>
       <td>
@@ -178,7 +179,8 @@
     <input class="form-control form-control-sm" id="bulk-reason" type="text" name="reason_text" form="bulk-attr-still">
   </div>
   <div class="col">
-    <button type="submit" form="bulk-attr-still" class="btn btn-sm btn-outline-primary">Apply to selected</button>
+    <button type="submit" form="bulk-attr-still" class="btn btn-sm btn-outline-primary"
+            data-bulk-button="bulk-attr-still" data-bulk-label="Apply to selected" disabled>Apply to selected</button>
   </div>
 </div>
 {{ ui.more_hint("still_failing", queue.counts.still_failing, queue.still_failing|length, expand) }}
