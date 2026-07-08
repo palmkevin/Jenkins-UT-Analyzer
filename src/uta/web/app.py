@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from starlette.middleware.sessions import SessionMiddleware
 
 from uta.clients import build_email_sender
@@ -92,8 +94,62 @@ def format_duration(value: object) -> str:
     return " ".join(parts)
 
 
+def _relative_text(seconds: float) -> str:
+    """``seconds`` of age → coarse human text ("3 h ago"); negative means a future time."""
+    future = seconds < 0
+    seconds = abs(seconds)
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        n, unit = int(seconds // 60), "min"
+    elif seconds < 86400:
+        n, unit = int(seconds // 3600), "h"
+    else:
+        n = int(seconds // 86400)
+        unit = "day" if n == 1 else "days"
+    return f"in {n} {unit}" if future else f"{n} {unit} ago"
+
+
+def format_reltime(value: object) -> str:
+    """Render a timestamp as relative age with the absolute form in a hover title (issue #79).
+
+    ``<span title="2026-06-29 16:15:46">2 days ago</span>`` — server-side, no JS. Applied where
+    *age* is what the reader cares about (triage first-failed/fixed-at, test-record lifecycle and
+    episode times); tabular run listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
+    and non-datetimes fall through to ``str``, mirroring :func:`format_ts`.
+    """
+    if value is None:
+        return "—"
+    if not isinstance(value, datetime):
+        return str(value)
+    # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - aware).total_seconds()
+    return Markup(f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>')
+
+
 _TEMPLATES.env.filters["ts"] = format_ts
 _TEMPLATES.env.filters["duration"] = format_duration
+_TEMPLATES.env.filters["reltime"] = format_reltime
+
+
+def nav_section(path: str) -> str | None:
+    """Which navbar entry a request path belongs to, for the active-link highlight (issue #79).
+
+    Test-record pages count as Triage (they're the queue's drill-down); ``/search`` and unknown
+    paths highlight nothing.
+    """
+    if path == "/" or path.startswith("/tests"):
+        return "triage"
+    if path.startswith("/runs"):
+        return "runs"
+    if path.startswith("/flaky"):
+        return "flaky"
+    if path.startswith("/kb"):
+        return "kb"
+    if path.startswith("/control"):
+        return "control"
+    return None
 
 
 def _expanded(request: Request) -> list[str]:
@@ -179,8 +235,14 @@ def create_app(session_factory=None, *, email_sender: EmailSender | None = None)
         request: Request, template: str, context: dict, *, cfg: Settings | None = None
     ) -> HTMLResponse:
         cfg = cfg or get_settings()
+        # The navbar badge shows the live unacknowledged-new count on every page — one cheap
+        # COUNT query, not the whole triage projection (issue #79).
+        with session_scope(session_factory) as s:
+            triage_new_count = views.new_failing_count(s)
         context = {
             **context,
+            "nav_active": nav_section(request.url.path),
+            "triage_new_count": triage_new_count,
             "actor": current_actor(request),
             "auth_enabled": get_settings().auth_enabled,
             "jira_base_url": cfg.jira_base_url,

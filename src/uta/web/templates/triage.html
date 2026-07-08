@@ -110,7 +110,7 @@
       <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" data-bulk-item="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
       <td>{{ test_link(row) }}</td>
       <td>{{ row.owner or "" }}</td>
-      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|ts }}</td>
+      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|reltime }}</td>
       <td>{{ row.predicted_cause or "—" }}</td>
       <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
@@ -200,7 +200,7 @@
     <tr>
       <td>{{ test_link(row) }}</td>
       <td>{{ run_link(row.fixed_in) }}</td>
-      <td>{{ row.fixed_at|ts }}</td>
+      <td>{{ row.fixed_at|reltime }}</td>
       <td>{{ row.reason_text or "—" }}</td>
     </tr>
     {% endfor %}
