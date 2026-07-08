@@ -3,7 +3,9 @@
 
 Wires the Jenkins client + Oracle feed (real or fake) and the parsers. Idempotent on
 ``build_number``: a re-ingest replaces the run's results/shards/candidates rather than duplicating
-them, and re-runs the analysis (which is itself idempotent per baseline+run).
+them, and re-runs the analysis (which is itself idempotent per baseline+run). The analysis pass
+only runs when the build is (still) the newest complete run — a **historical** re-ingest persists
+the run's data but never drives the lifecycle (issue #82).
 """
 
 from __future__ import annotations
@@ -17,13 +19,14 @@ from datetime import timedelta
 from sqlalchemy import insert, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from uta.analyze.baseline import has_newer_complete_run, select_baseline
 from uta.analyze.classify import classify_run
 from uta.analyze.error_type import derive_error_type
 from uta.analyze.flakiness import recompute_flaky_flags
 from uta.analyze.hypothesize import hypothesize_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import session_scope
-from uta.delivery.email import EmailSender, maybe_notify
+from uta.delivery.email import EmailMessage, EmailSender, build_regression_report, send_alert
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.unittest_log import parse_unittest_log
@@ -167,10 +170,16 @@ def ingest_build(
     For a
     **complete** run it then drives the lifecycle/episodes, the baseline diff, the deterministic
     classification of new regressions, refreshes the oscillation **flaky** flags, and — when an
-    ``email_sender`` is supplied — sends the regression-only alert. When a real
+    ``email_sender`` is supplied — sends the regression-only alert **after the transaction
+    commits** (a send failure is logged and dropped, never failing the ingest). When a real
     ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode;
     the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
     sender and no provider, so history is never re-mailed or re-hypothesised.
+
+    The lifecycle/classification/notify pass only runs when the build is (still) the **newest**
+    complete run. Re-ingesting an older build — the quarantine-recovery path (issue #82) — keeps
+    the run, its results and its KB signatures, but skips the analysis: its diff describes old
+    facts, and applying it would corrupt the current lifecycle/episode state.
 
     When ``ingest_unittest_logs`` is set, the deferred **unittest console-log** UT stages (``LXS``,
     ``SMB Pricing``/``Transform``, ``ITF Highlevel``, ``Uniface deploy unit tests`` by default — see
@@ -224,6 +233,7 @@ def ingest_build(
     t_parse = time.perf_counter() - t
 
     t_persist = t_signatures = t_lifecycle = t_classify = t_flaky = 0.0
+    pending_alert: EmailMessage | None = None
     with session_scope(session_factory) as session:
         t = time.perf_counter()
         run = session.scalar(select(Run).where(Run.build_number == build))
@@ -324,21 +334,40 @@ def ingest_build(
         t_signatures = time.perf_counter() - t
 
         if run.complete:
-            t = time.perf_counter()
-            analysis = apply_run(session, run)
-            t_lifecycle = time.perf_counter() - t
+            # Lifecycle only ever advances forward: a **historical** re-ingest — a build older
+            # than the newest complete run, reachable via the control panel's range ingest (the
+            # quarantine-recovery path, issue #82) — must not drive the state machine. Its diff
+            # describes old facts while apply_run mutates the *current* lifecycle/episode rows
+            # (phantom reopened episodes, cleared acknowledgements, live episodes "fixed" in the
+            # past). The run, its results and its KB signatures are persisted above regardless;
+            # only the analysis pass (and the classify/hypothesize/notify steps that consume its
+            # opened episodes) is skipped.
+            historical = has_newer_complete_run(session, run)
+            if historical:
+                # Stamp the display baseline so the run page still shows this run's diff.
+                baseline = select_baseline(session, run)
+                run.baseline_run_id = baseline.id if baseline is not None else None
+                logger.info(
+                    "build #%d is older than the newest complete run — historical re-ingest, "
+                    "lifecycle/classification skipped (run, results and signatures persisted)",
+                    build,
+                )
+            else:
+                t = time.perf_counter()
+                analysis = apply_run(session, run)
+                t_lifecycle = time.perf_counter() - t
 
-            t = time.perf_counter()
-            classify_run(session, run, analysis.opened_episodes)
-            hypothesize_run(
-                session,
-                run,
-                analysis.opened_episodes,
-                hypothesis_provider or NoopHypothesisProvider(),
-                top_k=kb_top_k,
-                cutoff=kb_similarity_cutoff,
-            )
-            t_classify = time.perf_counter() - t
+                t = time.perf_counter()
+                classify_run(session, run, analysis.opened_episodes)
+                hypothesize_run(
+                    session,
+                    run,
+                    analysis.opened_episodes,
+                    hypothesis_provider or NoopHypothesisProvider(),
+                    top_k=kb_top_k,
+                    cutoff=kb_similarity_cutoff,
+                )
+                t_classify = time.perf_counter() - t
 
             if recompute_flaky:
                 t = time.perf_counter()
@@ -346,13 +375,23 @@ def ingest_build(
                     session, window_days=flaky_window_days, threshold=flaky_threshold
                 )
                 t_flaky = time.perf_counter() - t
-            maybe_notify(
-                session,
-                run,
-                email_sender,
-                email_recipients,
-                recovery_notice=email_recovery_notice,
-            )
+            # Compose (not send) the regression alert here — it needs the session — and carry it
+            # past the commit below. Sending inside the transaction let an SMTP outage roll back
+            # a healthy ingest, and a post-send commit failure re-mailed the identical alert on
+            # the poller's retry (issue #81). A historical re-ingest never alerts: its diff
+            # describes old facts (issue #82).
+            if not historical and email_sender is not None and email_recipients:
+                pending_alert = build_regression_report(
+                    session, run, email_recipients, recovery_notice=email_recovery_notice
+                )
+
+    # The alert goes out only once the run is durably committed, and a send failure is swallowed
+    # (logged) by ``send_alert`` — mail can never fail the ingest. At-most-once per run: a commit
+    # failure raises out of the ``with`` above before anything is sent (the poller's retry
+    # recomputes and sends once), the poller never re-ingests below its high-water mark, and the
+    # re-ingest paths (CLI back-fill, on-demand job) pass no sender by contract.
+    if pending_alert is not None and email_sender is not None:
+        send_alert(email_sender, pending_alert)
 
     total = time.perf_counter() - t_total
     logger.info(

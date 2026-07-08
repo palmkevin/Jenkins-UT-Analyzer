@@ -1,0 +1,48 @@
+{# Ingest-jobs table (issue #78) — included by control.html and served standalone by
+   GET /control/jobs, the HTMX poll target. Expects `jobs` (list of job dicts) and `jobs_active`
+   (any job QUEUED/RUNNING). The hx-trigger is rendered only while a job is active, so the final
+   swapped-in fragment carries no trigger and the polling loop stops by itself. #}
+<div id="ingest-jobs"
+     {% if jobs_active %}hx-get="/control/jobs" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+{% if jobs %}
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead>
+    <tr><th>#</th><th>Range</th><th>Status</th><th>Progress</th><th>By</th><th>Started</th><th>Finished</th></tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.id }}</td>
+      <td>#{{ job.range }}</td>
+      <td>
+        {% if job.status == "DONE" %}<span class="badge text-bg-success">done</span>
+        {% elif job.status == "ERROR" %}<span class="badge text-bg-danger">error</span>
+        {% elif job.status == "RUNNING" %}<span class="badge text-bg-info">running</span>
+        {% else %}<span class="badge">queued</span>{% endif %}
+        {% if job.error %}<br><code>{{ job.error }}</code>{% endif %}
+      </td>
+      <td>
+        {% if job.status == "RUNNING" and job.builds_total %}
+        <div class="progress" style="min-width: 8rem" role="progressbar" aria-label="ingest progress"
+             aria-valuenow="{{ job.builds_done }}" aria-valuemin="0" aria-valuemax="{{ job.builds_total }}">
+          <div class="progress-bar progress-bar-striped progress-bar-animated"
+               style="width: {{ (100 * job.builds_done / job.builds_total)|round|int }}%">
+            {{ job.builds_done }}/{{ job.builds_total }}
+          </div>
+        </div>
+        {% else %}
+        {{ job.builds_done }} / {{ job.builds_total }}
+        {% endif %}
+      </td>
+      <td>{{ job.requested_by or "—" }}</td>
+      <td>{{ job.started_at|ts }}</td>
+      <td>{{ job.finished_at|ts }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if jobs_active %}<p class="more">Refreshing automatically while jobs run.</p>{% endif %}
+{% endif %}
+</div>

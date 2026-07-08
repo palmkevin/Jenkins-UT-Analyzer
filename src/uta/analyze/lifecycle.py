@@ -191,7 +191,10 @@ def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> Run
     """Advance lifecycle + episodes for ``run`` vs its baseline. Idempotent per (baseline, run).
 
     ``baseline`` defaults to :func:`select_baseline`; pass it explicitly to avoid a re-query. Only
-    call for **complete** runs — an incomplete run's absent tests would be misread as removals.
+    call for **complete** runs — an incomplete run's absent tests would be misread as removals —
+    and only for the **newest** complete run: the transitions mutate the current lifecycle/episode
+    rows, so an older run's diff would corrupt them (the pipeline guards this via
+    :func:`~uta.analyze.baseline.has_newer_complete_run`, issue #82).
 
     Batched: the affected identities' lifecycles, open episodes, episode counts and failing-run
     start times are each preloaded in a single query (not one round-trip per test), and all new

@@ -19,11 +19,15 @@ from uta.models.enums import ErrorType
 _FAILED = frozenset({"FAILED", "REGRESSION"})
 
 # Ordered, most-specific first. Each pattern is matched against details + stack trace (lower-cased).
+# Every token is anchored (``\b`` / lookbehind) so a substring can't type an ordinary code failure
+# as INFRA — unanchored, "oerror" hid inside IOError/ProtoError and "socket." inside websocket.*
+# (issue #86). The generic TIMEOUT/ASSERTION patterns below stay unanchored on purpose: their
+# substring hits (ReadTimeoutError, MyAssertionError) are still timeouts/assertions.
 _INFRA_RE = re.compile(
     r"connection refused|connection reset|could not connect|"
-    r"operationalerror|o(?:racle)?error|ora-\d{4,5}|tns:|"
-    r"socket\.|econnrefused|network is unreachable|no route to host|"
-    r"database is locked|deadlock|service unavailable|503 |502 |504 ",
+    r"\boperationalerror\b|\boracleerror\b|\boracledb\.|\bora-\d{4,5}\b|\btns:|"
+    r"(?<![\w.])socket\.|\beconnrefused\b|network is unreachable|no route to host|"
+    r"database is locked|\bdeadlock|service unavailable|\b503 |\b502 |\b504 ",
     re.IGNORECASE,
 )
 _TIMEOUT_RE = re.compile(r"timeout|timed out|timeouterror|deadline exceeded", re.IGNORECASE)
