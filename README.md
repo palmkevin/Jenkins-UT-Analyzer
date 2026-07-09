@@ -159,6 +159,27 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 With no key the deterministic predicted cause still works; `llm_hypothesis` simply stays blank. A
 chosen provider with no key falls back to a no-op. Only the live `uta poll` path calls the model.
 
+### Auth / Keycloak OIDC (optional)
+Off by default the app runs the **Phase-1 self-declared actor** (the `uta_actor` cookie / `APP_DEFAULT_ACTOR`) and needs zero Keycloak access — which is what local dev, the demo, and the offline CI gate rely on. Flip `AUTH_ENABLED=true` **per environment** to require Keycloak login instead ([src/uta/web/auth.py](src/uta/web/auth.py): confidential client, Authorization Code + PKCE via Authlib).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_ENABLED` | `false` | Master switch. Off ⇒ Phase-1 cookie identity, no Keycloak wired. On ⇒ login required everywhere except the public allowlist. |
+| `OIDC_SERVER_METADATA_URL` | `…/realms/labsolution/.well-known/openid-configuration` | Realm's OIDC discovery doc; all endpoints/keys are self-configured from it. |
+| `OIDC_CLIENT_ID` | `internal-ut-analyzer` | Confidential client registered in the realm. |
+| `OIDC_CLIENT_SECRET` | *(empty)* | Client secret — deliver via Vault / deployment secret store, **never commit**. |
+| `OIDC_POST_LOGOUT_REDIRECT` | *(empty)* | External base URL Keycloak returns to after logout; empty ⇒ the request's own base URL. |
+| `SESSION_SECRET` | *(empty)* | Signs the session cookie; **required when `AUTH_ENABLED=true`**. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
+
+**Activation checklist (per environment):**
+1. **Provision a confidential client** in the `labsolution` realm: standard Authorization Code flow, direct-access-grants **off**, no service account.
+2. **Register the URIs** with DevOps: redirect URI `https://<tool-host>/auth/callback` and post-logout redirect URI `https://<tool-host>/`.
+3. **Generate `SESSION_SECRET`** (command above) and store it as a deployment secret alongside `OIDC_CLIENT_SECRET`.
+4. **Set the vars** — `OIDC_SERVER_METADATA_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_POST_LOGOUT_REDIRECT`, `SESSION_SECRET`.
+5. **Flip `AUTH_ENABLED=true`** and redeploy. Behind a reverse proxy, run uvicorn with `--proxy-headers` so the callback is built from the external `https` host, not the container address.
+
+Enforcement is **fail-closed** middleware (a new route is protected by default): the only public paths are `/health`, `/login`, `/auth/callback`, `/logout`, and `/static/*`. The verified `preferred_username` becomes the acting user, so routes and the data model are unchanged from Phase-1.
+
 ### App tuning
 | Variable | Default | Purpose |
 |---|---|---|
