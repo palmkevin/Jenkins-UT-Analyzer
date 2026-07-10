@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     ut_ref_password: str = ""
     ut_ref_thick: bool = False
 
+    # ── SVN blame (test ownership = main developer, issue #114) ──────────────
+    # Off by default: with it off no blame client is built, so the offline gate, local dev and the
+    # public demo never shell out to `svn` — exactly like the Oracle/LLM live paths. Turn it on in a
+    # deployment that can reach the SVN server to populate the dashboard "Owner" (the modal blame
+    # author of each test's source file).
+    svn_blame_enabled: bool = False
+    # SVN URL under which a test's repo-relative `tests/dev/…` path resolves, e.g.
+    # https://svn.labsolution.lu/svn/ls/trunk/lx . Tune to the real layout; empty disables blame.
+    svn_repo_base_url: str = ""
+    svn_user: str = ""  # optional — anonymous read works on some repos
+    svn_password: str = ""
+
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+psycopg://uta:uta@db:5432/uta"
 

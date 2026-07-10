@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from uta.analyze.flakiness import recompute_flaky_flags
 from uta.db import session_scope
-from uta.demo.dataset import SyntheticJenkins, SyntheticTrackingFeed, build_numbers
+from uta.demo.dataset import (
+    SyntheticJenkins,
+    SyntheticSvnBlame,
+    SyntheticTrackingFeed,
+    build_numbers,
+)
 from uta.ingest.pipeline import ingest_build
 from uta.models import (
     BuildQuarantine,
@@ -143,6 +148,8 @@ def seed_demo_data(
 
     client = SyntheticJenkins(anchor=anchor)
     feed = SyntheticTrackingFeed(anchor=anchor)
+    # Stands in for `svn blame` so the demo's "Owner" column (main developer, #114) is populated.
+    svn_blame_client = SyntheticSvnBlame()
 
     builds = build_numbers()
     for build in builds:
@@ -156,6 +163,7 @@ def seed_demo_data(
             flaky_threshold=flaky_threshold,
             ingest_unittest_logs=False,
             recompute_flaky=False,  # one pass after the loop (flags are display-only)
+            svn_blame_client=svn_blame_client,
         )
 
     with session_scope(session_factory) as session:

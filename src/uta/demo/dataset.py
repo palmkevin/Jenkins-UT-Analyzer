@@ -240,6 +240,22 @@ _DATA_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (4, 11)})
 _COMMIT_AUTHORS = ("R. Devlin", "S. Okafor", "P. Nowak")
 _DATA_USERS = ("THA", "MEL", "KAM")
 
+# Synthetic *main developers* (the dashboard "Owner" = SVN blame author, #114) — invented names,
+# never real people. There is no SVN in the demo, so SyntheticSvnBlame stands in for `svn blame`.
+_MAIN_DEVELOPERS = ("A. Bianchi", "L. Fernandes", "M. Weber", "K. Larsen", "T. Haas")
+
+
+class SyntheticSvnBlame:
+    """Duck-types :class:`uta.refdb.svn.SvnBlameClient` for the demo (no real SVN).
+
+    Returns a deterministic synthetic main developer per source file — keyed on the repo path so
+    sibling tests in one file share an owner, exercising the "Owner" filter/sort in the live demo.
+    """
+
+    def main_developer(self, repo_path: str) -> str | None:
+        idx = sum(ord(c) for c in repo_path) % len(_MAIN_DEVELOPERS)
+        return _MAIN_DEVELOPERS[idx]
+
 _JENKINS_URL = (
     "https://jenkins.example.invalid/job/Development/job/"
     "lsdevbuild-build-release-permanent/{build}/"
@@ -283,7 +299,7 @@ def _stack_trace(spec: TestSpec, track: str) -> str:
         exc_line,
     ]
     if spec.owner:
-        # ZEPHYR ownership signal (parsed into owner_initials + the referenced test case ids).
+        # ZEPHYR ownership signal (parsed into zephyr_owner + the referenced test case ids).
         # Shaped like the real "ZEPHYR TEST CASE INFO" block so the parser exercises the same path.
         ids = (f"LX-T4{spec.line:03d}", *spec.extra_zephyr_ids)
         rule = "-" * 70

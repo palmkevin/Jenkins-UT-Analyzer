@@ -259,9 +259,9 @@ def multi_owner_client(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").main_developer = "AB"
         get_identity(s, "alpha").suite = "ut_pricing"
-        get_identity(s, "beta").owner_initials = "CD"
+        get_identity(s, "beta").main_developer = "CD"
         get_identity(s, "beta").suite = "ut_billing"
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 

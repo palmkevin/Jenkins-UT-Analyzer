@@ -41,7 +41,9 @@ class TestResult(Base, TimestampMixin):
     # Per-run signals carried from the report/stack trace.
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     line: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    owner_initials: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # ZEPHYR test-case owner initials for this run (per-run provenance of the identity-level value);
+    # ZEPHYR metadata, not the test's developer — see TestIdentity.zephyr_owner / main_developer.
+    zephyr_owner: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_type: Mapped[str | None] = mapped_column(String(32), nullable=True)  # derived (M2)
     error_details: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_stack_trace: Mapped[str | None] = mapped_column(Text, nullable=True)

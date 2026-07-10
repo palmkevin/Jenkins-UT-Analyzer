@@ -22,7 +22,8 @@ _TEST_FRAME_RE = re.compile(r'File "([^"]*?/tests/dev/[^"]+\.py)", line (\d+)')
 _ZEPHYR_MARKER = "ZEPHYR TEST CASE INFO"
 # A ZEPHYR test-case identifier, e.g. `LX-T4447`. A failing test may reference more than one.
 _ZEPHYR_ID_RE = re.compile(r"LX-T\d+")
-# ZEPHYR ownership line: `LX-T4447 (kam): "..."` -> (zephyr_id, owner_initials).
+# ZEPHYR ownership line: `LX-T4447 (kam): "..."` -> (zephyr_id, zephyr_owner). NB: this is the
+# owner of the ZEPHYR *test case*, not the developer of the unit test — see #114.
 _ZEPHYR_RE = re.compile(r"(LX-T\d+)\s*\(([^)]+)\)")
 
 # Statuses Jenkins reports. REGRESSION/FIXED are vs Jenkins' own previous build; we keep them as
@@ -48,7 +49,7 @@ class TestCaseResult:
     line: int | None = None
     zephyr_id: str | None = None  # first referenced ZEPHYR test case (owner-correlation anchor)
     zephyr_ids: tuple[str, ...] = ()  # every ZEPHYR test case the failing test references
-    owner_initials: str | None = None
+    zephyr_owner: str | None = None  # ZEPHYR test-case owner initials (NOT the test's developer)
 
     @property
     def test_id(self) -> str:
@@ -96,12 +97,13 @@ def _extract_location(stack_trace: str | None) -> tuple[str | None, int | None]:
 
 
 def extract_zephyr(stack_trace: str | None) -> tuple[tuple[str, ...], str | None]:
-    """The ZEPHYR test cases a failing test references, plus the first owner initials.
+    """The ZEPHYR test cases a failing test references, plus the first ZEPHYR-owner initials.
 
     Scoped to the ``ZEPHYR TEST CASE INFO`` block so unrelated ``LX-T…`` mentions elsewhere in the
     trace aren't picked up. Returns ``((), None)`` when there is no block. A test may reference more
     than one case (``… test case(s): LX-T1, LX-T2``); ids are returned de-duplicated in first-seen
-    order. Owner initials come from the first ``LX-T… (initials)`` detail line, when present.
+    order. The owner initials come from the first ``LX-T… (initials)`` detail line, when present —
+    this is the ZEPHYR *test case* owner, not the unit test's developer (see #114).
     """
     if not stack_trace:
         return (), None
@@ -111,8 +113,8 @@ def extract_zephyr(stack_trace: str | None) -> tuple[tuple[str, ...], str | None
     section = stack_trace[idx:]
     ids = tuple(dict.fromkeys(_ZEPHYR_ID_RE.findall(section)))
     m = _ZEPHYR_RE.search(section)
-    owner = m.group(2) if m else None
-    return ids, owner
+    zephyr_owner = m.group(2) if m else None
+    return ids, zephyr_owner
 
 
 def parse_test_report(report: dict) -> ParsedReport:
@@ -124,7 +126,7 @@ def parse_test_report(report: dict) -> ParsedReport:
         for case in suite.get("cases", []):
             trace = case.get("errorStackTrace")
             file_path, line = _extract_location(trace)
-            zephyr_ids, owner = extract_zephyr(trace)
+            zephyr_ids, zephyr_owner = extract_zephyr(trace)
             parsed.cases.append(
                 TestCaseResult(
                     track=track,
@@ -141,7 +143,7 @@ def parse_test_report(report: dict) -> ParsedReport:
                     line=line,
                     zephyr_id=zephyr_ids[0] if zephyr_ids else None,
                     zephyr_ids=zephyr_ids,
-                    owner_initials=owner,
+                    zephyr_owner=zephyr_owner,
                 )
             )
     return parsed

@@ -229,7 +229,7 @@ def leaderboard_candidates(
             {
                 "identity_id": lc.test_identity_id,
                 "test_id": ident.canonical_name if ident else str(lc.test_identity_id),
-                "owner": ident.owner_initials if ident else None,
+                "owner": ident.main_developer if ident else None,
                 "flaky": stats.flaky,
                 "score": stats.score,
                 "transitions": stats.transitions,
