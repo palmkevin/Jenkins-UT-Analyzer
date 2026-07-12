@@ -67,11 +67,11 @@ def _row_to_change(row: dict) -> DataChange:
     upd = row.get("UPDDATIM")
     return DataChange(
         session_log_id=row.get("SESSIONLOGID"),
-        entity=row.get("LXTABLECODE", ""),
-        pk=str(row.get("PKLST", "")),
+        entity="" if row.get("LXTABLECODE") is None else str(row["LXTABLECODE"]),
+        pk="" if row.get("PKLST") is None else str(row["PKLST"]),
         entity_ref=row.get("LXTABLECODEREF"),
         pk_ref=None if row.get("PKLSTREF") is None else str(row["PKLSTREF"]),
-        change_type=row.get("TYPE", ""),
+        change_type="" if row.get("TYPE") is None else str(row["TYPE"]),
         component=row.get("COMPONENTNAME"),
         cre_utc=from_ut_ref_local(cre),
         upd_utc=from_ut_ref_local(upd) if upd is not None else None,

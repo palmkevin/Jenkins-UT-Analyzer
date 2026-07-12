@@ -138,11 +138,17 @@ def compute_stats(
     flaky = 0.0 < fail_rate < 1.0 and score >= threshold
 
     # Shard-correlated: among the failing runs, do the failures cluster in ONE track while the other
-    # track passes? A consistent single-track failure is a strong infra/flaky tell.
-    single_track_fails = sum(
-        1 for p in window if p.failed and p.pass_tracks and len(p.fail_tracks) == 1
+    # track passes? A consistent single-track failure is a strong infra/flaky tell. It must be the
+    # *same* track every time — failures alternating between tracks are ordinary flakiness.
+    single_track_fails = [
+        p for p in window if p.failed and p.pass_tracks and len(p.fail_tracks) == 1
+    ]
+    failing_tracks = frozenset().union(*(p.fail_tracks for p in single_track_fails))
+    shard_correlated = (
+        fails_in_window > 0
+        and len(single_track_fails) == fails_in_window
+        and len(failing_tracks) == 1
     )
-    shard_correlated = fails_in_window > 0 and single_track_fails == fails_in_window
 
     return FlakinessStats(
         failed_total=failed_total,
