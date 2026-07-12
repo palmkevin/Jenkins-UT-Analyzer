@@ -94,9 +94,11 @@
            onchange="this.form.submit()" {% if filters.flaky %}checked{% endif %}>
     <label class="form-check-label small" for="filter-flaky">Flaky only</label>
   </div>
-  {# Sorting moved to the column headers (issue #77); the hidden field keeps ?sort= across
-     filter submissions so the whole state stays in the URL. #}
+  {# Sorting moved to the column headers (issue #77); the hidden fields keep ?sort= and the
+     ?expand=-ed sections (issue #151) across filter submissions so the whole state stays in the
+     URL. "Clear" deliberately resets everything, expand included — it links to the bare "/". #}
   {% if sort %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+  {% if expand %}<input type="hidden" name="expand" value="{{ expand | join(',') }}">{% endif %}
   <div class="col">
     <button class="btn btn-sm btn-primary" type="submit">Apply filters</button>
     <a class="btn btn-sm btn-outline-secondary" href="/">Clear</a>

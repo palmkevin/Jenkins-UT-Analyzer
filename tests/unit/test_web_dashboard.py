@@ -322,6 +322,58 @@ def test_triage_expand_link_preserves_filters_and_sort(many_owned_failures_clien
     assert "zzz_unrelated" not in expanded
 
 
+def test_triage_filter_form_chips_and_sort_headers_preserve_expand(many_owned_failures_client):
+    # The mirror image of the test above (issue #151): once a section is expanded, changing the
+    # filters or the sort must not collapse it. The filter form carries ?expand= as a hidden
+    # field; the chip-remove and column-sort links keep it in their URLs. "Clear" stays a bare
+    # "/" — it deliberately resets everything, expand included.
+    page = many_owned_failures_client.get("/?owner=KP&expand=new").text
+    assert '<input type="hidden" name="expand" value="new">' in page
+    assert 'href="/?expand=new"' in page  # the owner chip's ✕ keeps the expansion
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new"' in page  # sort header keeps it too
+    assert 'href="/">Clear</a>' in page
+
+
+# ── run-diff capping (issue #151) ──────────────────────────────────────────────
+
+
+@pytest.fixture
+def many_regressions_client(session_factory):
+    """A run with 25 regressions vs its baseline — over the 20-row diff-bucket cap."""
+    names = [f"t{i:02d}" for i in range(25)]
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {n: "PASSED" for n in names})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {n: "FAILED" for n in names})
+        apply_run(s, r2, baseline=r1)
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_run_diff_headers_show_counts_and_cap_long_buckets(many_regressions_client):
+    page = many_regressions_client.get("/runs/2").text
+    # Every bucket header carries its count, populated or not.
+    assert "Regressions — new failures (25)" in page
+    assert "Newly fixed (0)" in page
+    assert "Still failing (0)" in page
+    assert "Removed (0)" in page
+    # The over-cap bucket is truncated behind a "Show all N" link to ?expand=<bucket>#diff.
+    assert 'href="/runs/2?expand=regressions#diff">Show all 25</a>' in page
+
+    # Following the link renders the 5 capped-away tests (the count still reads 25) and the
+    # residual hint disappears.
+    expanded = many_regressions_client.get("/runs/2?expand=regressions").text
+    assert expanded.count('href="/tests/') - page.count('href="/tests/') == 5
+    assert "Regressions — new failures (25)" in expanded
+    assert "Show all 25" not in expanded
+
+
+def test_run_diff_expand_link_preserves_query_string(many_regressions_client):
+    # The run page's other URL state (failures_only, results pagination) must survive the
+    # "Show all" round trip — same contract as the triage expand links.
+    page = many_regressions_client.get("/runs/2?failures_only=1").text
+    assert 'href="/runs/2?failures_only=1&amp;expand=regressions#diff">Show all 25</a>' in page
+
+
 # ── run-results pagination (issue #52) ─────────────────────────────────────────
 
 

@@ -45,6 +45,12 @@ from uta.web.actions import open_episodes_for_signature
 # directly (tests, CLI). A limit of 0 disables the cap.
 DEFAULT_ROW_LIMIT = 100
 
+# Max tests a run-page diff bucket lists inline before capping behind a "Show all N" link
+# (issue #151). Deliberately tighter than DEFAULT_ROW_LIMIT — each bucket renders as a single
+# comma-separated link stream, not a table, so a bad night's hundreds of regressions would
+# otherwise swamp the page.
+DIFF_ROW_LIMIT = 20
+
 # Max characters of the one-line error snippet a triage row shows (issue #145) — long enough for a
 # typical exception line, short enough that a row stays a row.
 _SNIPPET_MAX_CHARS = 160
@@ -375,12 +381,14 @@ def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str
     return f"/?{query}" if query else "/"
 
 
-def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> list[dict]:
+def triage_filter_chips(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> list[dict]:
     """Active-filter chips for the triage queue (issue #77) — pure URL construction.
 
     One chip per active filter: a ``label`` ("owner: KP", "flaky only") and a ``remove_url``
-    re-requesting the page with that one filter dropped and everything else (including ``sort``)
-    kept, so state stays entirely in the URL.
+    re-requesting the page with that one filter dropped and everything else (including ``sort``
+    and the ``expand``-ed sections, issue #151) kept, so state stays entirely in the URL.
     """
     chips = []
     for key, name in _CHIP_LABELS.items():
@@ -389,27 +397,38 @@ def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> lis
             continue
         remaining = {k: v for k, v in filters.items() if k != key}
         chips.append(
-            {"key": key, "label": f"{name}: {value}", "remove_url": triage_url(remaining, sort)}
+            {
+                "key": key,
+                "label": f"{name}: {value}",
+                "remove_url": triage_url(remaining, sort, expand),
+            }
         )
     if filters.get("flaky"):
         remaining = {k: v for k, v in filters.items() if k != "flaky"}
         chips.append(
-            {"key": "flaky", "label": "flaky only", "remove_url": triage_url(remaining, sort)}
+            {
+                "key": "flaky",
+                "label": "flaky only",
+                "remove_url": triage_url(remaining, sort, expand),
+            }
         )
     return chips
 
 
-def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[str, dict]:
+def triage_sort_links(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> dict[str, dict]:
     """Column-header sort links for the triage queue (issue #77).
 
     For each server-supported sort (``name``/``owner``) returns ``{"active": bool, "url": str}``:
     clicking an inactive header applies that sort, clicking the active one toggles back to the
-    default age order. Filters are preserved either way.
+    default age order. Filters and the ``expand``-ed sections (issue #151) are preserved either
+    way.
     """
     return {
         key: {
             "active": (sort or "") == key,
-            "url": triage_url(filters, None if (sort or "") == key else key),
+            "url": triage_url(filters, None if (sort or "") == key else key, expand),
         }
         for key in _SORT_KEYS
     }
@@ -434,6 +453,31 @@ def triage_expand_urls(
         if section not in expanded:
             expanded.append(section)
         urls[section] = triage_url(filters, sort, expand=expanded) + f"#{section}"
+    return urls
+
+
+# The run page's four capped diff buckets — the section keys its ``?expand=`` accepts (issue #151).
+_RUN_DIFF_SECTIONS = ("regressions", "newly_fixed", "still_failing", "removed")
+
+
+def run_expand_urls(
+    build: int, params: dict[str, str], expand: Collection[str] = ()
+) -> dict[str, str]:
+    """Per-bucket "Show all N" URLs for the run page's capped diff lists (issue #151).
+
+    Each URL re-requests the run page with that bucket added to the already-expanded set while
+    the rest of the query string (``failures_only``, results pagination) survives — the same
+    state-stays-in-the-URL contract as the triage queue's expand links (issue #132) — and jumps
+    back to the ``#diff`` anchor.
+    """
+    base = {k: v for k, v in params.items() if k != "expand" and v}
+    urls = {}
+    for section in _RUN_DIFF_SECTIONS:
+        expanded = list(expand)
+        if section not in expanded:
+            expanded.append(section)
+        query = urlencode({**base, "expand": ",".join(expanded)}, safe=",")
+        urls[section] = f"/runs/{build}?{query}#diff"
     return urls
 
 
@@ -911,6 +955,7 @@ def run_summary(
     limit: int = DEFAULT_ROW_LIMIT,
     page: int = 1,
     failures_only: bool = False,
+    expand: Collection[str] = (),
 ) -> dict | None:
     """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
@@ -921,6 +966,10 @@ def run_summary(
 
     ``failures_only`` (issue #63) restricts the results (and their count/pagination) to non-passing
     statuses — paging through ~25k rows to find the handful of failures is the current reality.
+
+    Each diff bucket is ``{"rows": [...], "total": N}``, capped at :data:`DIFF_ROW_LIMIT` rows
+    unless its key (see :data:`_RUN_DIFF_SECTIONS`) is in ``expand`` — a bad night's regressions
+    would otherwise render as an unbounded link stream (issue #151).
     """
     run = session.scalar(select(Run).where(Run.build_number == build))
     if run is None:
@@ -940,8 +989,12 @@ def run_summary(
         for i in session.scalars(select(TestIdentity).where(TestIdentity.id.in_(ids))).all()
     }
 
-    def _diff_rows(identity_ids: list[int]) -> list[dict]:
-        return [{"identity_id": i, "test_id": names.get(i, str(i))} for i in identity_ids]
+    def _diff_bucket(section: str, identity_ids: list[int]) -> dict:
+        visible = _cap(identity_ids, section, limit=DIFF_ROW_LIMIT, expand=expand)
+        return {
+            "rows": [{"identity_id": i, "test_id": names.get(i, str(i))} for i in visible],
+            "total": len(identity_ids),
+        }
 
     result_filters = [TestResult.run_id == run.id]
     if failures_only:
@@ -984,10 +1037,10 @@ def run_summary(
         ],
         "baseline": _run_ref(session, baseline.id) if baseline is not None else None,
         "diff": {
-            "regressions": _diff_rows(diff.regressions),
-            "newly_fixed": _diff_rows(diff.newly_fixed),
-            "still_failing": _diff_rows(diff.still_failing),
-            "removed": _diff_rows(diff.removed),
+            "regressions": _diff_bucket("regressions", diff.regressions),
+            "newly_fixed": _diff_bucket("newly_fixed", diff.newly_fixed),
+            "still_failing": _diff_bucket("still_failing", diff.still_failing),
+            "removed": _diff_bucket("removed", diff.removed),
         },
         "results": [
             {
