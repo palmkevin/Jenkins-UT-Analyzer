@@ -190,6 +190,36 @@ def test_score_magnitude_tie_break_resolves_to_code(session_factory):
     assert ep["cause_provenance"] == "AI_CONFIRMED"
 
 
+def test_record_page_renders_why_this_prediction(session_factory):
+    """Issue #159 shop-window: the tie-break test's real classifier evidence renders as the
+    collapsed "Why this prediction" block on the live demo's record page — readable rows for the
+    candidate counts, both top matches, the tie-break and the confidence inputs."""
+    from uta.web.app import create_app
+
+    session = session_factory()
+    ident_id = session.scalar(
+        select(TestIdentity.id).where(
+            TestIdentity.canonical_name == "ut_pricing.pr_engine.TestClass.test_discount_tiers"
+        )
+    )
+    record = views.test_record(session, ident_id)
+    items = dict(record["episodes"][0]["evidence_items"])
+    assert items["Infrastructure error"] == "no"
+    assert items["Code changes in window"].endswith("matched this test")
+    assert items["Top code match"].startswith("48612 by P. Nowak (score 3)")
+    assert items["Top data match"].startswith("ACINVORD by KAM (score 2)")
+    assert "AC_CSVC2" in items["Top data match"]  # the tier-2 component-mention reason
+    assert "code candidate led" in items["Tie-break"]
+    assert items["Confidence inputs"].startswith("relevance score 3 vs 2")
+
+    page = TestClient(create_app(session_factory=session_factory)).get(f"/tests/{ident_id}").text
+    assert "Why this prediction" in page
+    assert "48612 by P. Nowak (score 3)" in page
+    summary_idx = page.index("Why this prediction")
+    open_tag = page[page.rindex("<details", 0, summary_idx) : summary_idx]
+    assert " open" not in open_tag  # collapsed by default
+
+
 def test_every_new_classification_carries_a_confidence(session_factory, queue):
     """#73's acceptance: confidence is populated (non-None) for every newly classified episode."""
     session = session_factory()

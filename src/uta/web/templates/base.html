@@ -77,6 +77,10 @@
        cells don't shout; hover restores the ordinary link colour. */
     .pivot-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
     .pivot-link:hover { color: var(--bs-link-hover-color); }
+    /* Classification-evidence rows on the test record's why-block (issue #159). */
+    dl.evidence { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; margin: 0; }
+    dl.evidence dt { font-weight: 600; }
+    dl.evidence dd { margin: 0; overflow-wrap: anywhere; }
 
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
@@ -144,6 +148,7 @@
       <li class="nav-item"><a class="nav-link{% if nav_active == "flaky" %} active" aria-current="page{% endif %}" href="/flaky">Flaky</a></li>
       <li class="nav-item"><a class="nav-link{% if nav_active == "kb" %} active" aria-current="page{% endif %}" href="/kb">Knowledge base</a></li>
       <li class="nav-item"><a class="nav-link{% if nav_active == "control" %} active" aria-current="page{% endif %}" href="/control">Control</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "help" %} active" aria-current="page{% endif %}" href="/help">Help</a></li>
     </ul>
     <form class="d-flex align-items-center gap-2 me-2" method="get" action="/search">
       <input class="form-control form-control-sm" style="width: 12rem" type="text" name="q"

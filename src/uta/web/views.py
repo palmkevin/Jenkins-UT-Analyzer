@@ -735,6 +735,82 @@ def _episode_failure_detail(session: Session, ep: FailureEpisode) -> dict | None
     }
 
 
+def _fmt_num(value) -> str:
+    """Compact number rendering for evidence values (``3.0`` -> ``3``, ``0.5`` -> ``0.5``)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    return f"{value:g}"
+
+
+def _top_match_line(top: dict) -> str:
+    """One readable line for the classifier's strongest match of a kind (see ``_top_evidence``)."""
+    line = str(top.get("candidate") or "—")
+    if top.get("author"):
+        line += f" by {top['author']}"
+    if top.get("score") is not None:
+        line += f" (score {_fmt_num(top['score'])})"
+    reasons = top.get("reasons") or []
+    if isinstance(reasons, list) and reasons:
+        line += " — " + "; ".join(str(r) for r in reasons)
+    return line
+
+
+def _evidence_items(evidence) -> list[tuple[str, str]]:
+    """Flatten the classifier's evidence JSON into readable (label, value) rows for the record.
+
+    Whitelists the user-meaningful keys of the shape :func:`uta.analyze.classify.classify_episode`
+    persists (candidate counts, relevance matches, the tie-break, the confidence inputs) and drops
+    internal noise (``baseline_run_id`` is a store PK, not a build number). Degenerate payloads —
+    a bare string or list instead of the expected dict — are still surfaced as a single row rather
+    than silently hidden.
+    """
+    if not evidence:
+        return []
+    if not isinstance(evidence, dict):
+        if isinstance(evidence, list):
+            return [("Evidence", "; ".join(str(v) for v in evidence))]
+        return [("Evidence", str(evidence))]
+    relevance = evidence.get("relevance")
+    if not isinstance(relevance, dict):
+        relevance = {}
+    items: list[tuple[str, str]] = []
+    if "infra_error" in evidence:
+        items.append(("Infrastructure error", "yes" if evidence["infra_error"] else "no"))
+    for kind, label in (("code", "Code changes in window"), ("data", "Data changes in window")):
+        if f"{kind}_candidates" not in evidence:
+            continue
+        count = evidence[f"{kind}_candidates"] or 0
+        if not count:
+            items.append((label, "none"))
+            continue
+        value = f"{_fmt_num(count)} candidate{'s' if count != 1 else ''}"
+        matched = relevance.get(f"{kind}_matched")
+        if matched is not None:
+            value += f" · {_fmt_num(matched)} matched this test"
+        items.append((label, value))
+    for key, label in (("top_code", "Top code match"), ("top_data", "Top data match")):
+        top = relevance.get(key)
+        if isinstance(top, dict):
+            items.append((label, _top_match_line(top)))
+    tie = relevance.get("tie_break")
+    if tie:
+        items.append(
+            ("Tie-break", f"both kinds matched — the top {tie} candidate led by a full tier")
+        )
+    conf = evidence.get("confidence")
+    if isinstance(conf, dict):
+        bits = []
+        if conf.get("win_score") is not None and conf.get("lose_score") is not None:
+            bits.append(
+                f"relevance score {_fmt_num(conf['win_score'])} vs {_fmt_num(conf['lose_score'])}"
+            )
+        if conf.get("kb_provenance_weight") is not None:
+            bits.append(f"KB provenance weight {_fmt_num(conf['kb_provenance_weight'])}")
+        if bits:
+            items.append(("Confidence inputs", " · ".join(bits)))
+    return items
+
+
 def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
     classification = _latest_classification(session, ep.id)
     attribution = ep.attribution
@@ -763,6 +839,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
         "suggested_contact": classification.suggested_contact if classification else None,
         "evidence": evidence,
+        "evidence_items": _evidence_items(evidence),
         "causing_person": attribution.causing_person if attribution else None,
         "reason_text": attribution.reason_text if attribution else None,
         "cause_provenance": attribution.cause_provenance if attribution else None,

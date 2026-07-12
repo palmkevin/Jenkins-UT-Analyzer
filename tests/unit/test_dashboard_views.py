@@ -291,6 +291,52 @@ def test_test_record_zephyr_test_cases_empty_when_unset(session_factory):
         assert rec["zephyr_test_cases"] == []
 
 
+def test_evidence_items_flatten_the_classifier_shape():
+    """Issue #159: the persisted evidence JSON becomes whitelisted, readable label/value rows."""
+    items = dict(
+        views._evidence_items(
+            {
+                "code_candidates": 1,
+                "data_candidates": 0,
+                "infra_error": True,
+                "baseline_run_id": 7,
+                "relevance": {
+                    "code_matched": 1,
+                    "data_matched": 0,
+                    "tie_break": None,
+                    "top_code": {
+                        "candidate": "r48606",
+                        "author": "S. Okafor",
+                        "score": 3.0,
+                        "reasons": ["touches ut_x/mod.py"],
+                    },
+                    "top_data": None,
+                },
+                "confidence": {"win_score": 3.0, "lose_score": 0.0, "kb_provenance_weight": 4},
+            }
+        )
+    )
+    assert items["Infrastructure error"] == "yes"
+    assert items["Code changes in window"] == "1 candidate · 1 matched this test"
+    assert items["Data changes in window"] == "none"
+    assert items["Top code match"] == "r48606 by S. Okafor (score 3) — touches ut_x/mod.py"
+    assert "Tie-break" not in items  # null tie-break renders no row
+    assert items["Confidence inputs"] == "relevance score 3 vs 0 · KB provenance weight 4"
+    assert "baseline_run_id" not in str(items)  # internal PK stays whitelisted out
+
+
+def test_evidence_items_handle_degenerate_payloads():
+    """A bare string / list / empty payload never crashes and never renders an empty shell."""
+    assert views._evidence_items(None) == []
+    assert views._evidence_items({}) == []
+    assert views._evidence_items("") == []
+    assert views._evidence_items([]) == []
+    assert views._evidence_items("legacy free-text note") == [("Evidence", "legacy free-text note")]
+    assert views._evidence_items(["a", "b"]) == [("Evidence", "a; b")]
+    # A dict with only unknown keys yields no rows (whitelist), so the template renders no block.
+    assert views._evidence_items({"internal_only": 1}) == []
+
+
 def test_test_record_missing_identity_is_none(session_factory):
     with session_scope(session_factory) as s:
         assert views.test_record(s, 9999) is None
