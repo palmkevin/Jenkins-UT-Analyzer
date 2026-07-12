@@ -3,7 +3,7 @@
 Redefines "owner" (issue #114). The ZEPHYR test-case author had silently become the dashboard
 "Owner"; it is renamed to its honest name ``zephyr_owner`` (data preserved) and a new
 ``main_developer`` column holds the SVN-blame-derived developer that "Owner" now means (NULL until
-blame resolves it — populated by ingest with ``SVN_BLAME_ENABLED`` on, or ``uta reattribute-owners``).
+blame resolves it — filled by ingest with ``SVN_BLAME_ENABLED`` on, or ``uta reattribute-owners``).
 
 Revision ID: f6a7b8c9d0e1
 Revises: e5f6a7b8c9d0

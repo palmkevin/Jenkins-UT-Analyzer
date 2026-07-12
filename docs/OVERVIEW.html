@@ -9,7 +9,7 @@
     --bg:#0f1420; --panel:#161d2e; --panel2:#1c2740; --ink:#e8edf6; --muted:#9fb0cc;
     --line:#2c3a57; --accent:#5aa0ff; --accent2:#7ee0c0;
     --jenkins:#d33833; --oracle:#f28c1e; --pg:#4a90d9; --llm:#a97bf0; --mail:#4bbf73;
-    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b; --auth:#e05fa0;
+    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b; --auth:#e05fa0; --svn:#c9a13c;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -122,8 +122,8 @@
 
 <section id="parts">
   <h2>The parts involved</h2>
-  <p class="lead">Four external systems the app reads or notifies (a fifth, Keycloak, is flag-gated —
-  see below), its own store, and the app’s own containers.</p>
+  <p class="lead">Four external systems the app reads or notifies (two more — Keycloak and SVN
+  blame — are flag-gated; see below), its own store, and the app’s own containers.</p>
 
   <div class="grid g2">
     <div class="card">
@@ -134,6 +134,19 @@
         (<code>/testReport/api/json</code>), the <b>SVN change sets</b> (the authoritative list of code
         changes), per-shard <b>timing</b> (<code>wfapi/describe</code>), and — for the console-log UT stages —
         the stage <b>logs</b> (<code>wfapi/log</code>). Anonymous read; token optional.</p>
+      </div>
+      <div class="part" style="border-color:var(--svn)">
+        <h4>SVN <span class="pill">optional · flag-gated</span> <span class="pill">ownership</span></h4>
+        <p>A second, distinct use of SVN — not the change-set candidates Jenkins already surfaces
+        above. For each failing test, the pipeline maps its source path to the repo and shells out to
+        <code>svn blame --xml</code> (<code>SvnCliBlameClient</code>), taking the <b>modal line
+        author</b> as that test's <b>main developer</b> — this is the dashboard’s <b>Owner</b>, stored
+        on <code>TestIdentity.main_developer</code>. Gated by <code>SVN_BLAME_ENABLED</code> (default
+        off): with it off, no client is built and <code>main_developer</code> stays <code>NULL</code>,
+        so local dev, the offline gate and the public demo never touch SVN. Wired into <code>uta
+        poll</code>/<code>backfill</code>/<code>bootstrap</code> (incremental, per run's failing
+        tests) and the <code>uta reattribute-owners</code> backfill command; the control panel's
+        on-demand ingest intentionally skips it, like email and the LLM.</p>
       </div>
       <div class="part" style="border-color:var(--oracle)">
         <h4>Oracle <code>ut_ref</code> <span class="pill">read-only</span></h4>
@@ -256,7 +269,10 @@
         <p><b>FishEye</b> (<code>?cs=&lt;revision&gt;</code>) for SVN revisions, <b>Jira</b>
         (<code>/browse/&lt;TICKET&gt;</code>) for tickets, and <b>ZEPHYR (Kanoah Test Management)</b> for the
         test case(s) a failing test references (e.g. <code>LX-T4792</code>, parsed from its stack trace) —
-        surfaced as links in the UI, not integrations.</p>
+        surfaced as links in the UI, not integrations. Each linked test case is shown alongside its
+        ZEPHYR <b>owner</b> initials (e.g. “(owner kam)”) — the manual test case's owner, parsed
+        <code>zephyr_owner</code> metadata, kept distinct from the dashboard's <b>Owner</b> (the test's
+        main developer, resolved via SVN blame — see above).</p>
       </div>
     </div>
   </div>
@@ -274,7 +290,11 @@
   poller goes stale. A fifth external system, <b>Keycloak</b>, appears only when
   <code>AUTH_ENABLED=true</code> (pink, dashed — off by default, so it is absent from the map in local
   dev, the public demo and CI): the browser is redirected to it to sign in, and <code>web</code> ends the
-  central SSO session on logout.</p>
+  central SSO session on logout. A sixth, <b>SVN (blame)</b>, similarly appears only when
+  <code>SVN_BLAME_ENABLED=true</code> (amber, dashed): the <code>poller</code> shells out to
+  <code>svn blame</code> per failing test's source file to resolve that test's <b>main developer</b> —
+  the dashboard's Owner — a separate use of SVN from the change-set candidates Jenkins already
+  supplies.</p>
 
   <div class="legend">
     <span><i class="dot" style="background:var(--jenkins)"></i> Jenkins</span>
@@ -286,6 +306,7 @@
     <span><i class="dot" style="background:var(--human)"></i> Human</span>
     <span><i class="dot" style="background:var(--warn)"></i> Control panel (on-demand)</span>
     <span><i class="dot" style="background:var(--auth)"></i> Keycloak (flag-gated)</span>
+    <span><i class="dot" style="background:var(--svn)"></i> SVN blame (flag-gated)</span>
   </div>
 
   <div class="diagram">
@@ -303,6 +324,9 @@
         <marker id="arrK" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
           <path d="M0,0 L8,3 L0,6 Z" fill="#e05fa0"/>
         </marker>
+        <marker id="arrS" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#c9a13c"/>
+        </marker>
         <style>
           .box{rx:12;stroke-width:1.5}
           .lbl{fill:#e8edf6;font:13px system-ui;font-weight:600}
@@ -311,6 +335,7 @@
           .edgeA{stroke:#7ee0c0;stroke-width:1.8;fill:none}
           .edgeW{stroke:#f0774b;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
           .edgeK{stroke:#e05fa0;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
+          .edgeS{stroke:#c9a13c;stroke-width:1.4;fill:none;stroke-dasharray:5,4}
           .etxt{fill:#9fb0cc;font:11px system-ui}
         </style>
       </defs>
@@ -372,6 +397,13 @@
       <text class="sub" x="36" y="334">AUTH_ENABLED=true only</text>
       <text class="sub" x="36" y="350">(off by default)</text>
 
+      <!-- SVN blame (flag-gated) -->
+      <rect class="box" x="690" y="250" width="190" height="90" fill="#241d0d" stroke="#c9a13c" stroke-dasharray="6,4"/>
+      <text class="lbl" x="706" y="278">SVN (blame)</text>
+      <text class="sub" x="706" y="298">svn blame — test owner</text>
+      <text class="sub" x="706" y="314">SVN_BLAME_ENABLED=true only</text>
+      <text class="sub" x="706" y="330">(off by default)</text>
+
       <!-- edges: Jenkins -> poller -->
       <path class="edge" d="M200,83 C260,83 280,110 328,110" marker-end="url(#arr)"/>
       <text class="etxt" x="222" y="76">builds</text>
@@ -416,14 +448,20 @@
       <path class="edgeK" d="M200,340 C230,370 280,405 328,428" marker-end="url(#arrK)"/>
       <text class="etxt" x="204" y="378" style="fill:#e05fa0">login /</text>
       <text class="etxt" x="204" y="391" style="fill:#e05fa0">logout</text>
+      <!-- SVN blame -> poller (resolved test owner, flag-gated) -->
+      <path class="edgeS" d="M688,278 C645,235 610,205 530,168" marker-end="url(#arrS)"/>
+      <text class="etxt" x="560" y="243" style="fill:#c9a13c">owner (blame)</text>
+      <text class="etxt" x="560" y="256" style="fill:#c9a13c">(flag-gated)</text>
     </svg>
   </div>
   <p class="muted" style="font-size:13px">Green arrows are write-backs / results returning to a producer.
   Dashed orange arrows are the manual, on-demand path triggered from the control panel — same
   fetch/parse/persist as the poller, but always back-fill semantics. Dashed pink arrows are the
-  Keycloak login/logout redirects, present only when <code>AUTH_ENABLED=true</code> — with the flag off
-  (the default) that box and its edges don't exist in the running system. The same Docker image runs as
-  both <code>poller</code> and <code>web</code>; only the command differs.</p>
+  Keycloak login/logout redirects, present only when <code>AUTH_ENABLED=true</code>; dashed amber
+  arrows are the <code>svn blame</code> ownership lookup, present only when
+  <code>SVN_BLAME_ENABLED=true</code> — with either flag off (both default) that box and its edges
+  don't exist in the running system. The same Docker image runs as both <code>poller</code> and
+  <code>web</code>; only the command differs.</p>
 </section>
 
 <section id="ingest">
@@ -449,7 +487,9 @@
       <i>lookback</i> window before the run (changes precede the nightly run) plus a tolerance margin for clock
       skew.</small></li>
     <li><b>Persist.</b> <small>Bulk-insert the run, results, shards and candidates into Postgres — idempotent on
-      <code>build_number</code> (re-ingest replaces, never duplicates).</small></li>
+      <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>, also
+      resolves each newly-seen failing test's <b>owner</b> (main developer) via <code>svn blame</code> of its
+      source file, filling <code>TestIdentity.main_developer</code> incrementally.</small></li>
     <li><b>Record signatures.</b> <small>A normalized failure <b>signature</b> per failing result (the KB
       recurrence key) — for any run, complete or not.</small></li>
     <li><b>Prune.</b> <small>Once per tick (not per build), after the builds above are processed: delete
@@ -547,7 +587,9 @@
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
   mention, most relevant first — rather than one flat run-wide list; see Classification above), the
-  predicted cause's <b>confidence</b> badge, ownership, linked ZEPHYR test case(s), LLM hypothesis,
+  predicted cause's <b>confidence</b> badge, the test's <b>Owner</b> (main developer, resolved via
+  SVN blame), its linked ZEPHYR test case(s) — each shown with its own ZEPHYR owner initials, e.g.
+  “(owner kam)”, distinct metadata from the dashboard Owner — LLM hypothesis,
   error type, stack trace) plus the editable fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
@@ -626,14 +668,20 @@
       table. <b>Passing/skipped rows are pruned</b> once their run ages past the retention window (see
       <i>Retention</i> below); failing rows are kept forever.</td></tr>
     <tr><th>Test identity &amp; aliases</th><td>Canonical fully-qualified name + optional <code>alias_of</code> pointer
-      so renames/moves keep their history (suggested vs human-confirmed).</td></tr>
+      so renames/moves keep their history (suggested vs human-confirmed). Also carries the dashboard
+      <b>Owner</b> — <code>main_developer</code>, the modal author from <code>svn blame</code> of the
+      test's source file (identity-level, filled incrementally as failures are ingested, gated by
+      <code>SVN_BLAME_ENABLED</code>) — and, kept as separate ZEPHYR metadata, <code>zephyr_owner</code>
+      (the linked ZEPHYR test case's manual-test owner) and <code>zephyr_test_cases</code>.</td></tr>
     <tr><th>Test lifecycle</th><td>Lifecycle state (<code>FAILING</code> / <code>FIXED</code> / <code>REMOVED</code>),
       the <code>FLAKY</code> flag, <code>reopen_count</code>, and the <b>acknowledgement</b> attribute (flag +
       acknowledger + timestamp) as a field separate from state.</td></tr>
     <tr><th>Failure episodes</th><td>One row per fail→fix cycle (first-failure run, fixed-in run — set only when it
       passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
     <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
-      <code>V_TRACKING</code>), infra indicators, ownership — each linked to the failure that generated it.</td></tr>
+      <code>V_TRACKING</code>), infra indicators — each linked to the failure that generated it. (Test
+      <b>ownership</b> is a separate, identity-level attribute — see <i>Test identity &amp; aliases</i>
+      above — not a per-failure signal.)</td></tr>
     <tr><th>Classifications</th><td>Predicted cause, a deterministic <b>confidence</b> in <code>[0, 1]</code>
       (its formula inputs stored in the evidence JSON — relevance-score gap and knowledge-base provenance
       weight), the LLM hypothesis, and a deterministic <b>suggested contact</b> — the single
@@ -724,6 +772,25 @@
       <td>Allowlist of stage names (a <code>"&lt;suite&gt; - &lt;track&gt;"</code> stage → suite)
       treated as test stages, keeping non-test <code>"… - permanent"</code> stages out.</td></tr>
   </table>
+
+  <h3>SVN blame — test ownership, optional &amp; flag-gated</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>SVN_BLAME_ENABLED</code></td><td><code>false</code></td>
+      <td>Master switch for resolving the dashboard <b>Owner</b> (a test's main developer) via
+      <code>svn blame</code>. Off: no <code>SvnBlameClient</code> is built, <code>main_developer</code>
+      stays <code>NULL</code>, and local dev, the offline gate and the public demo never shell out to
+      <code>svn</code>.</td></tr>
+    <tr><td><code>SVN_REPO_BASE_URL</code></td><td>empty</td>
+      <td>SVN URL under which a test's repo-relative <code>tests/dev/…</code> path resolves (e.g.
+      <code>https://svn.labsolution.lu/svn/ls/trunk/lx</code>). Also required (non-empty) for blame to
+      run.</td></tr>
+    <tr><td><code>SVN_USER</code> / <code>SVN_PASSWORD</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Optional SVN credentials — anonymous read already works on some repos.</td></tr>
+  </table>
+  <p class="lead" style="font-size:14px">The one-shot <code>uta reattribute-owners</code> command
+  backfills <code>main_developer</code> across the existing store (by default only tests with no
+  owner yet; <code>--refresh</code> re-blames all).</p>
 
   <h3>Oracle <code>ut_ref</code> — data-change correlation</h3>
   <table class="kv">
