@@ -245,7 +245,7 @@ def test_run_summary_has_baseline_and_diff(session_factory):
     assert run["complete"] is True
     assert run["baseline"] is not None
     assert run["baseline"]["build"] == FIRST_BUILD + 10
-    reg = {r["test_id"] for r in run["diff"]["regressions"]}
+    reg = {r["test_id"] for r in run["diff"]["regressions"]["rows"]}
     assert "ut_billing.bi_round.TestClass.test_invoice_rounding" in reg
 
 

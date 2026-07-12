@@ -368,10 +368,11 @@ def create_app(
                 "queue": queue,
                 "filters": filters,
                 "sort": sort,
+                "expand": expand,
                 "options": options,
                 "last_run": last_run,
-                "chips": views.triage_filter_chips(filters, sort or None),
-                "sort_links": views.triage_sort_links(filters, sort or None),
+                "chips": views.triage_filter_chips(filters, sort or None, expand),
+                "sort_links": views.triage_sort_links(filters, sort or None, expand),
                 "expand_urls": views.triage_expand_urls(filters, sort or None, expand),
                 "return_qs": quote(queue_url, safe="") if queue_url != "/" else "",
             },
@@ -414,12 +415,31 @@ def create_app(
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
     def run_view(request: Request, build: int, page: int = 1, failures_only: bool = False):
+        expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
             run = views.run_summary(
-                s, build, limit=cfg.ui_row_limit, page=page, failures_only=failures_only
+                s,
+                build,
+                limit=cfg.ui_row_limit,
+                page=page,
+                failures_only=failures_only,
+                expand=expand,
             )
-        return render(request, "run.html", {"run": run, "build": build}, cfg=cfg)
+        return render(
+            request,
+            "run.html",
+            {
+                "run": run,
+                "build": build,
+                # "Show all N" links for the capped diff buckets, built in the view layer so the
+                # rest of the query string (failures_only, page) survives (issue #151).
+                "diff_expand_urls": views.run_expand_urls(
+                    build, dict(request.query_params), expand
+                ),
+            },
+            cfg=cfg,
+        )
 
     @app.get("/flaky", response_class=HTMLResponse)
     def flaky_view(request: Request):

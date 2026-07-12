@@ -370,10 +370,46 @@ def test_run_summary_diff_against_baseline(session_factory):
         summary = views.run_summary(s, 2)
         assert summary["build"] == 2
         assert summary["baseline"]["build"] == 1
-        regressed = {r["test_id"] for r in summary["diff"]["regressions"]}
-        fixed = {r["test_id"] for r in summary["diff"]["newly_fixed"]}
+        regressed = {r["test_id"] for r in summary["diff"]["regressions"]["rows"]}
+        fixed = {r["test_id"] for r in summary["diff"]["newly_fixed"]["rows"]}
         assert "b" in regressed and "a" in fixed
+        assert summary["diff"]["regressions"]["total"] == 1
+        assert summary["diff"]["newly_fixed"]["total"] == 1
         assert "totals" in summary and "shards" in summary
+
+
+def test_run_summary_caps_diff_buckets_unless_expanded(session_factory):
+    # 25 pass→fail transitions: the regressions bucket reports the full total but renders only
+    # DIFF_ROW_LIMIT rows (issue #151) until the bucket's key is in ?expand=.
+    names = [f"t{i:02d}" for i in range(25)]
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {n: "PASSED" for n in names})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {n: "FAILED" for n in names})
+        apply_run(s, r2, baseline=r1)
+
+        bucket = views.run_summary(s, 2)["diff"]["regressions"]
+        assert bucket["total"] == 25
+        assert len(bucket["rows"]) == views.DIFF_ROW_LIMIT
+
+        expanded = views.run_summary(s, 2, expand=["regressions"])["diff"]["regressions"]
+        assert len(expanded["rows"]) == 25
+
+
+def test_run_expand_urls_preserve_query_and_anchor():
+    # The "Show all N" link keeps the rest of the query string (failures_only, results page) and
+    # only adds its bucket to ?expand=, jumping back to the diff anchor.
+    urls = views.run_expand_urls(1702, {"failures_only": "1", "page": "2"})
+    assert urls["regressions"] == "/runs/1702?failures_only=1&page=2&expand=regressions#diff"
+    assert urls["removed"] == "/runs/1702?failures_only=1&page=2&expand=removed#diff"
+
+
+def test_run_expand_urls_merge_with_already_expanded_buckets():
+    # The current ?expand= value in the params is superseded, not duplicated; already-expanded
+    # buckets stay expanded and the target bucket is appended exactly once.
+    urls = views.run_expand_urls(5, {"expand": "regressions"}, expand=["regressions"])
+    assert urls["removed"] == "/runs/5?expand=regressions,removed#diff"
+    assert urls["regressions"] == "/runs/5?expand=regressions#diff"
 
 
 def test_run_summary_unknown_build_is_none(session_factory):
@@ -691,6 +727,22 @@ def test_triage_sort_links_apply_and_toggle_off():
     # The active sort marks itself and its link toggles back to the age default.
     assert active["name"] == {"active": True, "url": "/?owner=KP"}
     assert active["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
+
+
+def test_triage_filter_chips_preserve_expand():
+    # Removing a chip must not collapse an expanded section (issue #151): the remove URL keeps
+    # the current ?expand= set alongside the surviving filters and sort.
+    (chip,) = views.triage_filter_chips({"owner": "KP"}, sort="name", expand=["new"])
+    assert chip["remove_url"] == "/?sort=name&expand=new"
+
+
+def test_triage_sort_links_preserve_expand():
+    # Re-sorting (or toggling the active sort off) keeps the expanded sections in the URL.
+    links = views.triage_sort_links({"owner": "KP"}, expand=["new", "still_failing"])
+    assert links["name"]["url"] == "/?owner=KP&sort=name&expand=new,still_failing"
+
+    active = views.triage_sort_links({}, sort="name", expand=["new"])
+    assert active["name"] == {"active": True, "url": "/?expand=new"}
 
 
 def test_triage_expand_urls_preserve_filters_and_sort():
