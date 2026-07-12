@@ -284,6 +284,63 @@ def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
         assert f'formaction="/signatures/{record["recurrence"]["signature_id"]}/attribute"' in page
 
 
+def test_reseeding_the_same_store_converges():
+    """Issue #122: re-running ``uta seed-demo`` against a persistent store must converge, not
+    crash — the control-state rows used to be blindly ``add``ed, so a second seed died with a
+    duplicate-PK IntegrityError (and the auto-PK demo ingest jobs would have duplicated)."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from uta.db import Base, make_session_factory
+    from uta.demo.seed import seed_demo_data
+    from uta.models import BuildQuarantine, IngestJob, PollerHeartbeat, SettingOverride
+
+    anchor = datetime(2026, 7, 1, 3, 30, tzinfo=UTC)  # fixed so both stores seed identically
+
+    def fresh_factory():
+        engine = create_engine(
+            _MEMORY, connect_args={"check_same_thread": False}, poolclass=StaticPool, future=True
+        )
+        Base.metadata.create_all(engine)
+        return make_session_factory(engine)
+
+    def control_state(factory):
+        session = factory()
+        return (
+            [
+                (h.id, h.last_poll_at, h.last_success_at, h.last_processed, h.last_error)
+                for h in session.scalars(select(PollerHeartbeat))
+            ],
+            [
+                (q.build_number, q.attempts, q.last_error, q.quarantined_at)
+                for q in session.scalars(select(BuildQuarantine))
+            ],
+            sorted(
+                (o.key, o.value, o.updated_by) for o in session.scalars(select(SettingOverride))
+            ),
+            [
+                (j.build_start, j.build_end, j.status, j.builds_done, j.error, j.requested_by)
+                for j in session.scalars(select(IngestJob).order_by(IngestJob.build_start))
+            ],
+        )
+
+    twice = fresh_factory()
+    seed_demo_data(twice, anchor=anchor)
+    seed_demo_data(twice, anchor=anchor)  # must not raise
+
+    once = fresh_factory()
+    seed_demo_data(once, anchor=anchor)
+
+    heartbeats, quarantines, overrides, jobs = control_state(twice)
+    assert len(heartbeats) == 1
+    assert len(quarantines) == 1
+    assert len(overrides) == 2
+    assert len(jobs) == 2
+    assert (heartbeats, quarantines, overrides, jobs) == control_state(once)
+
+
 def test_demo_app_test_record_route():
     from uta.web.app import create_app
 
