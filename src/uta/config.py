@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,6 +55,9 @@ class Settings(BaseSettings):
     smtp_recipients: str = ""  # comma-separated; empty disables email
     smtp_user: str = ""
     smtp_password: str = ""
+    # STARTTLS before sending. Unset (None) defaults to on exactly when smtp_user is set —
+    # credentials should not cross the wire in the clear. Set explicitly to force it either way.
+    smtp_starttls: bool | None = None
     email_recovery_notice: bool = False
 
     # ── Auth / Keycloak OIDC (Phase-2, off by default; see .env.example) ──────
@@ -137,6 +141,13 @@ class Settings(BaseSettings):
     quarantine_after_attempts: int = 3
     # /health flags the poller stale after this many poll intervals without a *successful* tick.
     poller_stale_after_intervals: int = 5
+
+    @field_validator("smtp_starttls", mode="before")
+    @classmethod
+    def _empty_smtp_starttls_is_unset(cls, v: object) -> object:
+        # .env.example lists every key, so a copied `SMTP_STARTTLS=` (empty) must mean "unset"
+        # (credential-derived default), not a boolean parse error at startup.
+        return None if v == "" else v
 
     @property
     def jenkins_job_url(self) -> str:

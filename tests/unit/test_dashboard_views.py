@@ -87,6 +87,68 @@ def test_recently_fixed_window_includes_recent_excludes_old(session_factory):
         assert "old" not in names
 
 
+# ── triage error snippets (issue #145) ────────────────────────────────────────
+
+_SNIPPET_STACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "AssertionError: values differ: expected 1 got 2"
+)
+
+
+def test_triage_rows_carry_error_snippet_from_exception_line(session_factory):
+    """The snippet is the trace's closing exception line — errorDetails is often 'test failure'."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"t": "FAILED"},
+            error_type={"t": "ASSERTION"},
+            errors={"t": ("test failure", _SNIPPET_STACK)},
+        )
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_type"] == "ASSERTION"
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_survives_into_still_failing_bucket(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (None, _SNIPPET_STACK)})
+        apply_run(s, r1, baseline=None)
+        actions.acknowledge(s, get_identity(s, "t").id, "alice")
+        row = views.triage_queue(s)["still_failing"][0]
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_falls_back_to_first_details_line(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom happened\nsecond line", None)})
+        apply_run(s, r1, baseline=None)
+        assert views.triage_queue(s)["new"][0]["error_snippet"] == "boom happened"
+
+
+def test_triage_snippet_truncated_to_one_sane_line(session_factory):
+    long_msg = "x" * 400
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (long_msg, None)})
+        apply_run(s, r1, baseline=None)
+        snippet = views.triage_queue(s)["new"][0]["error_snippet"]
+        assert snippet.endswith("…")
+        assert len(snippet) <= 160
+        assert "\n" not in snippet
+
+
+def test_triage_snippet_none_without_error_text(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_snippet"] is None
+        assert row["error_type"] is None
+
+
 # ── long-list capping (issue #19) ─────────────────────────────────────────────
 
 
@@ -229,6 +291,52 @@ def test_test_record_zephyr_test_cases_empty_when_unset(session_factory):
         assert rec["zephyr_test_cases"] == []
 
 
+def test_evidence_items_flatten_the_classifier_shape():
+    """Issue #159: the persisted evidence JSON becomes whitelisted, readable label/value rows."""
+    items = dict(
+        views._evidence_items(
+            {
+                "code_candidates": 1,
+                "data_candidates": 0,
+                "infra_error": True,
+                "baseline_run_id": 7,
+                "relevance": {
+                    "code_matched": 1,
+                    "data_matched": 0,
+                    "tie_break": None,
+                    "top_code": {
+                        "candidate": "r48606",
+                        "author": "S. Okafor",
+                        "score": 3.0,
+                        "reasons": ["touches ut_x/mod.py"],
+                    },
+                    "top_data": None,
+                },
+                "confidence": {"win_score": 3.0, "lose_score": 0.0, "kb_provenance_weight": 4},
+            }
+        )
+    )
+    assert items["Infrastructure error"] == "yes"
+    assert items["Code changes in window"] == "1 candidate · 1 matched this test"
+    assert items["Data changes in window"] == "none"
+    assert items["Top code match"] == "r48606 by S. Okafor (score 3) — touches ut_x/mod.py"
+    assert "Tie-break" not in items  # null tie-break renders no row
+    assert items["Confidence inputs"] == "relevance score 3 vs 0 · KB provenance weight 4"
+    assert "baseline_run_id" not in str(items)  # internal PK stays whitelisted out
+
+
+def test_evidence_items_handle_degenerate_payloads():
+    """A bare string / list / empty payload never crashes and never renders an empty shell."""
+    assert views._evidence_items(None) == []
+    assert views._evidence_items({}) == []
+    assert views._evidence_items("") == []
+    assert views._evidence_items([]) == []
+    assert views._evidence_items("legacy free-text note") == [("Evidence", "legacy free-text note")]
+    assert views._evidence_items(["a", "b"]) == [("Evidence", "a; b")]
+    # A dict with only unknown keys yields no rows (whitelist), so the template renders no block.
+    assert views._evidence_items({"internal_only": 1}) == []
+
+
 def test_test_record_missing_identity_is_none(session_factory):
     with session_scope(session_factory) as s:
         assert views.test_record(s, 9999) is None
@@ -241,7 +349,10 @@ def test_test_record_exposes_sparkline_history(session_factory):
         r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
         apply_run(s, r1, baseline=None)
         rec = views.test_record(s, get_identity(s, "t").id)
-    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+    # A failed bar spans the full height (y=0) — the non-hue channel of issue #144.
+    assert rec["spark"].bars == [
+        {"x": 0.0, "y": 0.0, "width": 120.0, "height": 22.0, "failed": True, "build": 1}
+    ]
 
 
 def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):
@@ -305,10 +416,46 @@ def test_run_summary_diff_against_baseline(session_factory):
         summary = views.run_summary(s, 2)
         assert summary["build"] == 2
         assert summary["baseline"]["build"] == 1
-        regressed = {r["test_id"] for r in summary["diff"]["regressions"]}
-        fixed = {r["test_id"] for r in summary["diff"]["newly_fixed"]}
+        regressed = {r["test_id"] for r in summary["diff"]["regressions"]["rows"]}
+        fixed = {r["test_id"] for r in summary["diff"]["newly_fixed"]["rows"]}
         assert "b" in regressed and "a" in fixed
+        assert summary["diff"]["regressions"]["total"] == 1
+        assert summary["diff"]["newly_fixed"]["total"] == 1
         assert "totals" in summary and "shards" in summary
+
+
+def test_run_summary_caps_diff_buckets_unless_expanded(session_factory):
+    # 25 pass→fail transitions: the regressions bucket reports the full total but renders only
+    # DIFF_ROW_LIMIT rows (issue #151) until the bucket's key is in ?expand=.
+    names = [f"t{i:02d}" for i in range(25)]
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {n: "PASSED" for n in names})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {n: "FAILED" for n in names})
+        apply_run(s, r2, baseline=r1)
+
+        bucket = views.run_summary(s, 2)["diff"]["regressions"]
+        assert bucket["total"] == 25
+        assert len(bucket["rows"]) == views.DIFF_ROW_LIMIT
+
+        expanded = views.run_summary(s, 2, expand=["regressions"])["diff"]["regressions"]
+        assert len(expanded["rows"]) == 25
+
+
+def test_run_expand_urls_preserve_query_and_anchor():
+    # The "Show all N" link keeps the rest of the query string (failures_only, results page) and
+    # only adds its bucket to ?expand=, jumping back to the diff anchor.
+    urls = views.run_expand_urls(1702, {"failures_only": "1", "page": "2"})
+    assert urls["regressions"] == "/runs/1702?failures_only=1&page=2&expand=regressions#diff"
+    assert urls["removed"] == "/runs/1702?failures_only=1&page=2&expand=removed#diff"
+
+
+def test_run_expand_urls_merge_with_already_expanded_buckets():
+    # The current ?expand= value in the params is superseded, not duplicated; already-expanded
+    # buckets stay expanded and the target bucket is appended exactly once.
+    urls = views.run_expand_urls(5, {"expand": "regressions"}, expand=["regressions"])
+    assert urls["removed"] == "/runs/5?expand=regressions,removed#diff"
+    assert urls["regressions"] == "/runs/5?expand=regressions#diff"
 
 
 def test_run_summary_unknown_build_is_none(session_factory):
@@ -628,6 +775,38 @@ def test_triage_sort_links_apply_and_toggle_off():
     assert active["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
 
 
+def test_triage_filter_chips_preserve_expand():
+    # Removing a chip must not collapse an expanded section (issue #151): the remove URL keeps
+    # the current ?expand= set alongside the surviving filters and sort.
+    (chip,) = views.triage_filter_chips({"owner": "KP"}, sort="name", expand=["new"])
+    assert chip["remove_url"] == "/?sort=name&expand=new"
+
+
+def test_triage_sort_links_preserve_expand():
+    # Re-sorting (or toggling the active sort off) keeps the expanded sections in the URL.
+    links = views.triage_sort_links({"owner": "KP"}, expand=["new", "still_failing"])
+    assert links["name"]["url"] == "/?owner=KP&sort=name&expand=new,still_failing"
+
+    active = views.triage_sort_links({}, sort="name", expand=["new"])
+    assert active["name"] == {"active": True, "url": "/?expand=new"}
+
+
+def test_triage_expand_urls_preserve_filters_and_sort():
+    # The "Load all" link keeps the whole URL state (filters + sort) and only adds its section
+    # to ?expand=, jumping back to the section anchor.
+    urls = views.triage_expand_urls({"owner": "KP"}, sort="name")
+    assert urls["new"] == "/?owner=KP&sort=name&expand=new#new"
+    assert urls["still_failing"] == "/?owner=KP&sort=name&expand=still_failing#still_failing"
+    assert urls["recently_fixed"] == "/?owner=KP&sort=name&expand=recently_fixed#recently_fixed"
+
+
+def test_triage_expand_urls_merge_with_already_expanded_sections():
+    urls = views.triage_expand_urls({}, expand=["new"])
+    # Already-expanded sections stay expanded; the target section is appended exactly once.
+    assert urls["still_failing"] == "/?expand=new,still_failing#still_failing"
+    assert urls["new"] == "/?expand=new#new"
+
+
 def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(
@@ -715,6 +894,25 @@ def test_test_search_empty_query_returns_nothing(session_factory):
     with session_scope(session_factory) as s:
         assert views.test_search(s, "") == []
         assert views.test_search(s, "   ") == []
+
+
+def test_test_search_positive_limit_caps_results(session_factory):
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=2)
+        assert len(results) == 2
+
+
+def test_test_search_limit_zero_disables_the_cap(session_factory):
+    """``ui_row_limit = 0`` means "no cap" everywhere — the search must not emit ``LIMIT 0``."""
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=0)
+        assert len(results) == 3
 
 
 # ── bulk actions (issue #63) ─────────────────────────────────────────────────
@@ -829,6 +1027,96 @@ def test_acknowledge_by_signature_skips_already_acknowledged(session_factory):
         assert _lc(s, "beta").acknowledged_by == "dana"  # untouched
 
 
+# ── signature ack blast radius on New rows (issue #152) ─────────────────────
+
+
+def test_triage_new_rows_carry_signature_ack_blast_radius(session_factory):
+    """Two tests sharing an error key count 2 on each row; a distinct error counts 1 — the "(N)"
+    the "Ack all w/ signature" button shows before the click (and its render-at-all threshold)."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        rows = {r["test_id"]: r for r in views.triage_queue(s)["new"]}
+        assert rows["alpha"]["signature_ack_count"] == 2
+        assert rows["beta"]["signature_ack_count"] == 2
+        assert rows["gamma"]["signature_ack_count"] == 1
+
+
+def test_signature_ack_count_zero_without_signature(session_factory):
+    """A New row with no recorded signature shows no bulk-ack control — count 0, id None."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["signature_id"] is None
+        assert row["signature_ack_count"] == 0
+
+
+def test_signature_ack_count_equals_action_blast_radius(session_factory):
+    """The "(N)" shown before the click equals what :func:`acknowledge_by_signature` then
+    acknowledges — same ``_error_key`` grouping over the same unacknowledged-failing scope, even
+    though each test's frame lines (and therefore signature rows) are distinct."""
+
+    def _stack(func: str) -> str:
+        return (
+            "Traceback (most recent call last):\n"
+            f'  File "/opt/ls/lx/release/permanent/tests/dev/ut_notify/nt_dispatch.py", '
+            f"line 63, in {func}\n"
+            "    result = run_case()\n"
+            "ConnectionError: SMTP relay unreachable: connection refused"
+        )
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"email": "FAILED", "sms": "FAILED", "push": "FAILED"},
+            errors={n: (None, _stack(f"test_{n}_dispatch")) for n in ("email", "sms", "push")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        # An already-acknowledged sharer sits in Still failing — outside both the New bucket and
+        # the bulk action's unacknowledged-only scope, so it must not inflate the count.
+        actions.acknowledge(s, get_identity(s, "push").id, "dana")
+
+        rows = {r["test_id"]: r for r in views.triage_queue(s)["new"]}
+        shown = rows["email"]["signature_ack_count"]
+        assert shown == rows["sms"]["signature_ack_count"] == 2
+
+        acked = actions.acknowledge_by_signature(s, rows["email"]["signature_id"], "erin")
+        assert acked == shown
+
+
+def test_signature_ack_count_ignores_view_filters(session_factory):
+    """A filtered view still reports the full blast radius — the bulk action acknowledges every
+    matching test regardless of the filters that produced the page."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"both": "FAILED", "py39only": "FAILED"},
+            errors={"both": ("boom", "Traceback"), "py39only": ("boom", "Traceback")},
+            fail_tracks={"py39only": ("permanent_py39",)},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        q = views.triage_queue(s, filters={"track": "permanent"})
+        assert {r["test_id"] for r in q["new"]} == {"both"}  # the sibling is filtered out …
+        assert q["new"][0]["signature_ack_count"] == 2  # … but one click still acks both
+
+
 def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
@@ -845,6 +1133,42 @@ def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
         assert beta_ep.triage_status == "INVESTIGATING"
         assert alpha_ep.attribution.reason_text == "shared root cause"
         assert beta_ep.attribution.reason_text == "shared root cause"
+
+
+def test_bulk_set_attribution_all_blank_writes_nothing_and_returns_zero(session_factory):
+    """An all-blank bulk submit must count 0 — set_attribution would touch none of the episodes
+    (issue #150: the flash count must not claim updates that never happened)."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_ids = [_lc(s, "alpha").current_episode_id, _lc(s, "beta").current_episode_id]
+
+        count = actions.bulk_set_attribution(
+            s, ep_ids, "frank", causing_person="  ", reason_text="", triage_status=None
+        )
+        assert count == 0
+        for ep_id in ep_ids:
+            ep = s.get(FailureEpisode, ep_id)
+            assert ep.triage_status == "UNTRIAGED"
+            assert ep.attribution is None
+
+
+def test_bulk_set_attribution_counts_only_existing_episodes(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_id = _lc(s, "alpha").current_episode_id
+
+        count = actions.bulk_set_attribution(s, [ep_id, 424242], "frank", causing_person="carol")
+        assert count == 1
+        assert s.get(FailureEpisode, ep_id).attribution.causing_person == "carol"
+
+
+def test_has_attribution_input_ignores_whitespace_only_fields():
+    assert actions.has_attribution_input("", "  ", None) is False
+    assert actions.has_attribution_input("carol", "", None) is True
+    assert actions.has_attribution_input("", "bad fixture", None) is True
+    assert actions.has_attribution_input(None, None, "INVESTIGATING") is True
 
 
 # ── signature-wide attribution (issue #106) ──────────────────────────────────

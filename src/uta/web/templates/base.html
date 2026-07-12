@@ -8,6 +8,8 @@
   <!-- htmx 2.0.10, vendored (no CDN at runtime; from the htmx.org npm tarball) — issue #78. -->
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/bulk-select.js" defer></script>
+  <script src="/static/form-busy.js" defer></script>
+  <script src="/static/trace.js" defer></script>
   <script>
     // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.
     // No saved choice yet -> follow the OS/browser preference (prefers-color-scheme).
@@ -47,10 +49,12 @@
     .empty { color: #868e96; font-style: italic; }
     code { font-size: 0.85em; }
 
-    /* Test-status colouring (applied to cells / inline spans by status name). */
+    /* Test-status colouring (applied to cells / inline spans by status name). Bare counts also
+       carry a ✓/✕/○ glyph (the count_cell macro) so status reads without colour (issue #144). */
     .FAILED, .REGRESSION, .FAILING { color: #b00020; font-weight: 600; }
     .PASSED, .FIXED { color: #137333; font-weight: 600; }
     .SKIPPED, .REMOVED { color: #868e96; }
+    .status-glyph { font-size: 0.8em; }
 
     /* Badges: keep the single-class call sites working on top of Bootstrap's .badge base. */
     .badge { background: #e6eaf0; color: #333; font-weight: 600; vertical-align: middle; }
@@ -68,8 +72,23 @@
     details.card[open] > summary { margin-bottom: 0.8rem; }
     details.episodes > summary { font-size: 1.15rem; margin: 1.6rem 0 0.8rem; }
 
+    /* Classification-evidence rows on the test record's why-block (issue #159). */
+    dl.evidence { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; margin: 0; }
+    dl.evidence dt { font-weight: 600; }
+    dl.evidence dd { margin: 0; overflow-wrap: anywhere; }
+
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
+
+    /* Flash toast (issue #150): fixed to the viewport corner so it stays visible after the
+       PRG redirect lands on an in-page anchor. z-index is Bootstrap's toast tier. */
+    .uta-toast { z-index: 1080; max-width: 28rem; }
+
+    /* One-line error snippet under a triage row's test name (issue #145). */
+    .error-snippet { color: #6c757d; font-size: 0.82em; font-family: var(--bs-font-monospace); }
+    /* Trace clamp/copy controls (trace.js, issue #145). */
+    .trace-toggle { margin: 0 0.4rem 0.8rem 0; }
+    .trace-actions { margin-bottom: 0.8rem; }
 
     /* Trend charts (issue #53): inline SVG, no JS/CDN — colours mirror the status classes above. */
     .timeline-chart { display: block; }
@@ -105,6 +124,7 @@
     [data-bs-theme="dark"] .badge.track { background: #1c3355; color: #8ab4f8; }
     [data-bs-theme="dark"] summary:hover { color: #fff; }
     [data-bs-theme="dark"] .more { color: #9aa1a9; }
+    [data-bs-theme="dark"] .error-snippet { color: #9aa1a9; }
     [data-bs-theme="dark"] .timeline-chart polyline.FAILED { stroke: #ff6b6b; }
     [data-bs-theme="dark"] .timeline-chart polyline.REGRESSION { stroke: #b28cf5; }
     [data-bs-theme="dark"] .timeline-legend { color: #9aa1a9; }
@@ -123,6 +143,7 @@
       <li class="nav-item"><a class="nav-link{% if nav_active == "flaky" %} active" aria-current="page{% endif %}" href="/flaky">Flaky</a></li>
       <li class="nav-item"><a class="nav-link{% if nav_active == "kb" %} active" aria-current="page{% endif %}" href="/kb">Knowledge base</a></li>
       <li class="nav-item"><a class="nav-link{% if nav_active == "control" %} active" aria-current="page{% endif %}" href="/control">Control</a></li>
+      <li class="nav-item"><a class="nav-link{% if nav_active == "help" %} active" aria-current="page{% endif %}" href="/help">Help</a></li>
     </ul>
     <form class="d-flex align-items-center gap-2 me-2" method="get" action="/search">
       <input class="form-control form-control-sm" style="width: 12rem" type="text" name="q"
@@ -151,9 +172,13 @@
     {% endif %}
   </nav>
   <main class="container-fluid px-4">
+    {# Fixed-position toast (issue #150): the triage/record actions redirect to an in-page anchor,
+       which would scroll an in-flow banner out of view — so the flash floats over the viewport
+       corner instead. Polite live region so screen readers announce it wherever focus is; the
+       inline script below auto-dismisses it (paused while hovered), and the ✕ still works. #}
     {% if flash %}
-    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2"
-         role="alert">
+    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2 uta-toast position-fixed bottom-0 end-0 m-3 shadow"
+         role="status" aria-live="polite">
       {{ flash.message }}
       <button type="button" class="btn-close" aria-label="Close"
               onclick="this.closest('.alert').remove()"></button>
@@ -167,6 +192,16 @@
       document.documentElement.setAttribute("data-bs-theme", next);
       localStorage.setItem("uta-theme", next);
     });
+    // Flash-toast auto-dismiss (issue #150): gone after 6 s so it never lingers over content,
+    // but hovering pauses the timer so a long message can be read out.
+    (function () {
+      var toast = document.querySelector(".uta-toast");
+      if (!toast) return;
+      function arm() { return setTimeout(function () { toast.remove(); }, 6000); }
+      var timer = arm();
+      toast.addEventListener("mouseenter", function () { clearTimeout(timer); });
+      toast.addEventListener("mouseleave", function () { timer = arm(); });
+    })();
   </script>
 </body>
 </html>

@@ -7,6 +7,7 @@
 {%- endmacro %}
 
 {% block content %}
+{{ ui.breadcrumb("Triage queue", back_url) }}
 {% if not record %}
   <h1>No record for test #{{ identity_id }}</h1>
   <p class="meta">A per-test record exists only for tests that are or have been failing.</p>
@@ -52,7 +53,9 @@
 <details class="episodes" open>
   <summary>Failure episodes</summary>
   {% for ep in record.episodes %}
-  <div class="card">
+  {# Stable per-episode anchor (issue #143): episode actions redirect back to #episode-N so the
+     PRG round trip lands on the card that was just edited, not the top of the page. #}
+  <div class="card" id="episode-{{ ep.episode_number }}">
     <h3 style="margin-top:0">
       Episode {{ ep.episode_number }}
       {% if ep.is_open %}<span class="badge removed">open</span>{% else %}<span class="badge">closed</span>{% endif %}
@@ -76,8 +79,17 @@
         {% if ef.file_path %}<br><code>{{ ef.file_path }}:{{ ef.line }}</code>{% endif %}
         {% if ef.run and ef.run.url %}<br><a href="{{ ef.run.url }}">Jenkins run</a>{% endif %}
       </p>
-      {% if ef.error_details %}<p><strong>{{ ef.error_details }}</strong></p>{% endif %}
-      {% if ef.error_stack_trace %}<pre class="p-3 border rounded small"><code>{{ ef.error_stack_trace }}</code></pre>{% endif %}
+      {# Long error text / traces are clamped to ~15 lines client-side (trace.js, issue #145) with
+         a "Show full trace" toggle; the full text always ships in the HTML (progressive
+         enhancement — no JS, no clamp) and is what the copy button puts on the clipboard. #}
+      {% if ef.error_details %}<p><strong data-clamp="15">{{ ef.error_details }}</strong></p>{% endif %}
+      {% if ef.error_stack_trace %}
+      <pre class="p-3 border rounded small mb-1"><code id="trace-{{ ep.id }}" data-clamp="15">{{ ef.error_stack_trace }}</code></pre>
+      <p class="trace-actions">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-copy-target="trace-{{ ep.id }}"
+                title="Copy the full stack trace to the clipboard">Copy trace</button>
+      </p>
+      {% endif %}
     </details>
     {% endif %}
 
@@ -92,9 +104,23 @@
       {% if ep.confidence is not none %} <span class="badge" title="Deterministic confidence: relevance-score gap + KB provenance">confidence {{ "%.2f"|format(ep.confidence) }}</span>{% endif %}
       {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
     </p>
+    {# The classifier's persisted evidence, flattened view-side into readable label/value rows
+       (issue #159) — the justification behind the prediction + confidence badge above, collapsed
+       by default. Episodes without evidence render no shell at all. #}
+    {% if ep.evidence_items %}
+    <details class="card">
+      <summary>Why this prediction</summary>
+      <dl class="evidence">
+        {% for label, value in ep.evidence_items %}
+        <dt>{{ label }}</dt><dd>{{ value }}</dd>
+        {% endfor %}
+      </dl>
+    </details>
+    {% endif %}
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
     {% if (ep.suggested_contact or ep.llm_hypothesis) %}
     <form method="post" action="/episodes/{{ ep.id }}/confirm">
+      <input type="hidden" name="anchor" value="episode-{{ ep.episode_number }}">
       <button class="btn btn-sm btn-success" type="submit">Confirm AI suggestion</button>
     </form>
     {% endif %}
@@ -107,6 +133,7 @@
     </p>
 
     <form class="mt-3" style="max-width: 34rem" method="post" action="/episodes/{{ ep.id }}/attribute">
+      <input type="hidden" name="anchor" value="episode-{{ ep.episode_number }}">
       <label class="form-label mb-1">Causing person</label>
       <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
       <label class="form-label mb-1">Reason for failure</label>

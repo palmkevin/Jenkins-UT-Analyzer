@@ -190,6 +190,36 @@ def test_score_magnitude_tie_break_resolves_to_code(session_factory):
     assert ep["cause_provenance"] == "AI_CONFIRMED"
 
 
+def test_record_page_renders_why_this_prediction(session_factory):
+    """Issue #159 shop-window: the tie-break test's real classifier evidence renders as the
+    collapsed "Why this prediction" block on the live demo's record page — readable rows for the
+    candidate counts, both top matches, the tie-break and the confidence inputs."""
+    from uta.web.app import create_app
+
+    session = session_factory()
+    ident_id = session.scalar(
+        select(TestIdentity.id).where(
+            TestIdentity.canonical_name == "ut_pricing.pr_engine.TestClass.test_discount_tiers"
+        )
+    )
+    record = views.test_record(session, ident_id)
+    items = dict(record["episodes"][0]["evidence_items"])
+    assert items["Infrastructure error"] == "no"
+    assert items["Code changes in window"].endswith("matched this test")
+    assert items["Top code match"].startswith("48612 by P. Nowak (score 3)")
+    assert items["Top data match"].startswith("ACINVORD by KAM (score 2)")
+    assert "AC_CSVC2" in items["Top data match"]  # the tier-2 component-mention reason
+    assert "code candidate led" in items["Tie-break"]
+    assert items["Confidence inputs"].startswith("relevance score 3 vs 2")
+
+    page = TestClient(create_app(session_factory=session_factory)).get(f"/tests/{ident_id}").text
+    assert "Why this prediction" in page
+    assert "48612 by P. Nowak (score 3)" in page
+    summary_idx = page.index("Why this prediction")
+    open_tag = page[page.rindex("<details", 0, summary_idx) : summary_idx]
+    assert " open" not in open_tag  # collapsed by default
+
+
 def test_every_new_classification_carries_a_confidence(session_factory, queue):
     """#73's acceptance: confidence is populated (non-None) for every newly classified episode."""
     session = session_factory()
@@ -245,7 +275,7 @@ def test_run_summary_has_baseline_and_diff(session_factory):
     assert run["complete"] is True
     assert run["baseline"] is not None
     assert run["baseline"]["build"] == FIRST_BUILD + 10
-    reg = {r["test_id"] for r in run["diff"]["regressions"]}
+    reg = {r["test_id"] for r in run["diff"]["regressions"]["rows"]}
     assert "ut_billing.bi_round.TestClass.test_invoice_rounding" in reg
 
 
@@ -261,6 +291,46 @@ def test_demo_app_serves_all_views():
         assert resp.status_code == 200, path
         assert resp.text  # non-empty HTML
     assert "test_" in client.get("/").text  # the triage queue lists tests
+
+
+def test_demo_health_stays_ok_past_the_staleness_window():
+    """Issue #125: the demo runs no poller, so the heartbeat seeded for /control would cross the
+    staleness window (poll_interval × stale_after_intervals, ~21 min with defaults) and flip
+    /health to 503 — Render's healthCheckPath would then restart the service, wiping the ephemeral
+    store mid-session. Every /health probe re-stamps the heartbeat first, so the demo stays 200 no
+    matter how old the process is, while /control still renders a populated heartbeat."""
+    from datetime import UTC, datetime, timedelta
+
+    from uta.config import Settings
+    from uta.control.health import check_health
+    from uta.control.heartbeat import read_heartbeat
+    from uta.db import session_scope
+    from uta.web import control
+
+    factory = build_demo_session_factory(_MEMORY)
+    client = TestClient(create_demo_app(session_factory=factory))
+
+    # Age the seeded heartbeat far beyond the window — a demo process that has lived for hours.
+    aged = datetime.now(UTC) - timedelta(hours=6)
+    with session_scope(factory) as session:
+        hb = read_heartbeat(session)
+        hb.last_poll_at = aged
+        hb.last_success_at = aged
+    # Sanity: a bare check_health sees exactly the stale fault that used to 503 the demo.
+    assert check_health(factory, Settings()).poller == "stale"
+
+    # The demo app itself stays healthy: the probe re-stamps the heartbeat before evaluating it.
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["poller"] == "ok"
+
+    # The /control panel still shows a populated heartbeat — now fresh, seeded details intact.
+    panel = control.control_panel(factory(), Settings())
+    assert panel["poller"]["has_run"] is True
+    assert panel["poller"]["last_processed_count"] == 1
+    assert panel["poller"]["last_success_at"].replace(tzinfo=UTC) > aged  # SQLite reads back naive
+    assert client.get("/control").status_code == 200
 
 
 def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
@@ -282,6 +352,117 @@ def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
         page = client.get(f"/tests/{ident_id}").text
         assert "Apply to all 2 affected tests with this signature" in page
         assert f'formaction="/signatures/{record["recurrence"]["signature_id"]}/attribute"' in page
+
+
+def test_shared_outage_pair_shows_ack_blast_radius(session_factory, queue):
+    """Issue #152: the SMTP-outage pair's New rows carry the signature-wide ack blast radius, so
+    the live demo renders "Ack all w/ signature (2)" on exactly those two rows — every other New
+    row's signature matches only itself, so it shows no bulk-ack button at all."""
+    from uta.web.app import create_app
+
+    pair = {
+        f"ut_notify.nt_dispatch.TestClass.{m}" for m in ("test_email_dispatch", "test_sms_dispatch")
+    }
+    for row in queue["new"]:
+        expected = 2 if row["test_id"] in pair else 1
+        assert row["signature_ack_count"] == expected, row["test_id"]
+
+    page = TestClient(create_app(session_factory=session_factory)).get("/").text
+    assert page.count("Ack all w/ signature (2)") == 2  # one per row of the pair, nothing else
+    assert page.count("Ack all w/ signature") == 2
+
+
+def test_reseeding_the_same_store_converges():
+    """Issue #122: re-running ``uta seed-demo`` against a persistent store must converge, not
+    crash — the control-state rows used to be blindly ``add``ed, so a second seed died with a
+    duplicate-PK IntegrityError (and the auto-PK demo ingest jobs would have duplicated)."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from uta.db import Base, make_session_factory
+    from uta.demo.seed import seed_demo_data
+    from uta.models import BuildQuarantine, IngestJob, PollerHeartbeat, SettingOverride
+
+    anchor = datetime(2026, 7, 1, 3, 30, tzinfo=UTC)  # fixed so both stores seed identically
+
+    def fresh_factory():
+        engine = create_engine(
+            _MEMORY, connect_args={"check_same_thread": False}, poolclass=StaticPool, future=True
+        )
+        Base.metadata.create_all(engine)
+        return make_session_factory(engine)
+
+    def control_state(factory):
+        session = factory()
+        return (
+            [
+                (h.id, h.last_poll_at, h.last_success_at, h.last_processed, h.last_error)
+                for h in session.scalars(select(PollerHeartbeat))
+            ],
+            [
+                (q.build_number, q.attempts, q.last_error, q.quarantined_at)
+                for q in session.scalars(select(BuildQuarantine))
+            ],
+            sorted(
+                (o.key, o.value, o.updated_by) for o in session.scalars(select(SettingOverride))
+            ),
+            [
+                (j.build_start, j.build_end, j.status, j.builds_done, j.error, j.requested_by)
+                for j in session.scalars(select(IngestJob).order_by(IngestJob.build_start))
+            ],
+        )
+
+    twice = fresh_factory()
+    seed_demo_data(twice, anchor=anchor)
+    seed_demo_data(twice, anchor=anchor)  # must not raise
+
+    once = fresh_factory()
+    seed_demo_data(once, anchor=anchor)
+
+    heartbeats, quarantines, overrides, jobs = control_state(twice)
+    assert len(heartbeats) == 1
+    assert len(quarantines) == 1
+    assert len(overrides) == 2
+    assert len(jobs) == 2
+    assert (heartbeats, quarantines, overrides, jobs) == control_state(once)
+
+
+def test_triage_rows_carry_error_snippets(queue):
+    """Issue #145: every failing row in the New bucket shows its one-line exception snippet, and
+    the still-failing timezone test shows the message the deep-trace clamp example builds on."""
+    for row in queue["new"]:
+        assert row["error_snippet"], row["test_id"]
+    snippets = {r["test_id"]: r["error_snippet"] for r in queue["new"]}
+    assert (
+        snippets["ut_billing.bi_round.TestClass.test_invoice_rounding"]
+        == "AssertionError: values differ: expected 100 got 101"
+    )
+    tz = next(
+        r
+        for r in queue["still_failing"]
+        if r["test_id"] == "ut_core.co_time.TestClass.test_timezone_convert"
+    )
+    assert tz["error_snippet"] == "AssertionError: values differ for LORDER: expected 2 got 1"
+
+
+def test_timezone_record_exercises_the_trace_clamp(session_factory):
+    """Issue #145: the seeded deep trace exceeds the 15-line clamp so the live demo's record
+    page demonstrates the "Show full trace" toggle (clamping is client-side; full text ships)."""
+    session = session_factory()
+    ident_id = session.scalar(
+        select(TestIdentity.id).where(
+            TestIdentity.canonical_name == "ut_core.co_time.TestClass.test_timezone_convert"
+        )
+    )
+    record = views.test_record(session, ident_id)
+    current = record["episodes"][0]
+    trace = current["failure"]["error_stack_trace"]
+    assert len(trace.splitlines()) > 15
+    # The padding frames are library frames — the signature (and the KB similarity family built
+    # on it) must stay based on the in-tree frame + exception line only.
+    assert "site-packages" in trace
 
 
 def test_demo_app_test_record_route():

@@ -215,7 +215,8 @@
         bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
-        one-click <b>“acknowledge all with this signature”</b> per New-bucket row, and its attribution twin
+        one-click <b>“Ack all w/ signature (N)”</b> — shown per New-bucket row only when other
+        unacknowledged failures share its signature — and its attribution twin
         on the per-test record page (apply cause/reason/Jira ticket/triage status to every open failing test
         sharing the signature) — run summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
@@ -552,7 +553,9 @@
       relevance scores favored the winning kind and a term for the strongest knowledge-base provenance
       already attached to this failure's signature — validated human knowledge feeding back into future
       predictions (see <a href="#learning">Learning loop</a>). The evidence (including the tie-break,
-      top matches and confidence inputs) stands on its own; the human attributes the final cause.</p>
+      top matches and confidence inputs) stands on its own — surfaced per episode on the per-test
+      record as a collapsed <b>“Why this prediction”</b> panel — and the human attributes the final
+      cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
@@ -571,26 +574,33 @@
   predicted cause, triage status, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
   bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
   <div class="grid g3">
-    <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. The action
+    <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. Each row's
+      test name carries a muted <b>one-line error snippet</b> (the traceback's closing exception line,
+      falling back to the details field) so triage is possible without opening the record. The action
       queue: predicted cause + an <b>Acknowledge</b> button, a row checkbox for <b>bulk-acknowledge
-      selected</b>, and a one-click <b>“acknowledge all with this signature”</b> — matches other
-      unacknowledged failures with the same exception type + message (own-function stack frames
-      excluded), since a signature key is test-identity-scoped and so never literally shared across
-      tests. Driven toward empty.</p></div>
-    <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with age,
-      triage status, causing person, and a one-line cause. Row checkboxes support a <b>bulk “apply to
-      selected”</b> (triage status / causing person / reason) across the caseload. <code>REMOVED</code>
-      mid-failure is flagged distinctly.</p></div>
+      selected</b>, and — when other unacknowledged failures share the row's signature — a one-click
+      <b>“Ack all w/ signature (N)”</b> showing that blast radius <i>before</i> the click: N is the
+      count of unacknowledged failures (this row included) matching the same exception type + message
+      (own-function stack frames excluded, since a signature key is test-identity-scoped and so never
+      literally shared across tests); the button only appears once N&nbsp;&gt;&nbsp;1. Driven toward
+      empty.</p></div>
+    <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with the
+      same error snippet under the test name, plus age, triage status, causing person, and a one-line
+      cause. Row checkboxes support a <b>bulk “apply to selected”</b> (triage status / causing person /
+      reason) across the caseload. <code>REMOVED</code> mid-failure is flagged distinctly.</p></div>
     <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
   mention, most relevant first — rather than one flat run-wide list; see Classification above), the
-  predicted cause's <b>confidence</b> badge, the test's <b>Owner</b> (main developer, resolved via
+  predicted cause's <b>confidence</b> badge with a per-episode, collapsed <b>“Why this prediction”</b>
+  breakdown (infra-error flag, candidate counts, top code/data match with author and score, the
+  tie-break, the confidence-formula inputs), the test's <b>Owner</b> (main developer, resolved via
   SVN blame), its linked ZEPHYR test case(s) — each shown with its own ZEPHYR owner initials, e.g.
   “(owner kam)”, distinct metadata from the dashboard Owner — LLM hypothesis,
-  error type, stack trace) plus the editable fields the human owns
+  error type, stack trace — clamped past 15 lines behind a “Show full trace” toggle, with a
+  copy-to-clipboard button) plus the editable fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
   AI suggestion. When the current failure's signature also afflicts other open failing tests, a second

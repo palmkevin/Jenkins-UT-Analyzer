@@ -2,16 +2,21 @@
 {% import "_macros.html" as ui %}
 {% block title %}Run #{{ run.build if run else build }} — UT Analyzer{% endblock %}
 
-{% macro diff_list(rows) -%}
-  {%- if not rows -%}<span class="empty">none</span>
+{#- One diff bucket ({rows, total}, capped in the view layer, issue #151) as a comma-separated
+    link stream. When capped, `url` — pre-built by views.run_expand_urls so failures_only and the
+    results page survive — re-requests the page with this bucket added to ?expand=. -#}
+{% macro diff_list(bucket, url) -%}
+  {%- if not bucket.rows -%}<span class="empty">none</span>
   {%- else -%}
-    {%- for r in rows -%}
+    {%- for r in bucket.rows -%}
       <a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a>{% if not loop.last %}, {% endif %}
     {%- endfor -%}
+    {%- if bucket.total > bucket.rows|length %} … <a href="{{ url }}">Show all {{ bucket.total }}</a>{% endif -%}
   {%- endif -%}
 {%- endmacro %}
 
 {% block content %}
+{{ ui.breadcrumb("Job runs", "/runs") }}
 {% if not run %}
   <h1>No run ingested for build #{{ build }}</h1>
   <p class="meta">Run the back-fill CLI: <code>uta backfill &lt;build&gt;</code></p>
@@ -35,16 +40,16 @@
 </table>
 </div>
 
-<h2>Diff vs baseline
+<h2 id="diff">Diff vs baseline
   {% if run.baseline %}(<a href="/runs/{{ run.baseline.build }}">#{{ run.baseline.build }}</a>){% else %}(no baseline — first complete run){% endif %}
 </h2>
 <div class="table-responsive">
 <table class="table table-sm align-middle">
   <tbody>
-    <tr><th>Regressions (new failures)</th><td>{{ diff_list(run.diff.regressions) }}</td></tr>
-    <tr><th>Newly fixed</th><td>{{ diff_list(run.diff.newly_fixed) }}</td></tr>
-    <tr><th>Still failing</th><td>{{ diff_list(run.diff.still_failing) }}</td></tr>
-    <tr><th>Removed</th><td>{{ diff_list(run.diff.removed) }}</td></tr>
+    <tr><th>Regressions — new failures ({{ run.diff.regressions.total }})</th><td>{{ diff_list(run.diff.regressions, diff_expand_urls["regressions"]) }}</td></tr>
+    <tr><th>Newly fixed ({{ run.diff.newly_fixed.total }})</th><td>{{ diff_list(run.diff.newly_fixed, diff_expand_urls["newly_fixed"]) }}</td></tr>
+    <tr><th>Still failing ({{ run.diff.still_failing.total }})</th><td>{{ diff_list(run.diff.still_failing, diff_expand_urls["still_failing"]) }}</td></tr>
+    <tr><th>Removed ({{ run.diff.removed.total }})</th><td>{{ diff_list(run.diff.removed, diff_expand_urls["removed"]) }}</td></tr>
   </tbody>
 </table>
 </div>

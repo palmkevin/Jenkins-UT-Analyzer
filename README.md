@@ -144,7 +144,8 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `SMTP_PORT` | `25` | SMTP port. |
 | `SMTP_FROM` | *(empty)* | From address. |
 | `SMTP_RECIPIENTS` | *(empty)* | Comma-separated recipients; empty disables email. |
-| `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Reserved — not yet used by `SmtpEmailSender` (no auth wired today). |
+| `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Relay credentials; when set, `SmtpEmailSender` negotiates STARTTLS and logs in. Empty ⇒ plain unauthenticated send. |
+| `SMTP_STARTTLS` | *(empty)* | Force STARTTLS on/off. Empty defaults it from the credentials (on when `SMTP_USER` is set). |
 | `EMAIL_RECOVERY_NOTICE` | `false` | Also send a "back-to-green" notice when a run recovers. |
 
 ### LLM hypothesis (optional)

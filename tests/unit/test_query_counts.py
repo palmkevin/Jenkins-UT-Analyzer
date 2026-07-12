@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from tests.builders import make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import Base, make_session_factory, session_scope
+from uta.kb.store import record_signatures_for_run
 from uta.models import TestLifecycle
 from uta.web import views
 
@@ -46,6 +47,8 @@ def _seed_triage(session_factory, n: int) -> None:
             errors={f"t{i:03d}": (f"err {i}", None) for i in range(n)},
         )
         apply_run(s, r1, baseline=None)
+        # Signatures recorded so the New rows' blast-radius pass (issue #152) has ids to batch.
+        record_signatures_for_run(s, r1)
         # A third get fixed in run 2 (→ recently fixed), the rest keep failing.
         statuses = {f"t{i:03d}": ("PASSED" if i % 3 == 0 else "FAILED") for i in range(n)}
         r2 = make_run(s, 2, statuses)
@@ -69,8 +72,9 @@ def _triage_count_for(n: int) -> int:
 def test_triage_queue_query_count_does_not_grow_with_rows():
     small, large = _triage_count_for(6), _triage_count_for(48)
     assert small == large, f"triage query count grew with rows: {small} -> {large}"
-    # Eager lifecycle scan + latest-classification batch + run-ref batch.
-    assert large <= 4
+    # Eager lifecycle scan + latest-classification batch + run-ref batch + failure-info batch
+    # + signature-blast-radius batch (issue #152).
+    assert large <= 5
 
 
 def _job_runs_count_for(n_runs: int) -> int:

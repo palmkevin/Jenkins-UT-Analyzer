@@ -6,6 +6,8 @@ Post/Redirect/Get actions actually mutating state through the app (not just the 
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -14,7 +16,8 @@ from sqlalchemy.pool import StaticPool
 from tests.builders import get_identity, make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import Base, make_session_factory, session_scope
-from uta.models import CodeChangeCandidate, Run, TestLifecycle
+from uta.models import Classification, CodeChangeCandidate, Run, TestLifecycle
+from uta.models.enums import PredictedCause
 from uta.web.app import create_app
 
 
@@ -152,6 +155,82 @@ def test_current_open_episode_failure_detail_is_expanded(client, seeded):
     assert " open>" in open_tag
 
 
+def test_record_renders_classification_evidence_collapsed(client, seeded):
+    """Issue #159: an episode whose classification carries evidence renders a collapsed
+    "Why this prediction" block with readable label/value rows — never the raw JSON keys."""
+    ident_id = _identity_id(seeded, "alpha")
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        s.add(
+            Classification(
+                episode_id=lc.current_episode_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                confidence=0.63,
+                evidence=json.dumps(
+                    {
+                        "code_candidates": 2,
+                        "data_candidates": 1,
+                        "infra_error": False,
+                        "baseline_run_id": 41,
+                        "relevance": {
+                            "code_matched": 1,
+                            "data_matched": 0,
+                            "tie_break": "code",
+                            "top_code": {
+                                "candidate": "r48612",
+                                "author": "R. Devlin",
+                                "score": 3.0,
+                                "reasons": ["touches ut_x/mod.py (module of this test)"],
+                            },
+                            "top_data": None,
+                        },
+                        "confidence": {
+                            "win_score": 3.0,
+                            "lose_score": 2.0,
+                            "kb_provenance_weight": 0.0,
+                        },
+                    }
+                ),
+            )
+        )
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Why this prediction" in page
+    # Readable rows, not raw JSON keys.
+    assert "Code changes in window" in page
+    assert "2 candidates · 1 matched this test" in page
+    assert "Data changes in window" in page
+    assert "Top code match" in page
+    assert "r48612 by R. Devlin (score 3) — touches ut_x/mod.py (module of this test)" in page
+    assert "Tie-break" in page
+    assert "relevance score 3 vs 2" in page
+    assert "code_candidates" not in page  # no raw JSON dump
+    assert "baseline_run_id" not in page  # internal noise stays whitelisted out
+    # Collapsed by default: the block's own <details> tag carries no open attribute.
+    summary_idx = page.index("Why this prediction")
+    open_tag = page[page.rindex("<details", 0, summary_idx) : summary_idx]
+    assert " open" not in open_tag
+
+
+def test_record_shows_no_evidence_shell_when_absent(client, seeded):
+    """No classification / empty evidence -> no "Why this prediction" block at all."""
+    ident_id = _identity_id(seeded, "alpha")
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Why this prediction" not in page
+    # An evidence-less classification (e.g. an LLM-only row) renders no empty shell either.
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        s.add(
+            Classification(
+                episode_id=lc.current_episode_id,
+                predicted_cause=PredictedCause.UNKNOWN,
+                llm_hypothesis="possibly the fixture refresh",
+            )
+        )
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Predicted cause:" in page
+    assert "Why this prediction" not in page
+
+
 def test_svn_revision_links_to_fisheye(client, seeded):
     ident_id = _identity_id(seeded, "alpha")
     with session_scope(seeded) as s:
@@ -173,10 +252,96 @@ def test_run_summary_page_shows_diff_and_results(client):
     assert "alpha" in resp.text
 
 
+def test_runs_counts_carry_non_color_status_glyphs(client):
+    """Colorblind accessibility (issue #144): pass/fail counts pair a glyph with the hue."""
+    page = client.get("/runs").text
+    glyph = '<span class="status-glyph" aria-hidden="true">'
+    assert f'<td class="text-end PASSED">{glyph}✓</span>' in page
+    assert f'<td class="text-end FAILED">{glyph}✕</span>' in page
+    assert f'<td class="text-end SKIPPED">{glyph}○</span>' in page
+
+
+def test_runs_zero_counts_render_undecorated(session_factory):
+    """A clean run shows plain zeros in the conditional columns — no failure glyph anywhere."""
+    with session_scope(session_factory) as s:
+        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+    clean = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = clean.get("/runs").text
+    assert 'aria-hidden="true">✕</span>' not in page  # no failures/regressions → no failure glyph
+    assert '<td class="text-end">0</td>' in page  # zero failed is a plain, uncolored number
+
+
+def test_timestamps_render_with_explicit_utc_label(client):
+    """Timezone clarity (issue #144): |ts renders ' UTC' text with the ISO offset on hover."""
+    page = client.get("/runs/1").text
+    assert " UTC</span>" in page
+    assert 'title="2026-06-01T01:00:00+00:00"' in page  # run 1 starts at _EPOCH + 1h
+
+
 def test_unknown_test_record_is_graceful(client):
     resp = client.get("/tests/99999")
     assert resp.status_code == 200
     assert "No record" in resp.text
+
+
+# ── triage error snippets + trace clamp/copy (issue #145) ──────────────────────
+
+_TRACE_TMPL = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "{exc}"
+)
+
+
+@pytest.fixture
+def errors_client(session_factory):
+    """One new + one acknowledged failing test, both with real error text."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("test failure", _TRACE_TMPL.format(exc="AssertionError: 7 != 9")),
+                "gamma": ("test failure", _TRACE_TMPL.format(exc="KeyError: 'MSH'")),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    ident_id = _identity_id(session_factory, "gamma")
+    resp = client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    return client
+
+
+def test_triage_tables_show_error_snippets(errors_client):
+    page = errors_client.get("/").text
+    new_idx = page.index('id="new"')
+    still_idx = page.index('id="still_failing"')
+    fixed_idx = page.index('id="recently_fixed"')
+    # New bucket: alpha's exception line as a muted one-liner under the test name.
+    assert 'class="error-snippet"' in page[new_idx:still_idx]
+    assert "AssertionError: 7 != 9" in page[new_idx:still_idx]
+    # Still-failing bucket: gamma's snippet (HTML-escaped quotes around MSH).
+    assert 'class="error-snippet"' in page[still_idx:fixed_idx]
+    assert "KeyError:" in page[still_idx:fixed_idx]
+
+
+def test_test_record_trace_has_clamp_hook_and_copy_button(session_factory):
+    """The full >15-line trace ships in the HTML (no-JS fallback) with clamp + copy hooks."""
+    deep = "\n".join(f"    frame_{i}()" for i in range(20))
+    stack = _TRACE_TMPL.format(exc=deep + "\nValueError: bottom of a deep stack")
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"}, errors={"alpha": ("test failure", stack)})
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
+    assert 'data-clamp="15"' in page
+    assert 'data-copy-target="trace-' in page
+    assert "Copy trace" in page
+    assert "ValueError: bottom of a deep stack" in page  # full text present pre-clamp
+    assert "/static/trace.js" in page  # the clamp/copy behaviour is wired on every page
 
 
 # ── long-list capping (issue #19) ──────────────────────────────────────────────
@@ -206,6 +371,86 @@ def test_triage_expand_renders_every_row(many_failures_client):
     assert page.count('href="/tests/') == 150
     # Fully expanded → no residual hint.
     assert "Load all 150 Tests" not in page
+
+
+@pytest.fixture
+def many_owned_failures_client(session_factory, monkeypatch):
+    """150 new failing tests owned by "KP" plus one by "ZZ", capped at 100 rows per section."""
+    monkeypatch.setenv("UI_ROW_LIMIT", "100")
+    with session_scope(session_factory) as s:
+        names = [f"t{i:04d}" for i in range(150)] + ["zzz_unrelated"]
+        r1 = make_run(s, 1, {n: "FAILED" for n in names})
+        apply_run(s, r1, baseline=None)
+        for name in names:
+            get_identity(s, name).main_developer = "ZZ" if name == "zzz_unrelated" else "KP"
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_expand_link_preserves_filters_and_sort(many_owned_failures_client):
+    # A filtered view promises the post-filter count; its "Load all" link must keep the filter
+    # and sort (issue #77's URL-is-state contract), only adding ?expand=.
+    page = many_owned_failures_client.get("/?owner=KP&sort=name").text
+    assert "not yet acknowledged (150)" in page
+    assert "Load all 150 Tests" in page
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new#new"' in page
+
+    # Following the link renders the *filtered* bucket in full — the other owner stays out.
+    expanded = many_owned_failures_client.get("/?owner=KP&sort=name&expand=new").text
+    assert expanded.count('href="/tests/') == 150
+    assert "Load all 150 Tests" not in expanded
+    assert "zzz_unrelated" not in expanded
+
+
+def test_triage_filter_form_chips_and_sort_headers_preserve_expand(many_owned_failures_client):
+    # The mirror image of the test above (issue #151): once a section is expanded, changing the
+    # filters or the sort must not collapse it. The filter form carries ?expand= as a hidden
+    # field; the chip-remove and column-sort links keep it in their URLs. "Clear" stays a bare
+    # "/" — it deliberately resets everything, expand included.
+    page = many_owned_failures_client.get("/?owner=KP&expand=new").text
+    assert '<input type="hidden" name="expand" value="new">' in page
+    assert 'href="/?expand=new"' in page  # the owner chip's ✕ keeps the expansion
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new"' in page  # sort header keeps it too
+    assert 'href="/">Clear</a>' in page
+
+
+# ── run-diff capping (issue #151) ──────────────────────────────────────────────
+
+
+@pytest.fixture
+def many_regressions_client(session_factory):
+    """A run with 25 regressions vs its baseline — over the 20-row diff-bucket cap."""
+    names = [f"t{i:02d}" for i in range(25)]
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {n: "PASSED" for n in names})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {n: "FAILED" for n in names})
+        apply_run(s, r2, baseline=r1)
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_run_diff_headers_show_counts_and_cap_long_buckets(many_regressions_client):
+    page = many_regressions_client.get("/runs/2").text
+    # Every bucket header carries its count, populated or not.
+    assert "Regressions — new failures (25)" in page
+    assert "Newly fixed (0)" in page
+    assert "Still failing (0)" in page
+    assert "Removed (0)" in page
+    # The over-cap bucket is truncated behind a "Show all N" link to ?expand=<bucket>#diff.
+    assert 'href="/runs/2?expand=regressions#diff">Show all 25</a>' in page
+
+    # Following the link renders the 5 capped-away tests (the count still reads 25) and the
+    # residual hint disappears.
+    expanded = many_regressions_client.get("/runs/2?expand=regressions").text
+    assert expanded.count('href="/tests/') - page.count('href="/tests/') == 5
+    assert "Regressions — new failures (25)" in expanded
+    assert "Show all 25" not in expanded
+
+
+def test_run_diff_expand_link_preserves_query_string(many_regressions_client):
+    # The run page's other URL state (failures_only, results pagination) must survive the
+    # "Show all" round trip — same contract as the triage expand links.
+    page = many_regressions_client.get("/runs/2?failures_only=1").text
+    assert 'href="/runs/2?failures_only=1&amp;expand=regressions#diff">Show all 25</a>' in page
 
 
 # ── run-results pagination (issue #52) ─────────────────────────────────────────
@@ -317,16 +562,28 @@ def test_triage_filter_survives_acknowledge_round_trip(multi_owner_client, sessi
     assert resp.headers["location"] == "/?owner=AB"
 
 
+def test_acknowledge_redirect_carries_bucket_anchor(multi_owner_client, session_factory):
+    """The triage ack forms post the bucket's anchor (issue #150), so the PRG round trip lands
+    back on the section that was acted on instead of scrolling to the top of the page."""
+    ident_id = _identity_id(session_factory, "alpha")
+    resp = multi_owner_client.post(
+        f"/tests/{ident_id}/acknowledge", data={"anchor": "new"}, headers={"referer": "/?owner=AB"}
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/?owner=AB#new"
+
+
 def test_bulk_acknowledge_multiple_new_tests(multi_owner_client, session_factory):
     alpha_id = _identity_id(session_factory, "alpha")
     beta_id = _identity_id(session_factory, "beta")
     multi_owner_client.cookies.set("uta_actor", "dana")
     resp = multi_owner_client.post(
         "/tests/bulk/acknowledge",
-        data={"identity_ids": [str(alpha_id), str(beta_id)]},
+        data={"identity_ids": [str(alpha_id), str(beta_id)], "anchor": "new"},
         headers={"referer": "/"},
     )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#new"  # bulk-ack lands back on the New bucket (#150)
     with session_scope(session_factory) as s:
         for ident_id in (alpha_id, beta_id):
             lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
@@ -354,13 +611,42 @@ def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
 
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     client.cookies.set("uta_actor", "erin")
-    resp = client.post(f"/signatures/{sig_id}/acknowledge", headers={"referer": "/"})
+    resp = client.post(
+        f"/signatures/{sig_id}/acknowledge", data={"anchor": "new"}, headers={"referer": "/"}
+    )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#new"  # signature-ack lands back on the bucket (#150)
     with session_scope(session_factory) as s:
         for name in ("alpha", "beta"):
             lc = get_identity(s, name).lifecycle
             assert lc.acknowledged is True
             assert lc.acknowledged_by == "erin"
+
+
+def test_signature_ack_button_shows_blast_radius_and_hides_when_solo(session_factory):
+    """Issue #152: the New-bucket bulk-ack button carries its blast radius up front — "Ack all w/
+    signature (2)" on the shared-error pair — and is not rendered at all for a row whose signature
+    matches only itself (a count of 1 adds nothing over the plain Acknowledge button)."""
+    from uta.kb.store import record_signatures_for_run
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+    page = TestClient(create_app(session_factory=session_factory)).get("/").text
+    assert page.count("Ack all w/ signature (2)") == 2  # one per row of the shared pair
+    assert page.count("Ack all w/ signature") == 2  # gamma (count 1) renders no bulk button
+    assert "Acknowledge all 2 unacknowledged failing tests sharing this failure signature" in page
 
 
 def test_attribute_by_signature_route_attributes_matching_tests(session_factory):
@@ -453,10 +739,15 @@ def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     resp = client.post(
         "/episodes/bulk/attribute",
-        data={"episode_ids": [str(i) for i in ep_ids], "triage_status": "INVESTIGATING"},
+        data={
+            "episode_ids": [str(i) for i in ep_ids],
+            "triage_status": "INVESTIGATING",
+            "anchor": "still_failing",
+        },
         headers={"referer": "/"},
     )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#still_failing"  # lands back on the bucket (#150)
     with session_scope(session_factory) as s:
         for name in ("alpha", "beta"):
             ep = get_identity(s, name).lifecycle.current_episode
@@ -544,6 +835,23 @@ def test_bulk_select_js_is_served(session_factory):
     assert resp.status_code == 200
     assert "data-bulk-select-all" in resp.text
     assert "indeterminate" in resp.text
+
+
+def test_triage_action_forms_carry_bucket_anchor_fields(both_buckets_page):
+    """Each triage action form posts its bucket's anchor (issue #150), same hidden-field pattern
+    as the test record's episode anchors (issue #143)."""
+    assert '<input type="hidden" name="anchor" value="new">' in both_buckets_page
+    assert '<input type="hidden" name="anchor" value="still_failing">' in both_buckets_page
+
+
+def test_form_busy_js_is_served_and_included(session_factory):
+    """Disable-on-submit (issue #150): the busy-state script is vendored and wired into the page."""
+    client = TestClient(create_app(session_factory=session_factory))
+    resp = client.get("/static/form-busy.js")
+    assert resp.status_code == 200
+    assert "spinner-border" in resp.text
+    assert "data-busy-label" in resp.text
+    assert '<script src="/static/form-busy.js" defer></script>' in client.get("/").text
 
 
 def test_search_redirects_on_unique_match(multi_owner_client, session_factory):

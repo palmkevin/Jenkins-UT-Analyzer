@@ -9,6 +9,7 @@ bookkeeping exists to drift.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -26,6 +27,7 @@ from uta.analyze.relevance import rank_candidates
 from uta.control.heartbeat import read_heartbeat
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
+from uta.kb.signature import display_message
 from uta.models import (
     Classification,
     FailureEpisode,
@@ -37,12 +39,39 @@ from uta.models import (
 )
 from uta.models.enums import LifecycleState
 from uta.web import charts
-from uta.web.actions import open_episodes_for_signature
+from uta.web.actions import _error_key, open_episodes_for_signature
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
 # directly (tests, CLI). A limit of 0 disables the cap.
 DEFAULT_ROW_LIMIT = 100
+
+# Max tests a run-page diff bucket lists inline before capping behind a "Show all N" link
+# (issue #151). Deliberately tighter than DEFAULT_ROW_LIMIT — each bucket renders as a single
+# comma-separated link stream, not a table, so a bad night's hundreds of regressions would
+# otherwise swamp the page.
+DIFF_ROW_LIMIT = 20
+
+# Max characters of the one-line error snippet a triage row shows (issue #145) — long enough for a
+# typical exception line, short enough that a row stays a row.
+_SNIPPET_MAX_CHARS = 160
+
+
+def _error_snippet(
+    error_type: str | None, error_details: str | None, error_stack_trace: str | None
+) -> str | None:
+    """One display line summarising a failure for the triage tables (issue #145).
+
+    Prefers the traceback's closing exception line (``AssertionError: …``) via
+    :func:`display_message` — the JUnit ``errorDetails`` field is usually the constant
+    "test failure" — falling back to the first non-blank line of the details, then to the derived
+    error type. Truncated to :data:`_SNIPPET_MAX_CHARS` with an ellipsis.
+    """
+    message = display_message(error_details, error_stack_trace)
+    first = next((ln.strip() for ln in (message or "").splitlines() if ln.strip()), "")
+    if len(first) > _SNIPPET_MAX_CHARS:
+        first = first[: _SNIPPET_MAX_CHARS - 1].rstrip() + "…"
+    return first or error_type or None
 
 
 def _now() -> datetime:
@@ -117,11 +146,12 @@ def latest_run(session: Session) -> dict | None:
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:
-    """Batch variant of the failure-detail lookup, projected down to ``{tracks, signature_id}``.
+    """Batch variant of the failure-detail lookup, projected down to
+    ``{tracks, signature_id, error_type, error_details, error_stack_trace}``.
 
-    Used by the triage queue to filter/display by track and to surface the "acknowledge all with
-    this signature" bulk action — one query for every episode's characterising failure instead of
-    one per row.
+    Used by the triage queue to filter/display by track, to surface the "acknowledge all with
+    this signature" bulk action, and to render the per-row error snippet (issue #145) — one query
+    for every episode's characterising failure instead of one per row.
 
     ``tracks`` carries **every** failing track of the ``(identity, run)`` pair — a test normally
     runs in both tracks, so failing in both is the common case, and collapsing to one row's track
@@ -129,6 +159,8 @@ def _failure_infos(
     first failing row's (track order): the normalizer strips the track prefix, so both tracks'
     failures hash to the same signature in practice — and the bulk action matches on the
     signature's error *text*, not its id, so any one of the pair's signatures anchors it equally.
+    The error fields come from the first row carrying any error text (same anchor rule) — the
+    signature normalizer likewise treats both tracks' error text as the same failure.
     """
     pairs = {
         (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
@@ -142,6 +174,9 @@ def _failure_infos(
             TestResult.run_id,
             TestResult.track,
             TestResult.signature_id,
+            TestResult.error_type,
+            TestResult.error_details,
+            TestResult.error_stack_trace,
         )
         .where(
             tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
@@ -150,15 +185,62 @@ def _failure_infos(
         .order_by(TestResult.track, TestResult.id)
     ).all()
     by_pair: dict[tuple[int, int], dict] = {}
-    for identity_id, run_id, track, signature_id in rows:
-        info = by_pair.setdefault((identity_id, run_id), {"tracks": [], "signature_id": None})
+    for identity_id, run_id, track, signature_id, error_type, details, stack in rows:
+        info = by_pair.setdefault(
+            (identity_id, run_id),
+            {
+                "tracks": [],
+                "signature_id": None,
+                "error_type": None,
+                "error_details": None,
+                "error_stack_trace": None,
+            },
+        )
         info["tracks"].append(track)
         if info["signature_id"] is None:
             info["signature_id"] = signature_id
+        if info["error_type"] is None:
+            info["error_type"] = error_type
+        if (
+            info["error_details"] is None
+            and info["error_stack_trace"] is None
+            and (details or stack)
+        ):
+            info["error_details"] = details
+            info["error_stack_trace"] = stack
     return {
         ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
         for ep in episodes
     }
+
+
+def _signature_ack_counts(
+    session: Session, signature_ids: Collection[int | None]
+) -> dict[int, int]:
+    """Blast radius per signature for the "Ack all w/ signature (N)" button (issue #152).
+
+    Signatures are **per-test** (identity is part of the hash), so grouping by ``signature_id``
+    would always count 1 — the real cross-test grouping key is the exception type + message with
+    the stack-frame lines stripped (:func:`uta.web.actions._error_key`), the same computation
+    :func:`uta.web.actions.acknowledge_by_signature` performs at commit time. Callers pass the New
+    bucket's (unacknowledged, failing) rows' signature ids — the same scope the bulk action
+    targets — so each signature's count *is* the number of tests one click would acknowledge.
+    One batched query for the normalized texts, grouping in Python: the queue projection stays
+    O(1) queries in the number of rows (issue #52).
+    """
+    ids = [i for i in signature_ids if i is not None]
+    if not ids:
+        return {}
+    keys = {
+        sig_id: _error_key(text)
+        for sig_id, text in session.execute(
+            select(FailureSignature.id, FailureSignature.normalized_text).where(
+                FailureSignature.id.in_(set(ids))
+            )
+        )
+    }
+    counts = Counter(keys[i] for i in ids if i in keys)
+    return {sig_id: counts[key] for sig_id, key in keys.items()}
 
 
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
@@ -252,6 +334,14 @@ def _row(
         "reason_text": attribution.reason_text if attribution else None,
         "tracks": failure_info["tracks"] if failure_info else [],
         "signature_id": failure_info["signature_id"] if failure_info else None,
+        "error_type": failure_info["error_type"] if failure_info else None,
+        "error_snippet": _error_snippet(
+            failure_info["error_type"],
+            failure_info["error_details"],
+            failure_info["error_stack_trace"],
+        )
+        if failure_info
+        else None,
     }
 
 
@@ -309,21 +399,26 @@ _CHIP_LABELS = {
 }
 
 
-def _triage_url(filters: dict[str, str], sort: str | None) -> str:
-    """The triage-queue URL encoding the given filter set + sort — the shareable state."""
+def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str] = ()) -> str:
+    """The triage-queue URL encoding the given filter set + sort + expanded sections — the
+    shareable state."""
     params = {k: v for k, v in filters.items() if v}
     if sort:
         params["sort"] = sort
-    query = urlencode(params)
+    if expand:
+        params["expand"] = ",".join(expand)
+    query = urlencode(params, safe=",")
     return f"/?{query}" if query else "/"
 
 
-def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> list[dict]:
+def triage_filter_chips(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> list[dict]:
     """Active-filter chips for the triage queue (issue #77) — pure URL construction.
 
     One chip per active filter: a ``label`` ("owner: KP", "flaky only") and a ``remove_url``
-    re-requesting the page with that one filter dropped and everything else (including ``sort``)
-    kept, so state stays entirely in the URL.
+    re-requesting the page with that one filter dropped and everything else (including ``sort``
+    and the ``expand``-ed sections, issue #151) kept, so state stays entirely in the URL.
     """
     chips = []
     for key, name in _CHIP_LABELS.items():
@@ -332,30 +427,88 @@ def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> lis
             continue
         remaining = {k: v for k, v in filters.items() if k != key}
         chips.append(
-            {"key": key, "label": f"{name}: {value}", "remove_url": _triage_url(remaining, sort)}
+            {
+                "key": key,
+                "label": f"{name}: {value}",
+                "remove_url": triage_url(remaining, sort, expand),
+            }
         )
     if filters.get("flaky"):
         remaining = {k: v for k, v in filters.items() if k != "flaky"}
         chips.append(
-            {"key": "flaky", "label": "flaky only", "remove_url": _triage_url(remaining, sort)}
+            {
+                "key": "flaky",
+                "label": "flaky only",
+                "remove_url": triage_url(remaining, sort, expand),
+            }
         )
     return chips
 
 
-def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[str, dict]:
+def triage_sort_links(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> dict[str, dict]:
     """Column-header sort links for the triage queue (issue #77).
 
     For each server-supported sort (``name``/``owner``) returns ``{"active": bool, "url": str}``:
     clicking an inactive header applies that sort, clicking the active one toggles back to the
-    default age order. Filters are preserved either way.
+    default age order. Filters and the ``expand``-ed sections (issue #151) are preserved either
+    way.
     """
     return {
         key: {
             "active": (sort or "") == key,
-            "url": _triage_url(filters, None if (sort or "") == key else key),
+            "url": triage_url(filters, None if (sort or "") == key else key, expand),
         }
         for key in _SORT_KEYS
     }
+
+
+# The triage queue's three capped buckets — the section keys ``?expand=`` accepts (issue #19).
+_TRIAGE_SECTIONS = ("new", "still_failing", "recently_fixed")
+
+
+def triage_expand_urls(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> dict[str, str]:
+    """Per-section "Load all N Tests" URLs for the triage queue's capped buckets (issue #19).
+
+    Each URL re-requests the page with that section added to the already-expanded set while
+    keeping every active filter and the sort — the same state-stays-in-the-URL contract as the
+    chips and header sort links (issue #77) — and jumps back to the section's anchor.
+    """
+    urls = {}
+    for section in _TRIAGE_SECTIONS:
+        expanded = list(expand)
+        if section not in expanded:
+            expanded.append(section)
+        urls[section] = triage_url(filters, sort, expand=expanded) + f"#{section}"
+    return urls
+
+
+# The run page's four capped diff buckets — the section keys its ``?expand=`` accepts (issue #151).
+_RUN_DIFF_SECTIONS = ("regressions", "newly_fixed", "still_failing", "removed")
+
+
+def run_expand_urls(
+    build: int, params: dict[str, str], expand: Collection[str] = ()
+) -> dict[str, str]:
+    """Per-bucket "Show all N" URLs for the run page's capped diff lists (issue #151).
+
+    Each URL re-requests the run page with that bucket added to the already-expanded set while
+    the rest of the query string (``failures_only``, results pagination) survives — the same
+    state-stays-in-the-URL contract as the triage queue's expand links (issue #132) — and jumps
+    back to the ``#diff`` anchor.
+    """
+    base = {k: v for k, v in params.items() if k != "expand" and v}
+    urls = {}
+    for section in _RUN_DIFF_SECTIONS:
+        expanded = list(expand)
+        if section not in expanded:
+            expanded.append(section)
+        query = urlencode({**base, "expand": ",".join(expanded)}, safe=",")
+        urls[section] = f"/runs/{build}?{query}#diff"
+    return urls
 
 
 def triage_filter_options(session: Session) -> dict:
@@ -435,7 +588,8 @@ def triage_queue(
 
     Query count is **O(1) in the number of rows** (issue #52): one eager-loaded lifecycle scan
     (identity + current episode + attribution), one batched latest-classification lookup, one
-    batched run-ref lookup, one batched failure-info (track/signature) lookup.
+    batched run-ref lookup, one batched failure-info (track/signature) lookup, and one batched
+    signature-text lookup for the New rows' ack blast radius (issue #152).
     """
     filters = filters or {}
     lifecycles = (
@@ -470,6 +624,17 @@ def triage_queue(
         [ep.first_failure_run_id for ep in episodes] + [ep.fixed_in_run_id for ep in episodes],
     )
     failure_infos = _failure_infos(session, episodes)
+    # Blast radius for the New rows' "Ack all w/ signature (N)" button (issue #152) — grouped over
+    # the *whole* pre-filter, pre-cap New bucket, because the bulk action acknowledges every
+    # matching test regardless of the current view's filters or row cap.
+    signature_ack_counts = _signature_ack_counts(
+        session,
+        [
+            (failure_infos.get(lc.current_episode.id) or {}).get("signature_id")
+            for bucket, lc in selected
+            if bucket == "new" and lc.current_episode is not None
+        ],
+    )
 
     new: list[dict] = []
     still_failing: list[dict] = []
@@ -481,6 +646,7 @@ def triage_queue(
         if not _matches_filters(row, filters):
             continue
         if bucket == "new":
+            row["signature_ack_count"] = signature_ack_counts.get(row["signature_id"], 0)
             new.append(row)
         elif bucket == "still_failing":
             still_failing.append(row)
@@ -553,6 +719,82 @@ def _episode_failure_detail(session: Session, ep: FailureEpisode) -> dict | None
     }
 
 
+def _fmt_num(value) -> str:
+    """Compact number rendering for evidence values (``3.0`` -> ``3``, ``0.5`` -> ``0.5``)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    return f"{value:g}"
+
+
+def _top_match_line(top: dict) -> str:
+    """One readable line for the classifier's strongest match of a kind (see ``_top_evidence``)."""
+    line = str(top.get("candidate") or "—")
+    if top.get("author"):
+        line += f" by {top['author']}"
+    if top.get("score") is not None:
+        line += f" (score {_fmt_num(top['score'])})"
+    reasons = top.get("reasons") or []
+    if isinstance(reasons, list) and reasons:
+        line += " — " + "; ".join(str(r) for r in reasons)
+    return line
+
+
+def _evidence_items(evidence) -> list[tuple[str, str]]:
+    """Flatten the classifier's evidence JSON into readable (label, value) rows for the record.
+
+    Whitelists the user-meaningful keys of the shape :func:`uta.analyze.classify.classify_episode`
+    persists (candidate counts, relevance matches, the tie-break, the confidence inputs) and drops
+    internal noise (``baseline_run_id`` is a store PK, not a build number). Degenerate payloads —
+    a bare string or list instead of the expected dict — are still surfaced as a single row rather
+    than silently hidden.
+    """
+    if not evidence:
+        return []
+    if not isinstance(evidence, dict):
+        if isinstance(evidence, list):
+            return [("Evidence", "; ".join(str(v) for v in evidence))]
+        return [("Evidence", str(evidence))]
+    relevance = evidence.get("relevance")
+    if not isinstance(relevance, dict):
+        relevance = {}
+    items: list[tuple[str, str]] = []
+    if "infra_error" in evidence:
+        items.append(("Infrastructure error", "yes" if evidence["infra_error"] else "no"))
+    for kind, label in (("code", "Code changes in window"), ("data", "Data changes in window")):
+        if f"{kind}_candidates" not in evidence:
+            continue
+        count = evidence[f"{kind}_candidates"] or 0
+        if not count:
+            items.append((label, "none"))
+            continue
+        value = f"{_fmt_num(count)} candidate{'s' if count != 1 else ''}"
+        matched = relevance.get(f"{kind}_matched")
+        if matched is not None:
+            value += f" · {_fmt_num(matched)} matched this test"
+        items.append((label, value))
+    for key, label in (("top_code", "Top code match"), ("top_data", "Top data match")):
+        top = relevance.get(key)
+        if isinstance(top, dict):
+            items.append((label, _top_match_line(top)))
+    tie = relevance.get("tie_break")
+    if tie:
+        items.append(
+            ("Tie-break", f"both kinds matched — the top {tie} candidate led by a full tier")
+        )
+    conf = evidence.get("confidence")
+    if isinstance(conf, dict):
+        bits = []
+        if conf.get("win_score") is not None and conf.get("lose_score") is not None:
+            bits.append(
+                f"relevance score {_fmt_num(conf['win_score'])} vs {_fmt_num(conf['lose_score'])}"
+            )
+        if conf.get("kb_provenance_weight") is not None:
+            bits.append(f"KB provenance weight {_fmt_num(conf['kb_provenance_weight'])}")
+        if bits:
+            items.append(("Confidence inputs", " · ".join(bits)))
+    return items
+
+
 def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
     classification = _latest_classification(session, ep.id)
     attribution = ep.attribution
@@ -581,6 +823,7 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
         "suggested_contact": classification.suggested_contact if classification else None,
         "evidence": evidence,
+        "evidence_items": _evidence_items(evidence),
         "causing_person": attribution.causing_person if attribution else None,
         "reason_text": attribution.reason_text if attribution else None,
         "cause_provenance": attribution.cause_provenance if attribution else None,
@@ -801,17 +1044,20 @@ def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
 
     Matches suite/class/method too (all folded into ``canonical_name``), case-insensitively.
     Returns plain rows for the navbar search box: a unique match lets the route redirect straight
-    to the test record, several matches render as a short pick-list.
+    to the test record, several matches render as a short pick-list. ``limit <= 0`` disables the
+    cap (same semantics as :func:`_cap` / :func:`_page_window`).
     """
     query = (query or "").strip()
     if not query:
         return []
-    idents = session.scalars(
+    stmt = (
         select(TestIdentity)
         .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
         .order_by(TestIdentity.canonical_name)
-        .limit(limit)
-    ).all()
+    )
+    if limit > 0:
+        stmt = stmt.limit(limit)
+    idents = session.scalars(stmt).all()
     return [
         {
             "identity_id": i.id,
@@ -830,6 +1076,7 @@ def run_summary(
     limit: int = DEFAULT_ROW_LIMIT,
     page: int = 1,
     failures_only: bool = False,
+    expand: Collection[str] = (),
 ) -> dict | None:
     """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
@@ -840,6 +1087,10 @@ def run_summary(
 
     ``failures_only`` (issue #63) restricts the results (and their count/pagination) to non-passing
     statuses — paging through ~25k rows to find the handful of failures is the current reality.
+
+    Each diff bucket is ``{"rows": [...], "total": N}``, capped at :data:`DIFF_ROW_LIMIT` rows
+    unless its key (see :data:`_RUN_DIFF_SECTIONS`) is in ``expand`` — a bad night's regressions
+    would otherwise render as an unbounded link stream (issue #151).
     """
     run = session.scalar(select(Run).where(Run.build_number == build))
     if run is None:
@@ -859,8 +1110,12 @@ def run_summary(
         for i in session.scalars(select(TestIdentity).where(TestIdentity.id.in_(ids))).all()
     }
 
-    def _diff_rows(identity_ids: list[int]) -> list[dict]:
-        return [{"identity_id": i, "test_id": names.get(i, str(i))} for i in identity_ids]
+    def _diff_bucket(section: str, identity_ids: list[int]) -> dict:
+        visible = _cap(identity_ids, section, limit=DIFF_ROW_LIMIT, expand=expand)
+        return {
+            "rows": [{"identity_id": i, "test_id": names.get(i, str(i))} for i in visible],
+            "total": len(identity_ids),
+        }
 
     result_filters = [TestResult.run_id == run.id]
     if failures_only:
@@ -903,10 +1158,10 @@ def run_summary(
         ],
         "baseline": _run_ref(session, baseline.id) if baseline is not None else None,
         "diff": {
-            "regressions": _diff_rows(diff.regressions),
-            "newly_fixed": _diff_rows(diff.newly_fixed),
-            "still_failing": _diff_rows(diff.still_failing),
-            "removed": _diff_rows(diff.removed),
+            "regressions": _diff_bucket("regressions", diff.regressions),
+            "newly_fixed": _diff_bucket("newly_fixed", diff.newly_fixed),
+            "still_failing": _diff_bucket("still_failing", diff.still_failing),
+            "removed": _diff_bucket("removed", diff.removed),
         },
         "results": [
             {

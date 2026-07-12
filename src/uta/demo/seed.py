@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.analyze.flakiness import recompute_flaky_flags
@@ -69,10 +69,14 @@ def _seed_control_state(
     **ingest jobs** — one done, one errored — and one **quarantined build** (issue #51) so every
     panel renders populated. The store is ephemeral and re-seeded per process, so this is rebuilt
     identically on every restart.
+
+    Idempotent (issue #122): the fixed-PK rows are ``merge``d (upsert) and the previous seed's
+    auto-PK ingest jobs are dropped before re-inserting, so re-seeding a persistent store
+    (``uta seed-demo``) converges instead of raising duplicate-PK errors.
     """
     last = builds[-1]
     with session_scope(session_factory) as session:
-        session.add(
+        session.merge(
             PollerHeartbeat(
                 id=1,
                 last_poll_at=anchor - timedelta(minutes=4),
@@ -84,7 +88,7 @@ def _seed_control_state(
         )
         # A build the poller gave up on: malformed JUnit payload, quarantined after 3 failing
         # ticks — shows the quarantine table with the "quarantined" badge and its recovery hint.
-        session.add(
+        session.merge(
             BuildQuarantine(
                 build_number=builds[0] - 2,
                 attempts=3,
@@ -98,11 +102,14 @@ def _seed_control_state(
         )
         # Overrides in effect — demonstrate the badge/Revert without perturbing the seeded
         # triage/flaky numbers (kb_top_k only widens how many similar KB cases a test page lists).
-        session.add(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
+        session.merge(SettingOverride(key="kb_top_k", value="8", updated_by=_DEMO_ACTOR))
         # Drop the row cap below a demo run's 32 result rows so the run page's server-side
         # pagination (issue #52) is visible in the live demo. Triage buckets are far smaller, so
         # they render unchanged.
-        session.add(SettingOverride(key="ui_row_limit", value="20", updated_by=_DEMO_ACTOR))
+        session.merge(SettingOverride(key="ui_row_limit", value="20", updated_by=_DEMO_ACTOR))
+        # The ingest jobs are auto-PK, so a re-seed would duplicate them — drop the previous
+        # seed's rows (identifiable by the demo actor) before inserting.
+        session.execute(delete(IngestJob).where(IngestJob.requested_by == _DEMO_ACTOR))
         session.add(
             IngestJob(
                 build_start=builds[0],
