@@ -8,6 +8,8 @@ marker), so CI executes them on every PR.
 
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -463,6 +465,71 @@ def test_timezone_record_exercises_the_trace_clamp(session_factory):
     # The padding frames are library frames — the signature (and the KB similarity family built
     # on it) must stay based on the in-tree frame + exception line only.
     assert "site-packages" in trace
+
+
+def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
+    """Issue #157: the demo's plain facts are pivots — owner and predicted-cause cells in the
+    triage queue, the run results' owner column, the flaky leaderboard's owner and the search
+    pick-list's suite/owner all deep-link to the triage queue pre-filtered on that one value."""
+    from uta.web.app import create_app
+
+    client = TestClient(create_app(session_factory=session_factory))
+    row = next(
+        r for r in queue["new"] if r["owner"] and r["test_id"].endswith("test_invoice_rounding")
+    )
+    # Owner is now the main developer (#114) — a name that may contain spaces, so the pivot URL is
+    # URL-encoded (e.g. "M. Weber" -> "owner=M.+Weber"), matching pivot_url()/urlencode.
+    owner_q = urlencode({"owner": row["owner"]})
+
+    triage_page = client.get("/").text
+    assert f'<a class="pivot-link" href="/?{owner_q}"' in triage_page
+    assert f'<a class="pivot-link" href="/?cause={row["predicted_cause"]}"' in triage_page
+
+    # Build 612's results include the owned invoice-rounding failure -> owner column pivots.
+    run_page = client.get(f"/runs/{FIRST_BUILD + 11}").text
+    assert f'<a class="pivot-link" href="/?{owner_q}"' in run_page
+
+    flaky_page = client.get("/flaky").text
+    assert 'class="pivot-link" href="/?owner=' in flaky_page
+
+    search_page = client.get("/search?q=test_").text  # many matches -> the pick-list renders
+    assert 'class="pivot-link" href="/?suite=' in search_page
+    assert 'class="pivot-link" href="/?owner=' in search_page
+
+    # Following an owner pivot lands on the queue filtered to just that owner (the chip names it).
+    filtered = client.get(f"/?owner={row['owner']}").text
+    assert f"owner: {row['owner']}" in filtered
+
+
+def test_demo_run_page_failed_count_pivots_to_failures_only(session_factory):
+    """Issue #157: the run header's non-zero failed total deep-links to the failures-only results
+    view, whose heading then names the active filter with filtered-of-total counts."""
+    from uta.web.app import create_app
+
+    build = FIRST_BUILD + 11
+    run = views.run_summary(session_factory(), build, limit=500)
+    failed = run["totals"]["failed"]
+    assert failed > 0
+    total = run["totals"]["passed"] + failed + run["totals"]["skipped"]
+
+    client = TestClient(create_app(session_factory=session_factory))
+    page = client.get(f"/runs/{build}").text
+    assert f'href="/runs/{build}?failures_only=1#results">{failed} failed</a>' in page
+    filtered = client.get(f"/runs/{build}?failures_only=1").text
+    assert f"Results — failures only ({failed} of {total})" in filtered
+
+
+def test_demo_search_and_kb_empty_states_cross_link(session_factory):
+    """Issue #157: a missed search hands its query to the other index instead of dead-ending."""
+    from uta.web.app import create_app
+
+    client = TestClient(create_app(session_factory=session_factory))
+    page = client.get("/search", params={"q": "zz_no_such_test"}).text
+    assert "No tests match" in page
+    assert 'href="/kb?q=zz_no_such_test"' in page
+    kb_page = client.get("/kb", params={"q": "zzz qqq entirely unlike any seeded failure"}).text
+    assert "No similar past failures" in kb_page
+    assert 'href="/search?q=zzz%20qqq%20entirely%20unlike%20any%20seeded%20failure"' in kb_page
 
 
 def test_demo_app_test_record_route():

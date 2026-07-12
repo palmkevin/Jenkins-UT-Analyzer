@@ -34,7 +34,8 @@
         {% if r.flaky %}<span class="badge flaky">flaky</span>{% endif %}
         {% if r.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
       </td>
-      <td>{{ r.owner or "—" }}</td>
+      {#- Owner pivots into the triage queue filtered on just that owner (issue #157). -#}
+      <td>{{ ui.pivot(r.owner, r.owner_url) }}</td>
       <td class="count">{{ "%.2f"|format(r.score) }}</td>
       <td>{{ r.transitions }}</td>
       <td>{{ r.runs_in_window }}</td>

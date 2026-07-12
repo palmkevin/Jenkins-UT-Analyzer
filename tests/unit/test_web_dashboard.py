@@ -974,7 +974,143 @@ def test_run_failures_only_filters_results_and_pagination(session_factory, monke
     assert "Results (300)" in all_page  # 150 tests x 2 tracks
 
     failing_page = client.get("/runs/1?failures_only=1").text
-    assert "Results (240)" in failing_page  # 120 failing tests x 2 tracks
+    # The heading names the active filter (issue #157): filtered count of full result-row total.
+    assert "Results — failures only (240 of 300)" in failing_page
     assert failing_page.count('<td class="FAILED">') == 100
     assert "checked" in failing_page
     assert 'href="?page=2&amp;failures_only=1#results"' in failing_page
+
+
+# ── pivot links, actionable failed count, cross-referring empty states (#157) ──
+
+
+@pytest.fixture
+def pivots_client(session_factory):
+    """One classified failing test with an owner ("alpha"/AB) plus a passer ("beta")."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_run(s, r1, baseline=None)
+        ident = get_identity(s, "alpha")
+        # Owner = the test's main developer (#114); the triage and run-results tables both read it
+        # from the identity, so a single assignment drives every surface.
+        ident.main_developer = "AB"
+        s.add(
+            Classification(
+                episode_id=ident.lifecycle.current_episode_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+            )
+        )
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_owner_and_cause_cells_pivot_to_filtered_queue(pivots_client):
+    page = pivots_client.get("/").text
+    # Each fact links to the queue filtered on just that one value — never the current view's
+    # other filters — with the subtle pivot styling.
+    assert '<a class="pivot-link" href="/?owner=AB"' in page
+    assert '<a class="pivot-link" href="/?cause=CODE_CHANGE"' in page
+    assert ">AB</a>" in page and ">CODE_CHANGE</a>" in page
+
+
+def test_still_failing_cause_pivots_until_a_reason_is_written(pivots_client, session_factory):
+    ident_id = _identity_id(session_factory, "alpha")
+    pivots_client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    page = pivots_client.get("/").text
+    # Acknowledged and bare of a human reason: the Cause / reason cell shows the pivot.
+    assert '<a class="pivot-link" href="/?cause=CODE_CHANGE"' in page
+    # Once a human reason is written it wins the cell — plain text, no cause pivot left.
+    with session_scope(session_factory) as s:
+        ep_id = get_identity(s, "alpha").lifecycle.current_episode_id
+    pivots_client.post(
+        f"/episodes/{ep_id}/attribute",
+        data={"reason_text": "known outage"},
+        headers={"referer": "/"},
+    )
+    page = pivots_client.get("/").text
+    assert "known outage" in page
+    assert 'href="/?cause=CODE_CHANGE"' not in page
+
+
+def test_run_results_owner_pivots_and_failed_count_links(pivots_client):
+    page = pivots_client.get("/runs/1").text
+    assert '<a class="pivot-link" href="/?owner=AB"' in page  # results owner column
+    # The header's failed total (1 failing test x 2 tracks) deep-links to the filtered results.
+    assert '<a class="pivot-link" href="/runs/1?failures_only=1#results">2 failed</a>' in page
+
+
+def test_run_failed_count_stays_plain_at_zero(session_factory):
+    with session_scope(session_factory) as s:
+        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/runs/1").text
+    assert "0 failed" in page
+    assert 'href="/runs/1?failures_only=1#results"' not in page
+
+
+def test_run_results_heading_names_the_active_filter(pivots_client):
+    all_page = pivots_client.get("/runs/1").text
+    assert "Results (4)" in all_page  # 2 tests x 2 tracks, unfiltered heading unchanged
+    assert "failures only" not in all_page
+    filtered = pivots_client.get("/runs/1?failures_only=1").text
+    assert "Results — failures only (2 of 4)" in filtered
+    # The checkbox applies itself on change (issue #77's instant-filter pattern); the Apply
+    # button stays as the no-JS fallback.
+    assert 'onchange="this.form.submit()"' in filtered
+    assert ">Apply</button>" in filtered
+
+
+def test_flaky_leaderboard_owner_pivots(session_factory):
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    with session_scope(session_factory) as s:
+        prev = None
+        for i, char in enumerate("PFPFPF"):  # oscillating -> lands on the leaderboard
+            run = make_run(
+                s,
+                i + 1,
+                {"flappy": "FAILED" if char == "F" else "PASSED"},
+                started_at=now - timedelta(days=6 - i),
+            )
+            apply_run(s, run, baseline=prev)
+            prev = run
+        get_identity(s, "flappy").main_developer = "KP"
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/flaky").text
+    assert '<a class="pivot-link" href="/?owner=KP"' in page
+
+
+def test_search_results_suite_and_owner_pivot_with_encoding(session_factory):
+    with session_scope(session_factory) as s:
+        for name in ("ut_a.TestClass.test_alpha_one", "ut_a.TestClass.test_alpha_two"):
+            ident = get_identity(s, name)
+            ident.suite = "ut a&b"  # forces visible URL-encoding in the pivot href
+            ident.main_developer = "KP"
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search?q=alpha").text
+    assert '<a class="pivot-link" href="/?suite=ut+a%26b"' in page
+    assert '<a class="pivot-link" href="/?owner=KP"' in page
+    # The cross-link to the KB belongs to the *empty* state only.
+    assert "Search the knowledge base" not in page
+
+
+def test_search_empty_state_cross_links_to_kb(session_factory):
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search", params={"q": "boom & crash"}).text
+    assert "No tests match" in page
+    assert 'href="/kb?q=boom%20%26%20crash"' in page
+    assert "Search the knowledge base for this text" in page
+
+
+def test_kb_empty_state_cross_links_to_search(session_factory):
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/kb", params={"q": "boom & crash"}).text
+    assert "No similar past failures" in page
+    assert 'href="/search?q=boom%20%26%20crash"' in page
+    assert "Search tests by name for this text" in page
+
+
+def test_empty_state_cross_links_absent_without_query(session_factory):
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    assert "Search the knowledge base" not in client.get("/search").text
+    assert "Search tests by name" not in client.get("/kb").text

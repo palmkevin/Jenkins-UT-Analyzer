@@ -22,6 +22,15 @@
   {%- endif -%}
 {%- endmacro %}
 
+{#- Clickable pivot fact (issue #157): an owner / suite / predicted-cause value rendered as a
+    subtle link to the triage queue pre-filtered on just that one value. `url` comes pre-built
+    from the view layer (views.pivot_url) — it is None for an empty value, in which case the
+    plain `fallback` text renders instead. Single-filter by design: the pivot answers "show me
+    everything with this value", never "add it to my current view". -#}
+{% macro pivot(value, url, fallback="—") -%}
+  {%- if url -%}<a class="pivot-link" href="{{ url }}" title="Show the triage queue filtered to {{ value }}">{{ value }}</a>{%- else -%}{{ fallback }}{%- endif -%}
+{%- endmacro %}
+
 {#- Per-test pass/fail sparkline (issue #53) — one bar per recent run, oldest-first, red = failed.
     Failed bars are full-height, passed bars shorter (bottom-aligned): a second, non-hue channel so
     the signal survives color-vision deficiency (issue #144). `spark` is the geometry dict built by
