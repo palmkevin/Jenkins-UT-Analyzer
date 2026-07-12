@@ -717,6 +717,25 @@ def test_test_search_empty_query_returns_nothing(session_factory):
         assert views.test_search(s, "   ") == []
 
 
+def test_test_search_positive_limit_caps_results(session_factory):
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=2)
+        assert len(results) == 2
+
+
+def test_test_search_limit_zero_disables_the_cap(session_factory):
+    """``ui_row_limit = 0`` means "no cap" everywhere — the search must not emit ``LIMIT 0``."""
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=0)
+        assert len(results) == 3
+
+
 # ── bulk actions (issue #63) ─────────────────────────────────────────────────
 
 
