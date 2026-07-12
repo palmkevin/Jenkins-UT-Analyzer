@@ -19,7 +19,9 @@ history whose likely culprits visibly differ — and ``test_pdf_render`` shows t
 it, but the tier-3 module match outscores the tier-2 component mention, so it classifies as
 CODE_CHANGE (with a visible confidence) instead of UNKNOWN; the seed Confirms that suggestion and
 the timezone test's seeded attribution is a correction, so the control panel's AI-accuracy metric
-shows both verdict kinds.
+shows both verdict kinds. Because the *real* classifier runs during seeding, that tie-break episode
+also carries the fullest evidence payload (both top matches, the tie-break, the confidence inputs),
+so its record page showcases the collapsed "Why this prediction" block (issue #159).
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``

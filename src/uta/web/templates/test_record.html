@@ -103,6 +103,19 @@
       {% if ep.confidence is not none %} <span class="badge" title="Deterministic confidence: relevance-score gap + KB provenance">confidence {{ "%.2f"|format(ep.confidence) }}</span>{% endif %}
       {% if ep.suggested_contact %} · suggested contact {{ ep.suggested_contact }}{% endif %}
     </p>
+    {# The classifier's persisted evidence, flattened view-side into readable label/value rows
+       (issue #159) — the justification behind the prediction + confidence badge above, collapsed
+       by default. Episodes without evidence render no shell at all. #}
+    {% if ep.evidence_items %}
+    <details class="card">
+      <summary>Why this prediction</summary>
+      <dl class="evidence">
+        {% for label, value in ep.evidence_items %}
+        <dt>{{ label }}</dt><dd>{{ value }}</dd>
+        {% endfor %}
+      </dl>
+    </details>
+    {% endif %}
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
     {% if (ep.suggested_contact or ep.llm_hypothesis) %}
     <form method="post" action="/episodes/{{ ep.id }}/confirm">

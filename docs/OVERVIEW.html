@@ -513,7 +513,9 @@
       relevance scores favored the winning kind and a term for the strongest knowledge-base provenance
       already attached to this failure's signature — validated human knowledge feeding back into future
       predictions (see <a href="#learning">Learning loop</a>). The evidence (including the tie-break,
-      top matches and confidence inputs) stands on its own; the human attributes the final cause.</p>
+      top matches and confidence inputs) stands on its own — surfaced per episode on the per-test
+      record as a collapsed <b>“Why this prediction”</b> panel — and the human attributes the final
+      cause.</p>
     </div>
     <div class="card">
       <h3>Flakiness</h3>
@@ -552,7 +554,9 @@
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
   mention, most relevant first — rather than one flat run-wide list; see Classification above), the
-  predicted cause's <b>confidence</b> badge, ownership, linked ZEPHYR test case(s), LLM hypothesis,
+  predicted cause's <b>confidence</b> badge with a per-episode, collapsed <b>“Why this prediction”</b>
+  breakdown (infra-error flag, candidate counts, top code/data match with author and score, the
+  tie-break, the confidence-formula inputs), ownership, linked ZEPHYR test case(s), LLM hypothesis,
   error type, stack trace — clamped past 15 lines behind a “Show full trace” toggle, with a
   copy-to-clipboard button) plus the editable fields the human owns
   — <b>causing person</b>,
