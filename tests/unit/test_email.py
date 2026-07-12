@@ -86,6 +86,34 @@ def test_recovery_notice_only_when_toggled_and_green(session_factory):
     assert "back to green" in msg.subject
 
 
+def test_no_recovery_notice_when_already_green(session_factory):
+    """A green run after a green baseline is *still* green, not *back to* green — no email."""
+    with session_factory() as s:
+        _process(s, 1, {"a.test": "PASSED"})
+        run = _process(s, 2, {"a.test": "PASSED"})
+        s.commit()
+        assert build_regression_report(s, run, RCPT, recovery_notice=True) is None
+
+
+def test_no_recovery_notice_on_first_ever_green_run(session_factory):
+    """An all-green first run has no baseline, so nothing transitioned — no email."""
+    with session_factory() as s:
+        run = _process(s, 1, {"a.test": "PASSED"})
+        s.commit()
+        assert build_regression_report(s, run, RCPT, recovery_notice=True) is None
+
+
+def test_recovery_notice_when_baseline_failure_was_removed(session_factory):
+    """A baseline failure absent this run (test deleted) still turns the suite green — notice."""
+    with session_factory() as s:
+        _process(s, 1, {"a.test": "FAILED", "b.test": "PASSED"})
+        run = _process(s, 2, {"b.test": "PASSED"})  # a.test removed
+        s.commit()
+        msg = build_regression_report(s, run, RCPT, recovery_notice=True)
+    assert msg is not None
+    assert "back to green" in msg.subject
+
+
 def test_dashboard_links_when_base_url_set(session_factory):
     """Each new failure links its per-test record; the run summary is linked too (#108)."""
     with session_factory() as s:
