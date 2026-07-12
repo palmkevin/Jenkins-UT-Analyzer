@@ -33,6 +33,7 @@ from uta.ingest.unittest_log import parse_unittest_log
 from uta.ingest.ut_report import TestCaseResult, parse_test_report
 from uta.ingest.wfapi import (
     DEFAULT_UNITTEST_SUITES,
+    FINISHED_STAGE_STATUSES,
     LogStage,
     find_log_step_node,
     find_unittest_stages,
@@ -186,7 +187,9 @@ def ingest_build(
     ``SMB Pricing``/``Transform``, ``ITF Highlevel``, ``Uniface deploy unit tests`` by default — see
     ``unittest_suites``) are also fetched via ``wfapi/log`` and parsed into the same per-(test,
     track) results, so they share the JUnit tests' identity/lifecycle/classification path. Off by
-    default, so the devUTs-only ingest is unchanged unless the caller opts in.
+    default, so the devUTs-only ingest is unchanged unless the caller opts in. A selected stage
+    that didn't run to the end (its wfapi status is not a finished one) marks the run incomplete,
+    mirroring the devUTs shard guard; a suite stage absent from the payload has no effect.
     """
     t_total = time.perf_counter()
 
@@ -205,11 +208,12 @@ def ingest_build(
         wfapi_payload = wfapi_f.result()
 
         stage_futures: list[Future[tuple[LogStage, dict]]] = []
+        log_stages: list[LogStage] = []
         if ingest_unittest_logs:
             suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
+            log_stages = find_unittest_stages(wfapi_payload, suites)
             stage_futures = [
-                pool.submit(_fetch_stage_log, client, build, stage)
-                for stage in find_unittest_stages(wfapi_payload, suites)
+                pool.submit(_fetch_stage_log, client, build, stage) for stage in log_stages
             ]
 
         meta = meta_f.result()
@@ -252,7 +256,16 @@ def ingest_build(
         run.url = meta.get("url", "")
         run.started_at = win_start
         run.finished_at = win_end
-        run.complete = timing.is_complete(expected_shards)
+        # Completeness spans both ingest sources: the devUTs JUnit shards (via is_complete) *and*
+        # every selected unittest console-log stage. A stage cut short (ABORTED, NOT_EXECUTED, …)
+        # yields a truncated log that parses to a partial case list — marking the run complete
+        # would invent phantom removed/newly-fixed transitions and poison the next baseline,
+        # exactly the issue-#83 failure mode the shard guard prevents. A suite stage absent from
+        # the wfapi payload never affects completeness (job configuration varies over history);
+        # the truncated results are still persisted below — analysis is gated on run.complete.
+        run.complete = timing.is_complete(expected_shards) and all(
+            stage.status in FINISHED_STAGE_STATUSES for stage in log_stages
+        )
         run.total_passed = sum(1 for c in cases if c.status in _PASSED)
         run.total_failed = sum(1 for c in cases if c.status in _FAILED)
         run.total_skipped = sum(1 for c in cases if c.status == "SKIPPED")
