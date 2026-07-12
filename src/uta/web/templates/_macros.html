@@ -1,13 +1,14 @@
 {#- Shared UI macros. Import with: {% import "_macros.html" as ui %} -#}
 
 {#- "Load all N Tests" hint (issue #19). Rendered under a section whose rows were capped for
-    responsiveness; the link re-requests the page with this section added to ?expand= so it renders
-    in full (other sections stay capped). `expand` is the current list of expanded section keys. -#}
-{% macro more_hint(section, total, shown, expand) -%}
+    responsiveness; `url` comes pre-built from the view layer (views.triage_expand_urls) so the
+    link re-requests the page with this section added to ?expand= while the active filters and
+    sort survive (issue #77's URL-is-state contract; other sections stay capped). -#}
+{% macro more_hint(total, shown, url) -%}
   {%- if total > shown -%}
   <p class="more">
     Showing first {{ shown }} of {{ total }}.
-    <a href="?expand={{ (expand + [section]) | unique | join(',') }}#{{ section }}">Load all {{ total }} Tests</a>
+    <a href="{{ url }}">Load all {{ total }} Tests</a>
   </p>
   {%- endif -%}
 {%- endmacro %}
