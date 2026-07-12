@@ -87,6 +87,68 @@ def test_recently_fixed_window_includes_recent_excludes_old(session_factory):
         assert "old" not in names
 
 
+# ── triage error snippets (issue #145) ────────────────────────────────────────
+
+_SNIPPET_STACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "AssertionError: values differ: expected 1 got 2"
+)
+
+
+def test_triage_rows_carry_error_snippet_from_exception_line(session_factory):
+    """The snippet is the trace's closing exception line — errorDetails is often 'test failure'."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"t": "FAILED"},
+            error_type={"t": "ASSERTION"},
+            errors={"t": ("test failure", _SNIPPET_STACK)},
+        )
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_type"] == "ASSERTION"
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_survives_into_still_failing_bucket(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (None, _SNIPPET_STACK)})
+        apply_run(s, r1, baseline=None)
+        actions.acknowledge(s, get_identity(s, "t").id, "alice")
+        row = views.triage_queue(s)["still_failing"][0]
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_falls_back_to_first_details_line(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom happened\nsecond line", None)})
+        apply_run(s, r1, baseline=None)
+        assert views.triage_queue(s)["new"][0]["error_snippet"] == "boom happened"
+
+
+def test_triage_snippet_truncated_to_one_sane_line(session_factory):
+    long_msg = "x" * 400
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (long_msg, None)})
+        apply_run(s, r1, baseline=None)
+        snippet = views.triage_queue(s)["new"][0]["error_snippet"]
+        assert snippet.endswith("…")
+        assert len(snippet) <= 160
+        assert "\n" not in snippet
+
+
+def test_triage_snippet_none_without_error_text(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_snippet"] is None
+        assert row["error_type"] is None
+
+
 # ── long-list capping (issue #19) ─────────────────────────────────────────────
 
 
@@ -241,7 +303,10 @@ def test_test_record_exposes_sparkline_history(session_factory):
         r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
         apply_run(s, r1, baseline=None)
         rec = views.test_record(s, get_identity(s, "t").id)
-    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+    # A failed bar spans the full height (y=0) — the non-hue channel of issue #144.
+    assert rec["spark"].bars == [
+        {"x": 0.0, "y": 0.0, "width": 120.0, "height": 22.0, "failed": True, "build": 1}
+    ]
 
 
 def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):
@@ -715,6 +780,25 @@ def test_test_search_empty_query_returns_nothing(session_factory):
     with session_scope(session_factory) as s:
         assert views.test_search(s, "") == []
         assert views.test_search(s, "   ") == []
+
+
+def test_test_search_positive_limit_caps_results(session_factory):
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=2)
+        assert len(results) == 2
+
+
+def test_test_search_limit_zero_disables_the_cap(session_factory):
+    """``ui_row_limit = 0`` means "no cap" everywhere — the search must not emit ``LIMIT 0``."""
+    with session_scope(session_factory) as s:
+        for n in range(3):
+            get_identity(s, f"ut_pricing.pr_engine.TestClass.test_margin_{n}")
+
+        results = views.test_search(s, "margin", limit=0)
+        assert len(results) == 3
 
 
 # ── bulk actions (issue #63) ─────────────────────────────────────────────────

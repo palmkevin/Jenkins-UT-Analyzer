@@ -341,6 +341,42 @@ def test_reseeding_the_same_store_converges():
     assert (heartbeats, quarantines, overrides, jobs) == control_state(once)
 
 
+def test_triage_rows_carry_error_snippets(queue):
+    """Issue #145: every failing row in the New bucket shows its one-line exception snippet, and
+    the still-failing timezone test shows the message the deep-trace clamp example builds on."""
+    for row in queue["new"]:
+        assert row["error_snippet"], row["test_id"]
+    snippets = {r["test_id"]: r["error_snippet"] for r in queue["new"]}
+    assert (
+        snippets["ut_billing.bi_round.TestClass.test_invoice_rounding"]
+        == "AssertionError: values differ: expected 100 got 101"
+    )
+    tz = next(
+        r
+        for r in queue["still_failing"]
+        if r["test_id"] == "ut_core.co_time.TestClass.test_timezone_convert"
+    )
+    assert tz["error_snippet"] == "AssertionError: values differ for LORDER: expected 2 got 1"
+
+
+def test_timezone_record_exercises_the_trace_clamp(session_factory):
+    """Issue #145: the seeded deep trace exceeds the 15-line clamp so the live demo's record
+    page demonstrates the "Show full trace" toggle (clamping is client-side; full text ships)."""
+    session = session_factory()
+    ident_id = session.scalar(
+        select(TestIdentity.id).where(
+            TestIdentity.canonical_name == "ut_core.co_time.TestClass.test_timezone_convert"
+        )
+    )
+    record = views.test_record(session, ident_id)
+    current = record["episodes"][0]
+    trace = current["failure"]["error_stack_trace"]
+    assert len(trace.splitlines()) > 15
+    # The padding frames are library frames — the signature (and the KB similarity family built
+    # on it) must stay based on the in-tree frame + exception line only.
+    assert "site-packages" in trace
+
+
 def test_demo_app_test_record_route():
     from uta.web.app import create_app
 
