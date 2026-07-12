@@ -242,10 +242,21 @@ def ingest_build(
     with session_scope(session_factory) as session:
         t = time.perf_counter()
         run = session.scalar(select(Run).where(Run.build_number == build))
+        stale_signature_ids: set[int] = set()
         if run is None:
             run = Run(build_number=build)
             session.add(run)
         else:
+            # Capture the signatures the old results linked to BEFORE the idempotent delete: a
+            # signature whose failure vanished from the re-ingested content gains no new link, so
+            # the KB store must still recompute it (else its aggregates stay permanently stale).
+            stale_signature_ids = set(
+                session.scalars(
+                    select(TestResult.signature_id.distinct()).where(
+                        TestResult.run_id == run.id, TestResult.signature_id.is_not(None)
+                    )
+                )
+            )
             run.results.clear()  # idempotent re-ingest
             run.shards.clear()
             run.code_changes.clear()
@@ -344,7 +355,7 @@ def ingest_build(
         # KB: a normalized failure signature per failing result (recurrence key). Recorded for
         # any run (the signatures are facts about the failures), idempotent on re-ingest.
         t = time.perf_counter()
-        record_signatures_for_run(session, run)
+        record_signatures_for_run(session, run, stale_signature_ids=stale_signature_ids)
         t_signatures = time.perf_counter() - t
 
         if run.complete:

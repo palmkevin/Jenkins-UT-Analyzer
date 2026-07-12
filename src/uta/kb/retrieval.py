@@ -54,6 +54,18 @@ def _is_postgres(session: Session) -> bool:
     return session.get_bind().dialect.name == "postgresql"
 
 
+def _strongest_provenance(attribution: Attribution) -> str:
+    """The stronger of an attribution's two provenance columns (cause / reason).
+
+    A triager may validate only the *cause* (``causing_person``) — that conclusion is human
+    knowledge even while ``reason_provenance`` stays unconfirmed, so both columns count.
+    """
+    return max(
+        (attribution.cause_provenance, attribution.reason_provenance),
+        key=lambda p: PROVENANCE_WEIGHT.get(p, 0),
+    )
+
+
 def _best_attribution(session: Session, signature_id: int) -> Attribution | None:
     """The strongest *validated* conclusion attached to a signature (provenance-weighted)."""
     attrs = session.scalars(
@@ -67,7 +79,7 @@ def _best_attribution(session: Session, signature_id: int) -> Attribution | None
     return max(
         attrs,
         key=lambda a: (
-            PROVENANCE_WEIGHT.get(a.reason_provenance, 0),
+            PROVENANCE_WEIGHT.get(_strongest_provenance(a), 0),
             a.validated_at or a.created_at,
         ),
     )
@@ -89,13 +101,7 @@ def strongest_provenance_weight(session: Session, signature_id: int | None) -> i
         )
     ).all()
     return max(
-        (
-            max(
-                PROVENANCE_WEIGHT.get(a.cause_provenance, 0),
-                PROVENANCE_WEIGHT.get(a.reason_provenance, 0),
-            )
-            for a in attrs
-        ),
+        (PROVENANCE_WEIGHT.get(_strongest_provenance(a), 0) for a in attrs),
         default=0,
     )
 
@@ -112,6 +118,7 @@ def exact_recurrence(
 
 def _to_case(session: Session, sig: FailureSignature, similarity: float) -> SimilarCase:
     best = _best_attribution(session, sig.id)
+    provenance = _strongest_provenance(best) if best else None
     return SimilarCase(
         signature_id=sig.id,
         identity_id=sig.test_identity_id,
@@ -121,8 +128,8 @@ def _to_case(session: Session, sig: FailureSignature, similarity: float) -> Simi
         similarity=round(similarity, 4),
         reason_text=best.reason_text if best else None,
         causing_person=best.causing_person if best else None,
-        provenance=best.reason_provenance if best else None,
-        provenance_weight=PROVENANCE_WEIGHT.get(best.reason_provenance, 0) if best else 0,
+        provenance=provenance,
+        provenance_weight=PROVENANCE_WEIGHT.get(provenance, 0),
     )
 
 
