@@ -363,9 +363,7 @@ _CHIP_LABELS = {
 }
 
 
-def triage_url(
-    filters: dict[str, str], sort: str | None, expand: Collection[str] = ()
-) -> str:
+def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str] = ()) -> str:
     """The triage-queue URL encoding the given filter set + sort + expanded sections — the
     shareable state."""
     params = {k: v for k, v in filters.items() if v}
