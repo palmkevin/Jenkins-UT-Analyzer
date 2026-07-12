@@ -173,10 +173,96 @@ def test_run_summary_page_shows_diff_and_results(client):
     assert "alpha" in resp.text
 
 
+def test_runs_counts_carry_non_color_status_glyphs(client):
+    """Colorblind accessibility (issue #144): pass/fail counts pair a glyph with the hue."""
+    page = client.get("/runs").text
+    glyph = '<span class="status-glyph" aria-hidden="true">'
+    assert f'<td class="text-end PASSED">{glyph}✓</span>' in page
+    assert f'<td class="text-end FAILED">{glyph}✕</span>' in page
+    assert f'<td class="text-end SKIPPED">{glyph}○</span>' in page
+
+
+def test_runs_zero_counts_render_undecorated(session_factory):
+    """A clean run shows plain zeros in the conditional columns — no failure glyph anywhere."""
+    with session_scope(session_factory) as s:
+        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+    clean = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = clean.get("/runs").text
+    assert 'aria-hidden="true">✕</span>' not in page  # no failures/regressions → no failure glyph
+    assert '<td class="text-end">0</td>' in page  # zero failed is a plain, uncolored number
+
+
+def test_timestamps_render_with_explicit_utc_label(client):
+    """Timezone clarity (issue #144): |ts renders ' UTC' text with the ISO offset on hover."""
+    page = client.get("/runs/1").text
+    assert " UTC</span>" in page
+    assert 'title="2026-06-01T01:00:00+00:00"' in page  # run 1 starts at _EPOCH + 1h
+
+
 def test_unknown_test_record_is_graceful(client):
     resp = client.get("/tests/99999")
     assert resp.status_code == 200
     assert "No record" in resp.text
+
+
+# ── triage error snippets + trace clamp/copy (issue #145) ──────────────────────
+
+_TRACE_TMPL = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "{exc}"
+)
+
+
+@pytest.fixture
+def errors_client(session_factory):
+    """One new + one acknowledged failing test, both with real error text."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("test failure", _TRACE_TMPL.format(exc="AssertionError: 7 != 9")),
+                "gamma": ("test failure", _TRACE_TMPL.format(exc="KeyError: 'MSH'")),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    ident_id = _identity_id(session_factory, "gamma")
+    resp = client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    return client
+
+
+def test_triage_tables_show_error_snippets(errors_client):
+    page = errors_client.get("/").text
+    new_idx = page.index('id="new"')
+    still_idx = page.index('id="still_failing"')
+    fixed_idx = page.index('id="recently_fixed"')
+    # New bucket: alpha's exception line as a muted one-liner under the test name.
+    assert 'class="error-snippet"' in page[new_idx:still_idx]
+    assert "AssertionError: 7 != 9" in page[new_idx:still_idx]
+    # Still-failing bucket: gamma's snippet (HTML-escaped quotes around MSH).
+    assert 'class="error-snippet"' in page[still_idx:fixed_idx]
+    assert "KeyError:" in page[still_idx:fixed_idx]
+
+
+def test_test_record_trace_has_clamp_hook_and_copy_button(session_factory):
+    """The full >15-line trace ships in the HTML (no-JS fallback) with clamp + copy hooks."""
+    deep = "\n".join(f"    frame_{i}()" for i in range(20))
+    stack = _TRACE_TMPL.format(exc=deep + "\nValueError: bottom of a deep stack")
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"}, errors={"alpha": ("test failure", stack)})
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
+    assert 'data-clamp="15"' in page
+    assert 'data-copy-target="trace-' in page
+    assert "Copy trace" in page
+    assert "ValueError: bottom of a deep stack" in page  # full text present pre-clamp
+    assert "/static/trace.js" in page  # the clamp/copy behaviour is wired on every page
 
 
 # ── long-list capping (issue #19) ──────────────────────────────────────────────
@@ -206,6 +292,34 @@ def test_triage_expand_renders_every_row(many_failures_client):
     assert page.count('href="/tests/') == 150
     # Fully expanded → no residual hint.
     assert "Load all 150 Tests" not in page
+
+
+@pytest.fixture
+def many_owned_failures_client(session_factory, monkeypatch):
+    """150 new failing tests owned by "KP" plus one by "ZZ", capped at 100 rows per section."""
+    monkeypatch.setenv("UI_ROW_LIMIT", "100")
+    with session_scope(session_factory) as s:
+        names = [f"t{i:04d}" for i in range(150)] + ["zzz_unrelated"]
+        r1 = make_run(s, 1, {n: "FAILED" for n in names})
+        apply_run(s, r1, baseline=None)
+        for name in names:
+            get_identity(s, name).owner_initials = "ZZ" if name == "zzz_unrelated" else "KP"
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_expand_link_preserves_filters_and_sort(many_owned_failures_client):
+    # A filtered view promises the post-filter count; its "Load all" link must keep the filter
+    # and sort (issue #77's URL-is-state contract), only adding ?expand=.
+    page = many_owned_failures_client.get("/?owner=KP&sort=name").text
+    assert "not yet acknowledged (150)" in page
+    assert "Load all 150 Tests" in page
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new#new"' in page
+
+    # Following the link renders the *filtered* bucket in full — the other owner stays out.
+    expanded = many_owned_failures_client.get("/?owner=KP&sort=name&expand=new").text
+    assert expanded.count('href="/tests/') == 150
+    assert "Load all 150 Tests" not in expanded
+    assert "zzz_unrelated" not in expanded
 
 
 # ── run-results pagination (issue #52) ─────────────────────────────────────────
