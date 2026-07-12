@@ -94,9 +94,11 @@
            onchange="this.form.submit()" {% if filters.flaky %}checked{% endif %}>
     <label class="form-check-label small" for="filter-flaky">Flaky only</label>
   </div>
-  {# Sorting moved to the column headers (issue #77); the hidden field keeps ?sort= across
-     filter submissions so the whole state stays in the URL. #}
+  {# Sorting moved to the column headers (issue #77); the hidden fields keep ?sort= and the
+     ?expand=-ed sections (issue #151) across filter submissions so the whole state stays in the
+     URL. "Clear" deliberately resets everything, expand included — it links to the bare "/". #}
   {% if sort %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+  {% if expand %}<input type="hidden" name="expand" value="{{ expand | join(',') }}">{% endif %}
   <div class="col">
     <button class="btn btn-sm btn-primary" type="submit">Apply filters</button>
     <a class="btn btn-sm btn-outline-secondary" href="/">Clear</a>
@@ -117,7 +119,9 @@
 {% if not queue.new %}
   <p class="empty">Nothing waiting — the action queue is empty.</p>
 {% else %}
-<form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"></form>
+{# The ack forms carry the bucket's anchor (issue #150, same pattern as issue #143's episode
+   anchors): the PRG redirect lands back on this section instead of the top of the page. #}
+<form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"><input type="hidden" name="anchor" value="new"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-ack-new" aria-label="select all new failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>{{ sort_th("Owner", "owner") }}</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
@@ -131,6 +135,7 @@
       <td>{{ row.predicted_cause or "—" }}</td>
       <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
+          <input type="hidden" name="anchor" value="new">
           <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
         </form>
         {#- Signature-wide ack shows its blast radius up front (issue #152): the count is the
@@ -138,6 +143,7 @@
             acknowledge. Hidden when it's 1: it would add nothing over plain Acknowledge. -#}
         {% if row.signature_id and row.signature_ack_count > 1 %}
         <form method="post" action="/signatures/{{ row.signature_id }}/acknowledge">
+          <input type="hidden" name="anchor" value="new">
           <button class="btn btn-sm btn-outline-primary" type="submit"
                   title="Acknowledge all {{ row.signature_ack_count }} unacknowledged failing tests sharing this failure signature">
             Ack all w/ signature ({{ row.signature_ack_count }})
@@ -159,7 +165,7 @@
 {% if not queue.still_failing %}
   <p class="empty">No acknowledged failures in flight.</p>
 {% else %}
-<form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"></form>
+<form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"><input type="hidden" name="anchor" value="still_failing"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-attr-still" aria-label="select all still-failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>

@@ -322,6 +322,58 @@ def test_triage_expand_link_preserves_filters_and_sort(many_owned_failures_clien
     assert "zzz_unrelated" not in expanded
 
 
+def test_triage_filter_form_chips_and_sort_headers_preserve_expand(many_owned_failures_client):
+    # The mirror image of the test above (issue #151): once a section is expanded, changing the
+    # filters or the sort must not collapse it. The filter form carries ?expand= as a hidden
+    # field; the chip-remove and column-sort links keep it in their URLs. "Clear" stays a bare
+    # "/" — it deliberately resets everything, expand included.
+    page = many_owned_failures_client.get("/?owner=KP&expand=new").text
+    assert '<input type="hidden" name="expand" value="new">' in page
+    assert 'href="/?expand=new"' in page  # the owner chip's ✕ keeps the expansion
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new"' in page  # sort header keeps it too
+    assert 'href="/">Clear</a>' in page
+
+
+# ── run-diff capping (issue #151) ──────────────────────────────────────────────
+
+
+@pytest.fixture
+def many_regressions_client(session_factory):
+    """A run with 25 regressions vs its baseline — over the 20-row diff-bucket cap."""
+    names = [f"t{i:02d}" for i in range(25)]
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {n: "PASSED" for n in names})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {n: "FAILED" for n in names})
+        apply_run(s, r2, baseline=r1)
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_run_diff_headers_show_counts_and_cap_long_buckets(many_regressions_client):
+    page = many_regressions_client.get("/runs/2").text
+    # Every bucket header carries its count, populated or not.
+    assert "Regressions — new failures (25)" in page
+    assert "Newly fixed (0)" in page
+    assert "Still failing (0)" in page
+    assert "Removed (0)" in page
+    # The over-cap bucket is truncated behind a "Show all N" link to ?expand=<bucket>#diff.
+    assert 'href="/runs/2?expand=regressions#diff">Show all 25</a>' in page
+
+    # Following the link renders the 5 capped-away tests (the count still reads 25) and the
+    # residual hint disappears.
+    expanded = many_regressions_client.get("/runs/2?expand=regressions").text
+    assert expanded.count('href="/tests/') - page.count('href="/tests/') == 5
+    assert "Regressions — new failures (25)" in expanded
+    assert "Show all 25" not in expanded
+
+
+def test_run_diff_expand_link_preserves_query_string(many_regressions_client):
+    # The run page's other URL state (failures_only, results pagination) must survive the
+    # "Show all" round trip — same contract as the triage expand links.
+    page = many_regressions_client.get("/runs/2?failures_only=1").text
+    assert 'href="/runs/2?failures_only=1&amp;expand=regressions#diff">Show all 25</a>' in page
+
+
 # ── run-results pagination (issue #52) ─────────────────────────────────────────
 
 
@@ -431,16 +483,28 @@ def test_triage_filter_survives_acknowledge_round_trip(multi_owner_client, sessi
     assert resp.headers["location"] == "/?owner=AB"
 
 
+def test_acknowledge_redirect_carries_bucket_anchor(multi_owner_client, session_factory):
+    """The triage ack forms post the bucket's anchor (issue #150), so the PRG round trip lands
+    back on the section that was acted on instead of scrolling to the top of the page."""
+    ident_id = _identity_id(session_factory, "alpha")
+    resp = multi_owner_client.post(
+        f"/tests/{ident_id}/acknowledge", data={"anchor": "new"}, headers={"referer": "/?owner=AB"}
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/?owner=AB#new"
+
+
 def test_bulk_acknowledge_multiple_new_tests(multi_owner_client, session_factory):
     alpha_id = _identity_id(session_factory, "alpha")
     beta_id = _identity_id(session_factory, "beta")
     multi_owner_client.cookies.set("uta_actor", "dana")
     resp = multi_owner_client.post(
         "/tests/bulk/acknowledge",
-        data={"identity_ids": [str(alpha_id), str(beta_id)]},
+        data={"identity_ids": [str(alpha_id), str(beta_id)], "anchor": "new"},
         headers={"referer": "/"},
     )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#new"  # bulk-ack lands back on the New bucket (#150)
     with session_scope(session_factory) as s:
         for ident_id in (alpha_id, beta_id):
             lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
@@ -468,8 +532,11 @@ def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
 
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     client.cookies.set("uta_actor", "erin")
-    resp = client.post(f"/signatures/{sig_id}/acknowledge", headers={"referer": "/"})
+    resp = client.post(
+        f"/signatures/{sig_id}/acknowledge", data={"anchor": "new"}, headers={"referer": "/"}
+    )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#new"  # signature-ack lands back on the bucket (#150)
     with session_scope(session_factory) as s:
         for name in ("alpha", "beta"):
             lc = get_identity(s, name).lifecycle
@@ -593,10 +660,15 @@ def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     resp = client.post(
         "/episodes/bulk/attribute",
-        data={"episode_ids": [str(i) for i in ep_ids], "triage_status": "INVESTIGATING"},
+        data={
+            "episode_ids": [str(i) for i in ep_ids],
+            "triage_status": "INVESTIGATING",
+            "anchor": "still_failing",
+        },
         headers={"referer": "/"},
     )
     assert resp.status_code == 303
+    assert resp.headers["location"] == "/#still_failing"  # lands back on the bucket (#150)
     with session_scope(session_factory) as s:
         for name in ("alpha", "beta"):
             ep = get_identity(s, name).lifecycle.current_episode
@@ -684,6 +756,23 @@ def test_bulk_select_js_is_served(session_factory):
     assert resp.status_code == 200
     assert "data-bulk-select-all" in resp.text
     assert "indeterminate" in resp.text
+
+
+def test_triage_action_forms_carry_bucket_anchor_fields(both_buckets_page):
+    """Each triage action form posts its bucket's anchor (issue #150), same hidden-field pattern
+    as the test record's episode anchors (issue #143)."""
+    assert '<input type="hidden" name="anchor" value="new">' in both_buckets_page
+    assert '<input type="hidden" name="anchor" value="still_failing">' in both_buckets_page
+
+
+def test_form_busy_js_is_served_and_included(session_factory):
+    """Disable-on-submit (issue #150): the busy-state script is vendored and wired into the page."""
+    client = TestClient(create_app(session_factory=session_factory))
+    resp = client.get("/static/form-busy.js")
+    assert resp.status_code == 200
+    assert "spinner-border" in resp.text
+    assert "data-busy-label" in resp.text
+    assert '<script src="/static/form-busy.js" defer></script>' in client.get("/").text
 
 
 def test_search_redirects_on_unique_match(multi_owner_client, session_factory):

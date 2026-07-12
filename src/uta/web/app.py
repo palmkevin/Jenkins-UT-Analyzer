@@ -368,10 +368,11 @@ def create_app(
                 "queue": queue,
                 "filters": filters,
                 "sort": sort,
+                "expand": expand,
                 "options": options,
                 "last_run": last_run,
-                "chips": views.triage_filter_chips(filters, sort or None),
-                "sort_links": views.triage_sort_links(filters, sort or None),
+                "chips": views.triage_filter_chips(filters, sort or None, expand),
+                "sort_links": views.triage_sort_links(filters, sort or None, expand),
                 "expand_urls": views.triage_expand_urls(filters, sort or None, expand),
                 "return_qs": quote(queue_url, safe="") if queue_url != "/" else "",
             },
@@ -414,12 +415,31 @@ def create_app(
 
     @app.get("/runs/{build}", response_class=HTMLResponse)
     def run_view(request: Request, build: int, page: int = 1, failures_only: bool = False):
+        expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
             run = views.run_summary(
-                s, build, limit=cfg.ui_row_limit, page=page, failures_only=failures_only
+                s,
+                build,
+                limit=cfg.ui_row_limit,
+                page=page,
+                failures_only=failures_only,
+                expand=expand,
             )
-        return render(request, "run.html", {"run": run, "build": build}, cfg=cfg)
+        return render(
+            request,
+            "run.html",
+            {
+                "run": run,
+                "build": build,
+                # "Show all N" links for the capped diff buckets, built in the view layer so the
+                # rest of the query string (failures_only, page) survives (issue #151).
+                "diff_expand_urls": views.run_expand_urls(
+                    build, dict(request.query_params), expand
+                ),
+            },
+            cfg=cfg,
+        )
 
     @app.get("/flaky", response_class=HTMLResponse)
     def flaky_view(request: Request):
@@ -567,7 +587,7 @@ def create_app(
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.bulk_acknowledge(s, identity_ids, actor)
-        resp = back(request)
+        resp = back(request, anchor=str(form.get("anchor", "")))
         if count:
             set_flash(resp, f"Acknowledged {_n(count, 'selected test')}")
         else:
@@ -575,11 +595,11 @@ def create_app(
         return resp
 
     @app.post("/tests/{identity_id}/acknowledge")
-    def acknowledge(request: Request, identity_id: int):
+    def acknowledge(request: Request, identity_id: int, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             ok = actions.acknowledge(s, identity_id, actor)
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if ok:
             set_flash(resp, "Test acknowledged — moved to the Still-failing bucket")
         else:
@@ -587,11 +607,11 @@ def create_app(
         return resp
 
     @app.post("/signatures/{signature_id}/acknowledge")
-    def acknowledge_signature(request: Request, signature_id: int):
+    def acknowledge_signature(request: Request, signature_id: int, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.acknowledge_by_signature(s, signature_id, actor)
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if count:
             set_flash(resp, f"Acknowledged {_n(count, 'test')} sharing this failure signature")
         else:
@@ -643,24 +663,32 @@ def create_app(
         form = await request.form()
         episode_ids = [int(v) for v in form.getlist("episode_ids")]
         actor = current_actor(request)
+        causing_person = str(form.get("causing_person", ""))
+        reason_text = str(form.get("reason_text", ""))
         triage_status = str(form.get("triage_status", "")) or None
         with session_scope(session_factory) as s:
             count = actions.bulk_set_attribution(
                 s,
                 episode_ids,
                 actor,
-                causing_person=str(form.get("causing_person", "")),
-                reason_text=str(form.get("reason_text", "")),
+                causing_person=causing_person,
+                reason_text=reason_text,
                 triage_status=triage_status,
             )
-        resp = back(request)
+        resp = back(request, anchor=str(form.get("anchor", "")))
         if count:
             message = f"Updated {_n(count, 'selected test')}"
             if triage_status:
                 message += f" — triage status → {triage_status}"
             set_flash(resp, message)
-        else:
+        elif not episode_ids:
             set_flash(resp, "Nothing updated — no tests selected", "error")
+        elif not actions.has_attribution_input(causing_person, reason_text, triage_status):
+            # A selection with every field blank writes nothing (issue #150) — say so instead of
+            # claiming "Updated N selected tests" for episodes that were never touched.
+            set_flash(resp, "Nothing to apply — fill in a status, person or reason", "error")
+        else:
+            set_flash(resp, "Nothing updated — the selected tests no longer exist", "error")
         return resp
 
     @app.post("/episodes/{episode_id}/confirm")

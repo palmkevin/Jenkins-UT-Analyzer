@@ -7,6 +7,8 @@ doesn't re-show it. Plus the per-action message content — count-bearing where 
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -88,6 +90,22 @@ def test_banner_is_dismissible(client, seeded):
     client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
     page = client.get("/").text
     assert "alert-dismissible" in page and "btn-close" in page
+
+
+def test_flash_renders_as_fixed_live_region_toast(client, seeded):
+    """The flash floats over the viewport corner (issue #150) — an in-flow banner would be
+    scrolled out of view when the redirect lands on an in-page anchor — and announces itself
+    politely to screen readers."""
+    ident_id = _identity_id(seeded, "alpha")
+    client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    page = client.get("/").text
+    toast = re.search(r'<div class="[^"]*uta-toast[^"]*"[^>]*>', page)
+    assert toast, "no toast markup"
+    assert "position-fixed" in toast.group(0)
+    assert 'role="status"' in toast.group(0)
+    assert 'aria-live="polite"' in toast.group(0)
+    # The auto-dismiss script (pause-on-hover) ships with the page.
+    assert "uta-toast" in page and "mouseenter" in page
 
 
 # ── per-action messages (count-bearing where a count exists) ───────────────────
@@ -198,6 +216,48 @@ def test_bulk_attribute_message_carries_count_and_status(client, seeded):
         headers={"referer": "/"},
     )
     assert "Updated 2 selected tests — triage status → INVESTIGATING" in client.get("/").text
+
+
+def test_bulk_attribute_all_blank_input_is_a_nothing_to_apply_error(client, seeded):
+    """A selection with every field blank writes nothing, so it must not flash "Updated N"
+    (issue #150)."""
+    ep_ids = [_episode_id(seeded, n) for n in ("alpha", "beta")]
+    client.post(
+        "/episodes/bulk/attribute",
+        data={
+            "episode_ids": [str(i) for i in ep_ids],
+            "causing_person": "  ",
+            "reason_text": "",
+            "triage_status": "",
+        },
+        headers={"referer": "/"},
+    )
+    page = client.get("/").text
+    assert "Nothing to apply — fill in a status, person or reason" in page
+    assert "alert-danger" in page
+    assert "Updated" not in page
+
+
+def test_bulk_attribute_counts_only_episodes_actually_updated(client, seeded):
+    """A stale selection (an episode id that no longer exists) must not inflate the count."""
+    ep_id = _episode_id(seeded, "alpha")
+    client.post(
+        "/episodes/bulk/attribute",
+        data={"episode_ids": [str(ep_id), "424242"], "causing_person": "frank"},
+        headers={"referer": "/"},
+    )
+    assert "Updated 1 selected test" in client.get("/").text
+
+
+def test_bulk_attribute_vanished_selection_is_an_error(client):
+    client.post(
+        "/episodes/bulk/attribute",
+        data={"episode_ids": ["424242"], "causing_person": "frank"},
+        headers={"referer": "/"},
+    )
+    page = client.get("/").text
+    assert "Nothing updated — the selected tests no longer exist" in page
+    assert "alert-danger" in page
 
 
 def test_identity_set_message(client):
