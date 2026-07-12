@@ -139,3 +139,58 @@ def test_provenance_weighting_orders_confirmed_first(session_factory):
         match = next(c for c in cases if c.signature_id == sig_b.id)
         assert match.reason_text == "off-by-one in reminder fee"
         assert match.provenance_weight == 3
+
+
+def test_human_entered_cause_outranks_unconfirmed_ai_reason(session_factory):
+    """A triager may validate only *who* caused it — that's human knowledge (issue #126).
+
+    ``cause_provenance=HUMAN_ENTERED`` with ``reason_provenance`` still at its AI_UNCONFIRMED
+    default must rank above an unconfirmed AI reason on equal text similarity and carry the
+    human provenance label — not weight 0 from reading ``reason_provenance`` alone.
+    """
+    with session_factory() as s:
+        _fail_run(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
+        _fail_run(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
+        _fail_run(s, 3, name="ut_ar.arinv_csvc.test_c", msg="zzz")
+        s.commit()
+        sig = {
+            t: s.scalar(
+                select(FailureSignature).where(
+                    FailureSignature.test_identity_id
+                    == get_identity(s, f"ut_ar.arinv_csvc.test_{t}").id
+                )
+            )
+            for t in ("a", "b", "c")
+        }
+        # B: the set-attribution path with only causing_person filled — cause becomes
+        # HUMAN_ENTERED while reason_provenance keeps its AI_UNCONFIRMED default.
+        s.add(
+            Attribution(
+                episode_id=1,
+                signature_id=sig["b"].id,
+                causing_person="ako",
+                cause_provenance=Provenance.HUMAN_ENTERED,
+            )
+        )
+        # C: an unconfirmed AI reason only.
+        s.add(
+            Attribution(
+                episode_id=2,
+                signature_id=sig["c"].id,
+                reason_text="maybe a fee rounding change",
+                reason_provenance=Provenance.AI_UNCONFIRMED,
+            )
+        )
+        s.commit()
+        cases = similar_cases(
+            s, sig["a"].normalized_text, k=5, cutoff=0.1, exclude_signature_id=sig["a"].id
+        )
+        b_case = next(c for c in cases if c.signature_id == sig["b"].id)
+        c_case = next(c for c in cases if c.signature_id == sig["c"].id)
+        assert b_case.provenance == Provenance.HUMAN_ENTERED
+        assert b_case.provenance_weight == 3
+        assert b_case.causing_person == "ako"
+        assert c_case.provenance_weight == 0
+        # Same normalized text → equal similarity; the human-entered cause must win the tie.
+        assert b_case.similarity == c_case.similarity
+        assert cases.index(b_case) < cases.index(c_case)
