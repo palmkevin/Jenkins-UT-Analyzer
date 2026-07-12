@@ -693,6 +693,22 @@ def test_triage_sort_links_apply_and_toggle_off():
     assert active["owner"] == {"active": False, "url": "/?owner=KP&sort=owner"}
 
 
+def test_triage_expand_urls_preserve_filters_and_sort():
+    # The "Load all" link keeps the whole URL state (filters + sort) and only adds its section
+    # to ?expand=, jumping back to the section anchor.
+    urls = views.triage_expand_urls({"owner": "KP"}, sort="name")
+    assert urls["new"] == "/?owner=KP&sort=name&expand=new#new"
+    assert urls["still_failing"] == "/?owner=KP&sort=name&expand=still_failing#still_failing"
+    assert urls["recently_fixed"] == "/?owner=KP&sort=name&expand=recently_fixed#recently_fixed"
+
+
+def test_triage_expand_urls_merge_with_already_expanded_sections():
+    urls = views.triage_expand_urls({}, expand=["new"])
+    # Already-expanded sections stay expanded; the target section is appended exactly once.
+    assert urls["still_failing"] == "/?expand=new,still_failing#still_failing"
+    assert urls["new"] == "/?expand=new#new"
+
+
 def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(

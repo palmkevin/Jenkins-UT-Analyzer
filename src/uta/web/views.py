@@ -363,12 +363,15 @@ _CHIP_LABELS = {
 }
 
 
-def triage_url(filters: dict[str, str], sort: str | None) -> str:
-    """The triage-queue URL encoding the given filter set + sort — the shareable state."""
+def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str] = ()) -> str:
+    """The triage-queue URL encoding the given filter set + sort + expanded sections — the
+    shareable state."""
     params = {k: v for k, v in filters.items() if v}
     if sort:
         params["sort"] = sort
-    query = urlencode(params)
+    if expand:
+        params["expand"] = ",".join(expand)
+    query = urlencode(params, safe=",")
     return f"/?{query}" if query else "/"
 
 
@@ -410,6 +413,28 @@ def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[
         }
         for key in _SORT_KEYS
     }
+
+
+# The triage queue's three capped buckets — the section keys ``?expand=`` accepts (issue #19).
+_TRIAGE_SECTIONS = ("new", "still_failing", "recently_fixed")
+
+
+def triage_expand_urls(
+    filters: dict[str, str], sort: str | None = None, expand: Collection[str] = ()
+) -> dict[str, str]:
+    """Per-section "Load all N Tests" URLs for the triage queue's capped buckets (issue #19).
+
+    Each URL re-requests the page with that section added to the already-expanded set while
+    keeping every active filter and the sort — the same state-stays-in-the-URL contract as the
+    chips and header sort links (issue #77) — and jumps back to the section's anchor.
+    """
+    urls = {}
+    for section in _TRIAGE_SECTIONS:
+        expanded = list(expand)
+        if section not in expanded:
+            expanded.append(section)
+        urls[section] = triage_url(filters, sort, expand=expanded) + f"#{section}"
+    return urls
 
 
 def triage_filter_options(session: Session) -> dict:

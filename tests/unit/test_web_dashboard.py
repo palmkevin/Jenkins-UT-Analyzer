@@ -294,6 +294,34 @@ def test_triage_expand_renders_every_row(many_failures_client):
     assert "Load all 150 Tests" not in page
 
 
+@pytest.fixture
+def many_owned_failures_client(session_factory, monkeypatch):
+    """150 new failing tests owned by "KP" plus one by "ZZ", capped at 100 rows per section."""
+    monkeypatch.setenv("UI_ROW_LIMIT", "100")
+    with session_scope(session_factory) as s:
+        names = [f"t{i:04d}" for i in range(150)] + ["zzz_unrelated"]
+        r1 = make_run(s, 1, {n: "FAILED" for n in names})
+        apply_run(s, r1, baseline=None)
+        for name in names:
+            get_identity(s, name).owner_initials = "ZZ" if name == "zzz_unrelated" else "KP"
+    return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+
+
+def test_triage_expand_link_preserves_filters_and_sort(many_owned_failures_client):
+    # A filtered view promises the post-filter count; its "Load all" link must keep the filter
+    # and sort (issue #77's URL-is-state contract), only adding ?expand=.
+    page = many_owned_failures_client.get("/?owner=KP&sort=name").text
+    assert "not yet acknowledged (150)" in page
+    assert "Load all 150 Tests" in page
+    assert 'href="/?owner=KP&amp;sort=name&amp;expand=new#new"' in page
+
+    # Following the link renders the *filtered* bucket in full — the other owner stays out.
+    expanded = many_owned_failures_client.get("/?owner=KP&sort=name&expand=new").text
+    assert expanded.count('href="/tests/') == 150
+    assert "Load all 150 Tests" not in expanded
+    assert "zzz_unrelated" not in expanded
+
+
 # ── run-results pagination (issue #52) ─────────────────────────────────────────
 
 

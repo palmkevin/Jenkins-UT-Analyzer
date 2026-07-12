@@ -304,7 +304,6 @@ def create_app(
             "jira_base_url": cfg.jira_base_url,
             "fisheye_changelog_url": cfg.fisheye_changelog_url,
             "zephyr_test_case_url_prefix": cfg.zephyr_test_case_url_prefix,
-            "expand": _expanded(request),
             "row_limit": cfg.ui_row_limit,
             "flash": get_flash(request),
         }
@@ -342,13 +341,14 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def triage(request: Request, sort: str = ""):
         filters = _triage_filters(request)
+        expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
             queue = views.triage_queue(
                 s,
                 recently_fixed_days=cfg.recently_fixed_days,
                 limit=cfg.ui_row_limit,
-                expand=_expanded(request),
+                expand=expand,
                 filters=filters,
                 sort=sort or None,
             )
@@ -372,6 +372,7 @@ def create_app(
                 "last_run": last_run,
                 "chips": views.triage_filter_chips(filters, sort or None),
                 "sort_links": views.triage_sort_links(filters, sort or None),
+                "expand_urls": views.triage_expand_urls(filters, sort or None, expand),
                 "return_qs": quote(queue_url, safe="") if queue_url != "/" else "",
             },
             cfg=cfg,
