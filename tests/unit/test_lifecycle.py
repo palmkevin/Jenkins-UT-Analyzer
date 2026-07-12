@@ -87,6 +87,43 @@ def test_removed_keeps_episode_open(session_factory):
         assert ep.fixed_in_run_id is None
 
 
+def test_removed_then_reappearing_pass_closes_episode(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"other": "PASSED"})  # "t" absent -> REMOVED, episode open
+        apply_run(s, r2, baseline=r1)
+        r3 = make_run(s, 3, {"t": "PASSED", "other": "PASSED"})  # reappears passing
+        analysis = apply_run(s, r3, baseline=r2)
+        lc = _lc(s, "t")
+        assert lc.state == LifecycleState.FIXED
+        ep = _episodes(s, "t")[0]
+        assert ep.is_open is False
+        assert ep.fixed_in_run_id == r3.id
+        assert get_identity(s, "t").id in analysis.diff.newly_fixed
+        # Re-applying the same run stays idempotent: nothing open to reconcile.
+        apply_run(s, r3, baseline=r2)
+        eps = _episodes(s, "t")
+        assert len(eps) == 1 and eps[0].is_open is False
+
+
+def test_removed_then_reappearing_failure_continues_same_episode(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        r2 = make_run(s, 2, {"other": "PASSED"})  # "t" absent -> REMOVED, episode open
+        apply_run(s, r2, baseline=r1)
+        r3 = make_run(s, 3, {"t": "FAILED", "other": "PASSED"})  # reappears still failing
+        apply_run(s, r3, baseline=r2)
+        lc = _lc(s, "t")
+        assert lc.state == LifecycleState.FAILING
+        assert lc.reopen_count == 0  # same episode continues — not a reopen
+        eps = _episodes(s, "t")
+        assert len(eps) == 1 and eps[0].is_open
+        assert eps[0].last_failing_run_id == r3.id
+        assert eps[0].fixed_in_run_id is None
+
+
 def test_still_failing_extends_episode_and_age(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"t": "FAILED"})
