@@ -71,6 +71,9 @@ def test_flaky_leaderboard_lists_oscillating_test(client):
     assert "Flaky leaderboard" in resp.text
     assert "flap.test" in resp.text
     assert 'class="sparkline"' in resp.text  # per-test recent-run sparkline (issue #53)
+    # Non-hue pass/fail channel (issue #144): failed bars full-height, passed bars shorter.
+    assert 'y="0.0"' in resp.text and 'height="22.0"' in resp.text  # failed bar
+    assert 'y="9.9"' in resp.text and 'height="12.1"' in resp.text  # passed bar (0.55 × 22)
 
 
 def test_flaky_leaderboard_total_is_true_count_not_capped(session_factory):

@@ -63,7 +63,14 @@ class Sparkline:
 
     width: int
     height: int
-    bars: list[dict]  # [{"x": float, "width": float, "failed": bool, "build": int}, ...]
+    # [{"x": float, "y": float, "width": float, "height": float, "failed": bool, "build": int}]
+    bars: list[dict]
+
+
+# Passed bars render at this fraction of the chart height (bottom-aligned); failed bars are
+# full-height. The height difference is a second, non-hue channel on top of the red/green fill so
+# the pass/fail signal survives color-vision deficiency (issue #144).
+_PASSED_BAR_FRACTION = 0.55
 
 
 def sparkline(
@@ -78,16 +85,21 @@ def sparkline(
 
     Only the most recent ``max_points`` are rendered (oldest-first order preserved) so a long
     flakiness window still renders a legible, compactly-spaced chart rather than hairline bars.
+    Failed bars span the full height; passed bars are shorter and bottom-aligned, so the two read
+    apart without relying on hue alone.
     """
     if not points:
         return None
     recent = points[-max_points:]
     n = len(recent)
     bar_width = (width - gap * (n - 1)) / n
+    passed_height = round(height * _PASSED_BAR_FRACTION, 1)
     bars = [
         {
             "x": round(i * (bar_width + gap), 1),
+            "y": 0.0 if p["failed"] else round(height - passed_height, 1),
             "width": round(bar_width, 1),
+            "height": float(height) if p["failed"] else passed_height,
             "failed": p["failed"],
             "build": p["build"],
         }

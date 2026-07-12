@@ -115,6 +115,10 @@ def test_ingest_unittest_logs_adds_console_log_results(session_factory):
         unittest_suites={"SMB Transform"},
     )
     with session_scope(session_factory) as s:
+        # Every selected stage finished (the py39 one is UNSTABLE — a test outcome, not
+        # truncation), so the run stays complete.
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is True
         # 14 devUTs + 4 (perm) + 4 (py39) console-log cases.
         assert s.scalar(select(func.count()).select_from(TestResult)) == 22
         smb = s.scalars(
@@ -139,6 +143,81 @@ def test_ingest_unittest_logs_adds_console_log_results(session_factory):
         # 7 devUTs episodes + 2 console-log episodes, all classified.
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 9
         assert s.scalar(select(func.count()).select_from(Classification)) == 9
+
+
+class _LogStageStatusFakeJenkins(FakeJenkinsClient):
+    """Both devUTs shards SUCCESS, but the SMB Transform py39 console-log stage carries ``status``
+    (e.g. ABORTED halfway — its truncated log would parse to a partial case list)."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__()
+        self._status = status
+
+    def wfapi(self, build: int) -> dict:
+        payload = super().wfapi(build)
+        for stage in payload["stages"]:
+            if stage["name"] == "SMB Transform - permanent_py39":
+                stage["status"] = self._status
+        return payload
+
+
+@pytest.mark.parametrize("status", ["ABORTED", "NOT_EXECUTED"])
+def test_ingest_unfinished_log_stage_marks_run_incomplete(session_factory, status):
+    """A selected console-log stage cut short ⇒ incomplete run: results persisted, no analysis,
+    never a baseline — the devUTs shard guard (issue #83), mirrored for the second source."""
+    ingest_build(
+        _LogStageStatusFakeJenkins(status),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is False
+        # The partial run's results (JUnit + both console-log stages) are persisted but gated out
+        # of the analysis…
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 22
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
+        # …and a later run never diffs against it.
+        later = make_run(s, 1703, {}, started_at=run.started_at + timedelta(hours=24))
+        assert select_baseline(s, later) is None
+
+
+def test_ingest_unfinished_log_stage_ignored_when_logs_off(session_factory):
+    """Without the unittest-log opt-in the stage isn't selected — its status can't gate the run."""
+    ingest_build(_LogStageStatusFakeJenkins("ABORTED"), session_factory, 1702)
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is True
+
+
+class _MissingLogStageFakeJenkins(FakeJenkinsClient):
+    """A build whose job configuration didn't include the SMB Transform py39 stage at all."""
+
+    def wfapi(self, build: int) -> dict:
+        payload = super().wfapi(build)
+        payload["stages"] = [
+            s for s in payload["stages"] if s["name"] != "SMB Transform - permanent_py39"
+        ]
+        return payload
+
+
+def test_ingest_absent_log_stage_does_not_affect_completeness(session_factory):
+    """A suite stage absent from the wfapi payload ⇒ complete run (job config varies over
+    history); only stages *present but unfinished* gate completeness."""
+    ingest_build(
+        _MissingLogStageFakeJenkins(),
+        session_factory,
+        1702,
+        ingest_unittest_logs=True,
+        unittest_suites={"SMB Transform"},
+    )
+    with session_scope(session_factory) as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1702))
+        assert run.complete is True
+        # Only the permanent-track stage contributed console-log cases: 14 devUTs + 4.
+        assert s.scalar(select(func.count()).select_from(TestResult)) == 18
 
 
 class _DescendingFakeJenkins(FakeJenkinsClient):
@@ -768,6 +847,51 @@ def test_reingest_newest_build_still_analyzed(session_factory):
         ep = s.scalar(select(FailureEpisode))
         assert ep.is_open is False and ep.fixed_in_run_id == run.id
         assert s.scalar(select(TestLifecycle)).state == LifecycleState.FIXED
+
+
+def test_reingest_with_changed_content_resets_orphaned_signature_aggregates(session_factory):
+    """A re-ingest whose failure vanished must recompute the now-orphaned signature (issue #116).
+
+    #104 and #105 both fail ``t`` — one signature, occurrence 4 (2 runs × 2 tracks). The re-run
+    #105 now passes: the signature loses #105's links but gains none, so it is only reachable via
+    the pre-delete link capture — occurrence must drop to 2 and last-seen must point back at #104,
+    the newest run actually containing the failure (the KB page and the LLM evidence read these).
+    """
+    fake = _ScriptedJenkins({104: {"t": "FAILED"}, 105: {"t": "FAILED"}})
+    ingest_build(fake, session_factory, 104)
+    ingest_build(fake, session_factory, 105)
+
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        run105 = s.scalar(select(Run).where(Run.build_number == 105))
+        assert sig.occurrence_count == 4
+        assert sig.last_seen_run_id == run105.id
+
+    fake.builds[105] = {"t": "PASSED"}  # the re-run build now passes
+    ingest_build(fake, session_factory, 105)
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        run104 = s.scalar(select(Run).where(Run.build_number == 104))
+        assert sig.occurrence_count == 2  # only #104's two tracks remain
+        assert sig.first_seen_run_id == run104.id
+        assert sig.last_seen_run_id == run104.id
+        assert sig.last_seen_at == run104.started_at
+
+
+def test_reingest_orphaning_all_links_resets_signature_to_zero(session_factory):
+    """A signature that loses its every link on re-ingest gets the documented zero/empty reset."""
+    fake = _ScriptedJenkins({104: {"t": "FAILED"}})
+    ingest_build(fake, session_factory, 104)
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(FailureSignature)).occurrence_count == 2
+
+    fake.builds[104] = {"t": "PASSED"}
+    ingest_build(fake, session_factory, 104)
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        assert sig.occurrence_count == 0
+        assert sig.first_seen_at is None and sig.last_seen_at is None
+        assert sig.first_seen_run_id is None and sig.last_seen_run_id is None
 
 
 class _FailingReportFake(FakeJenkinsClient):

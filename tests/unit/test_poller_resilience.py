@@ -428,6 +428,25 @@ def test_health_poller_that_ticks_but_never_succeeds_goes_stale(session_factory)
     assert not report.ok and report.poller == "stale"
 
 
+def test_health_poller_failing_since_birth_goes_stale_after_grace(session_factory):
+    # Misconfigured from day one: every tick fails, so last_success_at is never set while
+    # last_poll_at stays forever fresh — freshness must key off created_at, not last_poll_at.
+    record_heartbeat(session_factory, processed=[], error="boom")
+    with session_scope(session_factory) as s:
+        hb = read_heartbeat(s)
+        assert hb.last_success_at is None
+        hb.created_at = datetime.now(UTC) - timedelta(hours=2)  # 2h ≫ 3 × 300s
+    report = check_health(session_factory, _client_settings())
+    assert not report.ok and report.poller == "stale"
+
+
+def test_health_poller_failing_since_birth_is_ok_within_grace_window(session_factory):
+    # A fresh row with no success yet gets one grace window (same as the upgrade window).
+    record_heartbeat(session_factory, processed=[], error="boom")
+    report = check_health(session_factory, _client_settings())
+    assert report.ok and report.poller == "ok"
+
+
 def test_health_endpoint_returns_503_when_db_unreachable():
     # Nothing listens on port 9 — the connection is refused locally, no live system involved.
     broken = make_session_factory(make_engine("postgresql+psycopg://u:p@127.0.0.1:9/nope"))
