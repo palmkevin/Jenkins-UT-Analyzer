@@ -947,6 +947,42 @@ def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
         assert beta_ep.attribution.reason_text == "shared root cause"
 
 
+def test_bulk_set_attribution_all_blank_writes_nothing_and_returns_zero(session_factory):
+    """An all-blank bulk submit must count 0 — set_attribution would touch none of the episodes
+    (issue #150: the flash count must not claim updates that never happened)."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_ids = [_lc(s, "alpha").current_episode_id, _lc(s, "beta").current_episode_id]
+
+        count = actions.bulk_set_attribution(
+            s, ep_ids, "frank", causing_person="  ", reason_text="", triage_status=None
+        )
+        assert count == 0
+        for ep_id in ep_ids:
+            ep = s.get(FailureEpisode, ep_id)
+            assert ep.triage_status == "UNTRIAGED"
+            assert ep.attribution is None
+
+
+def test_bulk_set_attribution_counts_only_existing_episodes(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        ep_id = _lc(s, "alpha").current_episode_id
+
+        count = actions.bulk_set_attribution(s, [ep_id, 424242], "frank", causing_person="carol")
+        assert count == 1
+        assert s.get(FailureEpisode, ep_id).attribution.causing_person == "carol"
+
+
+def test_has_attribution_input_ignores_whitespace_only_fields():
+    assert actions.has_attribution_input("", "  ", None) is False
+    assert actions.has_attribution_input("carol", "", None) is True
+    assert actions.has_attribution_input("", "bad fixture", None) is True
+    assert actions.has_attribution_input(None, None, "INVESTIGATING") is True
+
+
 # ── signature-wide attribution (issue #106) ──────────────────────────────────
 
 
