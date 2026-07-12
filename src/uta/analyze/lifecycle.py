@@ -3,7 +3,9 @@
 Driven once per **complete** run, comparing each test identity's collapsed status in this run
 against the **baseline** (the previous complete run). Working only from those two persisted facts —
 never from the stored lifecycle state — makes re-running the analysis for an already-processed run
-**idempotent**: the same (baseline, run) pair always yields the same transitions.
+**idempotent**: the same (baseline, run) pair always yields the same transitions. (The one addition
+that does consult stored state — reconciling a still-open episode whose test passes this run, the
+REMOVED → FIXED edge below — is itself idempotent: once closed, nothing is open to reconcile.)
 
 Transitions (lifecycle state is *about the result*; acknowledgement is orthogonal):
 
@@ -15,6 +17,11 @@ Transitions (lifecycle state is *about the result*; acknowledgement is orthogona
   run). Set only on a real pass, never on removal.
 - FAILING → **REMOVED**: the test is absent from this complete run — the episode stays open
   (disappeared ≠ fixed), surfaced with a Removed flag.
+- REMOVED → **FIXED**: the test reappears and **passes**. The baseline never saw it fail (it was
+  already absent), so the run diff alone can't express this — :func:`apply_run` reconciles any
+  identity that passes while its episode is still open as newly fixed. A reappearance that *fails*
+  instead lands in the regression path, which finds the open episode and simply extends it — same
+  episode, no reopen, no acknowledgement clearing.
 
 Only identities that have ever failed get a lifecycle row (the record exists "for every test
 that is or has been failing"); perpetually-passing tests are left untouched.
@@ -29,6 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import (
+    PASSED,
     RunDiff,
     compute_diff,
     identity_status_map,
@@ -207,6 +215,21 @@ def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> Run
     current = identity_status_map(session, run)
     base_status = identity_status_map(session, baseline) if baseline is not None else {}
     diff = compute_diff(session, run, baseline, current=current, baseline_status=base_status)
+
+    # Reconciliation (REMOVED → FIXED, issue #117): a test that was REMOVED (absent, episode left
+    # open) and now reappears **passing** lands in no diff bucket — the baseline never saw it fail,
+    # so ``compute_diff`` can't emit it as newly fixed — and without this it would stay REMOVED
+    # forever with its episode open. Any identity that passes this run while its episode is still
+    # open is folded into ``newly_fixed`` so the normal fix path closes the episode. A reappearance
+    # that *fails* is deliberately left alone: it lands in ``regressions``, which finds the open
+    # episode and extends it (disappeared ≠ fixed — no new episode, no acknowledgement clearing).
+    in_diff = set(diff.regressions) | set(diff.still_failing) | set(diff.newly_fixed)
+    for identity_id in session.scalars(
+        select(FailureEpisode.test_identity_id).where(FailureEpisode.is_open.is_(True))
+    ):
+        if current.get(identity_id) == PASSED and identity_id not in in_diff:
+            diff.newly_fixed.append(identity_id)
+
     analysis = RunAnalysis(baseline_run_id=diff.baseline_run_id, diff=diff)
 
     affected: set[int] = set(diff.regressions) | set(diff.still_failing)
