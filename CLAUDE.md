@@ -10,6 +10,10 @@ wrong or re-derive.
   ingest → analysis → triage → learning → alert workflows with a schematic system map, and a
   **Reference** section (the persisted information model + the load-bearing invariants). Start here for
   "what is this and how does it fit together," and for what the tool outputs.
+- **[Help page](src/uta/web/templates/help.html)** (served at `/help` in the running dashboard) —
+  the **end-user-facing** counterpart: the daily triage workflow, what every status/badge means,
+  what the LLM contributes versus the deterministic classifier, and how to act on (confirm/correct)
+  an AI suggestion. Same freshness contract as OVERVIEW.html — see below.
 - **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — the **source of
   truth for status** (open todos, in-progress work) and, once closed, the record of completed changes.
   Every change is a branch + PR that `Closes #N`; see **Task workflow** below.
@@ -71,16 +75,22 @@ of work and the closed issue + merged PR *is* the record.
   the hardcoded `name: jenkins-ut-analyzer-dev` and the published ports in
   `.devcontainer/docker-compose.dev.yml` parametrized).
 
-## Keep the concept overview in sync (required, every change)
-After any change that could alter **what parts the app involves, how they communicate, or its
-workflows** — a new/removed external system or integration, a container/service change, a change to
-the ingest/analysis/triage/learning/alert flow, or a shift in what the tool outputs (the triage
-queue, per-test record, run summary, flakiness, knowledge base, or email surfaces) —
-you **must invoke the [`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md)
-agent** to check whether [docs/OVERVIEW.html](docs/OVERVIEW.html) needs updating (it edits the page,
-including its system-map SVG, or reports "no update needed"). Pure bug fixes, refactors, perf work,
-and test/CI/dependency changes that leave the depicted parts, communications and workflows unchanged
-do **not** require it. When in doubt, invoke it — deciding materiality is the agent's job.
+## Keep the docs in sync (required, every change)
+Two hand-maintained HTML pages must stay truthful as the product evolves, and one agent owns both:
+[docs/OVERVIEW.html](docs/OVERVIEW.html) (architecture, for contributors) and the in-app
+**[Help page](src/uta/web/templates/help.html)** at `/help` (the daily workflow, statuses, badges,
+and the LLM feedback loop, for end users). After any change that could alter **what parts the app
+involves, how they communicate, or its workflows** — a new/removed external system or integration,
+a container/service change, a change to the ingest/analysis/triage/learning/alert flow, or a shift
+in what the tool outputs (the triage queue, per-test record, run summary, flakiness, knowledge
+base, or email surfaces) — *or* a change to what an **end user** sees or does in the dashboard — a
+new/renamed status or enum value, a new badge, a new/changed triage bucket or dashboard page, or a
+change to how the LLM hypothesis / Confirm / correct feedback loop works — you **must invoke the
+[`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md) agent** to check whether
+either page needs updating (it edits the page(s), including OVERVIEW.html's system-map SVG, or
+reports "no update needed" per page). Pure bug fixes, refactors, perf work, and test/CI/dependency
+changes that leave the depicted parts, communications, workflows and user-visible surfaces
+unchanged do **not** require it. When in doubt, invoke it — deciding materiality is the agent's job.
 
 ## Load-bearing invariants (silently corrupting if wrong)
 - **Clocks.** Jenkins timestamps are **epoch millis, UTC** (`timestamp`, `startTimeMillis`). Oracle

@@ -163,6 +163,8 @@ def nav_section(path: str) -> str | None:
         return "kb"
     if path.startswith("/control"):
         return "control"
+    if path.startswith("/help"):
+        return "help"
     return None
 
 
@@ -458,6 +460,13 @@ def create_app(
             cfg = effective(s)
             results = views.kb_search(s, q, cutoff=cfg.pgtrgm_similarity_cutoff)
         return render(request, "kb.html", {"kb": results}, cfg=cfg)
+
+    @app.get("/help", response_class=HTMLResponse)
+    def help_view(request: Request):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+        ctx = {"recently_fixed_days": cfg.recently_fixed_days}
+        return render(request, "help.html", ctx, cfg=cfg)
 
     @app.get("/search", response_class=HTMLResponse)
     def search_view(request: Request, q: str = ""):
