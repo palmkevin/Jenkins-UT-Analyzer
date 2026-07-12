@@ -72,6 +72,11 @@
     details.card[open] > summary { margin-bottom: 0.8rem; }
     details.episodes > summary { font-size: 1.15rem; margin: 1.6rem 0 0.8rem; }
 
+    /* Classification-evidence rows on the test record's why-block (issue #159). */
+    dl.evidence { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; margin: 0; }
+    dl.evidence dt { font-weight: 600; }
+    dl.evidence dd { margin: 0; overflow-wrap: anywhere; }
+
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
 

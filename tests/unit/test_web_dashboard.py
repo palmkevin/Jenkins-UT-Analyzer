@@ -6,6 +6,8 @@ Post/Redirect/Get actions actually mutating state through the app (not just the 
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -14,7 +16,8 @@ from sqlalchemy.pool import StaticPool
 from tests.builders import get_identity, make_run
 from uta.analyze.lifecycle import apply_run
 from uta.db import Base, make_session_factory, session_scope
-from uta.models import CodeChangeCandidate, Run, TestLifecycle
+from uta.models import Classification, CodeChangeCandidate, Run, TestLifecycle
+from uta.models.enums import PredictedCause
 from uta.web.app import create_app
 
 
@@ -150,6 +153,82 @@ def test_current_open_episode_failure_detail_is_expanded(client, seeded):
     open_tag_start = page.rindex("<details", 0, summary_idx)
     open_tag = page[open_tag_start:summary_idx]
     assert " open>" in open_tag
+
+
+def test_record_renders_classification_evidence_collapsed(client, seeded):
+    """Issue #159: an episode whose classification carries evidence renders a collapsed
+    "Why this prediction" block with readable label/value rows — never the raw JSON keys."""
+    ident_id = _identity_id(seeded, "alpha")
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        s.add(
+            Classification(
+                episode_id=lc.current_episode_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                confidence=0.63,
+                evidence=json.dumps(
+                    {
+                        "code_candidates": 2,
+                        "data_candidates": 1,
+                        "infra_error": False,
+                        "baseline_run_id": 41,
+                        "relevance": {
+                            "code_matched": 1,
+                            "data_matched": 0,
+                            "tie_break": "code",
+                            "top_code": {
+                                "candidate": "r48612",
+                                "author": "R. Devlin",
+                                "score": 3.0,
+                                "reasons": ["touches ut_x/mod.py (module of this test)"],
+                            },
+                            "top_data": None,
+                        },
+                        "confidence": {
+                            "win_score": 3.0,
+                            "lose_score": 2.0,
+                            "kb_provenance_weight": 0.0,
+                        },
+                    }
+                ),
+            )
+        )
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Why this prediction" in page
+    # Readable rows, not raw JSON keys.
+    assert "Code changes in window" in page
+    assert "2 candidates · 1 matched this test" in page
+    assert "Data changes in window" in page
+    assert "Top code match" in page
+    assert "r48612 by R. Devlin (score 3) — touches ut_x/mod.py (module of this test)" in page
+    assert "Tie-break" in page
+    assert "relevance score 3 vs 2" in page
+    assert "code_candidates" not in page  # no raw JSON dump
+    assert "baseline_run_id" not in page  # internal noise stays whitelisted out
+    # Collapsed by default: the block's own <details> tag carries no open attribute.
+    summary_idx = page.index("Why this prediction")
+    open_tag = page[page.rindex("<details", 0, summary_idx) : summary_idx]
+    assert " open" not in open_tag
+
+
+def test_record_shows_no_evidence_shell_when_absent(client, seeded):
+    """No classification / empty evidence -> no "Why this prediction" block at all."""
+    ident_id = _identity_id(seeded, "alpha")
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Why this prediction" not in page
+    # An evidence-less classification (e.g. an LLM-only row) renders no empty shell either.
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
+        s.add(
+            Classification(
+                episode_id=lc.current_episode_id,
+                predicted_cause=PredictedCause.UNKNOWN,
+                llm_hypothesis="possibly the fixture refresh",
+            )
+        )
+    page = client.get(f"/tests/{ident_id}").text
+    assert "Predicted cause:" in page
+    assert "Why this prediction" not in page
 
 
 def test_svn_revision_links_to_fisheye(client, seeded):
