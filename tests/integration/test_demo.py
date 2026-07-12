@@ -263,6 +263,46 @@ def test_demo_app_serves_all_views():
     assert "test_" in client.get("/").text  # the triage queue lists tests
 
 
+def test_demo_health_stays_ok_past_the_staleness_window():
+    """Issue #125: the demo runs no poller, so the heartbeat seeded for /control would cross the
+    staleness window (poll_interval × stale_after_intervals, ~21 min with defaults) and flip
+    /health to 503 — Render's healthCheckPath would then restart the service, wiping the ephemeral
+    store mid-session. Every /health probe re-stamps the heartbeat first, so the demo stays 200 no
+    matter how old the process is, while /control still renders a populated heartbeat."""
+    from datetime import UTC, datetime, timedelta
+
+    from uta.config import Settings
+    from uta.control.health import check_health
+    from uta.control.heartbeat import read_heartbeat
+    from uta.db import session_scope
+    from uta.web import control
+
+    factory = build_demo_session_factory(_MEMORY)
+    client = TestClient(create_demo_app(session_factory=factory))
+
+    # Age the seeded heartbeat far beyond the window — a demo process that has lived for hours.
+    aged = datetime.now(UTC) - timedelta(hours=6)
+    with session_scope(factory) as session:
+        hb = read_heartbeat(session)
+        hb.last_poll_at = aged
+        hb.last_success_at = aged
+    # Sanity: a bare check_health sees exactly the stale fault that used to 503 the demo.
+    assert check_health(factory, Settings()).poller == "stale"
+
+    # The demo app itself stays healthy: the probe re-stamps the heartbeat before evaluating it.
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["poller"] == "ok"
+
+    # The /control panel still shows a populated heartbeat — now fresh, seeded details intact.
+    panel = control.control_panel(factory(), Settings())
+    assert panel["poller"]["has_run"] is True
+    assert panel["poller"]["last_processed_count"] == 1
+    assert panel["poller"]["last_success_at"].replace(tzinfo=UTC) > aged  # SQLite reads back naive
+    assert client.get("/control").status_code == 200
+
+
 def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
     """The demo's shop-window for issue #106: the SMTP-outage pair is seeded new & untriaged with
     identical error text, so each test's record page renders the "apply to all N affected tests"
