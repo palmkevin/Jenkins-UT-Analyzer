@@ -854,17 +854,20 @@ def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
 
     Matches suite/class/method too (all folded into ``canonical_name``), case-insensitively.
     Returns plain rows for the navbar search box: a unique match lets the route redirect straight
-    to the test record, several matches render as a short pick-list.
+    to the test record, several matches render as a short pick-list. ``limit <= 0`` disables the
+    cap (same semantics as :func:`_cap` / :func:`_page_window`).
     """
     query = (query or "").strip()
     if not query:
         return []
-    idents = session.scalars(
+    stmt = (
         select(TestIdentity)
         .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
         .order_by(TestIdentity.canonical_name)
-        .limit(limit)
-    ).all()
+    )
+    if limit > 0:
+        stmt = stmt.limit(limit)
+    idents = session.scalars(stmt).all()
     return [
         {
             "identity_id": i.id,
