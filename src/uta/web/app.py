@@ -587,7 +587,7 @@ def create_app(
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.bulk_acknowledge(s, identity_ids, actor)
-        resp = back(request)
+        resp = back(request, anchor=str(form.get("anchor", "")))
         if count:
             set_flash(resp, f"Acknowledged {_n(count, 'selected test')}")
         else:
@@ -595,11 +595,11 @@ def create_app(
         return resp
 
     @app.post("/tests/{identity_id}/acknowledge")
-    def acknowledge(request: Request, identity_id: int):
+    def acknowledge(request: Request, identity_id: int, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             ok = actions.acknowledge(s, identity_id, actor)
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if ok:
             set_flash(resp, "Test acknowledged — moved to the Still-failing bucket")
         else:
@@ -607,11 +607,11 @@ def create_app(
         return resp
 
     @app.post("/signatures/{signature_id}/acknowledge")
-    def acknowledge_signature(request: Request, signature_id: int):
+    def acknowledge_signature(request: Request, signature_id: int, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.acknowledge_by_signature(s, signature_id, actor)
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if count:
             set_flash(resp, f"Acknowledged {_n(count, 'test')} sharing this failure signature")
         else:
@@ -663,24 +663,32 @@ def create_app(
         form = await request.form()
         episode_ids = [int(v) for v in form.getlist("episode_ids")]
         actor = current_actor(request)
+        causing_person = str(form.get("causing_person", ""))
+        reason_text = str(form.get("reason_text", ""))
         triage_status = str(form.get("triage_status", "")) or None
         with session_scope(session_factory) as s:
             count = actions.bulk_set_attribution(
                 s,
                 episode_ids,
                 actor,
-                causing_person=str(form.get("causing_person", "")),
-                reason_text=str(form.get("reason_text", "")),
+                causing_person=causing_person,
+                reason_text=reason_text,
                 triage_status=triage_status,
             )
-        resp = back(request)
+        resp = back(request, anchor=str(form.get("anchor", "")))
         if count:
             message = f"Updated {_n(count, 'selected test')}"
             if triage_status:
                 message += f" — triage status → {triage_status}"
             set_flash(resp, message)
-        else:
+        elif not episode_ids:
             set_flash(resp, "Nothing updated — no tests selected", "error")
+        elif not actions.has_attribution_input(causing_person, reason_text, triage_status):
+            # A selection with every field blank writes nothing (issue #150) — say so instead of
+            # claiming "Updated N selected tests" for episodes that were never touched.
+            set_flash(resp, "Nothing to apply — fill in a status, person or reason", "error")
+        else:
+            set_flash(resp, "Nothing updated — the selected tests no longer exist", "error")
         return resp
 
     @app.post("/episodes/{episode_id}/confirm")

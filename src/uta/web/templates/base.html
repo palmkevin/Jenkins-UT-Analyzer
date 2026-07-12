@@ -8,6 +8,7 @@
   <!-- htmx 2.0.10, vendored (no CDN at runtime; from the htmx.org npm tarball) — issue #78. -->
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/bulk-select.js" defer></script>
+  <script src="/static/form-busy.js" defer></script>
   <script src="/static/trace.js" defer></script>
   <script>
     // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.
@@ -73,6 +74,10 @@
 
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
+
+    /* Flash toast (issue #150): fixed to the viewport corner so it stays visible after the
+       PRG redirect lands on an in-page anchor. z-index is Bootstrap's toast tier. */
+    .uta-toast { z-index: 1080; max-width: 28rem; }
 
     /* One-line error snippet under a triage row's test name (issue #145). */
     .error-snippet { color: #6c757d; font-size: 0.82em; font-family: var(--bs-font-monospace); }
@@ -161,9 +166,13 @@
     {% endif %}
   </nav>
   <main class="container-fluid px-4">
+    {# Fixed-position toast (issue #150): the triage/record actions redirect to an in-page anchor,
+       which would scroll an in-flow banner out of view — so the flash floats over the viewport
+       corner instead. Polite live region so screen readers announce it wherever focus is; the
+       inline script below auto-dismisses it (paused while hovered), and the ✕ still works. #}
     {% if flash %}
-    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2"
-         role="alert">
+    <div class="alert alert-{{ 'danger' if flash.category == 'error' else 'success' }} alert-dismissible py-2 uta-toast position-fixed bottom-0 end-0 m-3 shadow"
+         role="status" aria-live="polite">
       {{ flash.message }}
       <button type="button" class="btn-close" aria-label="Close"
               onclick="this.closest('.alert').remove()"></button>
@@ -177,6 +186,16 @@
       document.documentElement.setAttribute("data-bs-theme", next);
       localStorage.setItem("uta-theme", next);
     });
+    // Flash-toast auto-dismiss (issue #150): gone after 6 s so it never lingers over content,
+    // but hovering pauses the timer so a long message can be read out.
+    (function () {
+      var toast = document.querySelector(".uta-toast");
+      if (!toast) return;
+      function arm() { return setTimeout(function () { toast.remove(); }, 6000); }
+      var timer = arm();
+      toast.addEventListener("mouseenter", function () { clearTimeout(timer); });
+      toast.addEventListener("mouseleave", function () { timer = arm(); });
+    })();
   </script>
 </body>
 </html>

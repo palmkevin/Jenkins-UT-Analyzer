@@ -119,7 +119,9 @@
 {% if not queue.new %}
   <p class="empty">Nothing waiting — the action queue is empty.</p>
 {% else %}
-<form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"></form>
+{# The ack forms carry the bucket's anchor (issue #150, same pattern as issue #143's episode
+   anchors): the PRG redirect lands back on this section instead of the top of the page. #}
+<form id="bulk-ack-new" method="post" action="/tests/bulk/acknowledge"><input type="hidden" name="anchor" value="new"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-ack-new" aria-label="select all new failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>{{ sort_th("Owner", "owner") }}</th><th>First failed</th><th>Predicted cause</th><th></th></tr></thead>
@@ -133,10 +135,12 @@
       <td>{{ row.predicted_cause or "—" }}</td>
       <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
+          <input type="hidden" name="anchor" value="new">
           <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
         </form>
         {% if row.signature_id %}
         <form method="post" action="/signatures/{{ row.signature_id }}/acknowledge">
+          <input type="hidden" name="anchor" value="new">
           <button class="btn btn-sm btn-outline-primary" type="submit"
                   title="Acknowledge every unacknowledged failing test sharing this failure signature">
             Ack all w/ signature
@@ -158,7 +162,7 @@
 {% if not queue.still_failing %}
   <p class="empty">No acknowledged failures in flight.</p>
 {% else %}
-<form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"></form>
+<form id="bulk-attr-still" method="post" action="/episodes/bulk/attribute"><input type="hidden" name="anchor" value="still_failing"></form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th><input type="checkbox" data-bulk-select-all="bulk-attr-still" aria-label="select all still-failing tests"></th><th>{{ sort_th("Test", "name") }}</th><th>Age</th><th>Triage</th><th>Causing person</th><th>Cause / reason</th></tr></thead>

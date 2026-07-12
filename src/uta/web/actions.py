@@ -264,6 +264,22 @@ def set_attribution(
     return attr
 
 
+def has_attribution_input(
+    causing_person: str | None, reason_text: str | None, triage_status: str | None
+) -> bool:
+    """Whether a submitted cause/reason/triage-status trio would actually write anything.
+
+    Mirrors :func:`set_attribution`'s write conditions (whitespace-only fields are ignored there),
+    so callers can tell an all-blank submission from a real edit — the bulk route flashes "nothing
+    to apply" instead of claiming an update count that never happened (issue #150).
+    """
+    return bool(
+        (causing_person and causing_person.strip())
+        or (reason_text and reason_text.strip())
+        or triage_status
+    )
+
+
 def bulk_set_attribution(
     session: Session,
     episode_ids: Collection[int],
@@ -277,9 +293,13 @@ def bulk_set_attribution(
 
     Each episode gets the ordinary :func:`set_attribution` treatment (so provenance is still
     derived per-episode against *that* episode's AI suggestion) — this just loops the checkbox
-    selection from the Still-failing bucket. Returns the number of episodes that existed (and were
-    therefore processed) among ``episode_ids``.
+    selection from the Still-failing bucket. Returns the number of episodes actually modified:
+    the ones that existed among ``episode_ids``, or 0 straight away when the submitted fields are
+    all blank (:func:`has_attribution_input`) — :func:`set_attribution` would write nothing to any
+    of them, and the flash count must not claim updates that never happened (issue #150).
     """
+    if not has_attribution_input(causing_person, reason_text, triage_status):
+        return 0
     count = 0
     for episode_id in episode_ids:
         attr = set_attribution(
