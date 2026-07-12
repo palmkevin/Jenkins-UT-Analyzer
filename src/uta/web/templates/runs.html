@@ -68,12 +68,12 @@
       <td>{{ state_badge(r.status) }}</td>
       <td>{{ r.started_at|ts }}</td>
       <td>{{ r.duration_seconds|duration }}</td>
-      <td class="text-end PASSED">{{ r.totals.passed }}</td>
-      <td class="text-end {% if r.totals.failed %}FAILED{% endif %}">{{ r.totals.failed }}</td>
-      <td class="text-end SKIPPED">{{ r.totals.skipped }}</td>
+      {{ ui.count_cell(r.totals.passed, "PASSED", always=true) }}
+      {{ ui.count_cell(r.totals.failed, "FAILED") }}
+      {{ ui.count_cell(r.totals.skipped, "SKIPPED", always=true) }}
       <td class="text-end">{{ r.totals.total }}</td>
-      <td class="text-end {% if r.regressions %}FAILED{% endif %}">{{ r.regressions }}</td>
-      <td class="text-end {% if r.newly_fixed %}PASSED{% endif %}">{{ r.newly_fixed }}</td>
+      {{ ui.count_cell(r.regressions, "FAILED") }}
+      {{ ui.count_cell(r.newly_fixed, "PASSED") }}
       <td>{% if r.url %}<a href="{{ r.url }}">Jenkins</a>{% endif %}</td>
     </tr>
     {% endfor %}

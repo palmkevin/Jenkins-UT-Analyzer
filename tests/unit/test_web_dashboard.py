@@ -173,6 +173,32 @@ def test_run_summary_page_shows_diff_and_results(client):
     assert "alpha" in resp.text
 
 
+def test_runs_counts_carry_non_color_status_glyphs(client):
+    """Colorblind accessibility (issue #144): pass/fail counts pair a glyph with the hue."""
+    page = client.get("/runs").text
+    glyph = '<span class="status-glyph" aria-hidden="true">'
+    assert f'<td class="text-end PASSED">{glyph}✓</span>' in page
+    assert f'<td class="text-end FAILED">{glyph}✕</span>' in page
+    assert f'<td class="text-end SKIPPED">{glyph}○</span>' in page
+
+
+def test_runs_zero_counts_render_undecorated(session_factory):
+    """A clean run shows plain zeros in the conditional columns — no failure glyph anywhere."""
+    with session_scope(session_factory) as s:
+        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+    clean = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = clean.get("/runs").text
+    assert 'aria-hidden="true">✕</span>' not in page  # no failures/regressions → no failure glyph
+    assert '<td class="text-end">0</td>' in page  # zero failed is a plain, uncolored number
+
+
+def test_timestamps_render_with_explicit_utc_label(client):
+    """Timezone clarity (issue #144): |ts renders ' UTC' text with the ISO offset on hover."""
+    page = client.get("/runs/1").text
+    assert " UTC</span>" in page
+    assert 'title="2026-06-01T01:00:00+00:00"' in page  # run 1 starts at _EPOCH + 1h
+
+
 def test_unknown_test_record_is_graceful(client):
     resp = client.get("/tests/99999")
     assert resp.status_code == 200

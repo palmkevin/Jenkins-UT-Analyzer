@@ -303,7 +303,10 @@ def test_test_record_exposes_sparkline_history(session_factory):
         r1 = make_run(s, 1, {"t": "FAILED"}, started_at=base)
         apply_run(s, r1, baseline=None)
         rec = views.test_record(s, get_identity(s, "t").id)
-    assert rec["spark"].bars == [{"x": 0.0, "width": 120.0, "failed": True, "build": 1}]
+    # A failed bar spans the full height (y=0) — the non-hue channel of issue #144.
+    assert rec["spark"].bars == [
+        {"x": 0.0, "y": 0.0, "width": 120.0, "height": 22.0, "failed": True, "build": 1}
+    ]
 
 
 def test_test_record_candidates_ranked_by_relevance_with_reasons(session_factory):

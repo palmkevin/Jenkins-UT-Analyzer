@@ -6,8 +6,10 @@
   {%- if ref -%}<a href="/runs/{{ ref.build }}">#{{ ref.build }}</a>{%- else -%}—{%- endif -%}
 {%- endmacro %}
 
+{#- Record links carry the queue's filtered/sorted URL as ?return= (issue #143), so the record's
+    "← Triage queue" breadcrumb restores this exact view. Empty on the unfiltered queue. -#}
 {% macro test_link(row) -%}
-  <a href="/tests/{{ row.identity_id }}">{{ row.test_id }}</a>
+  <a href="/tests/{{ row.identity_id }}{% if return_qs %}?return={{ return_qs }}{% endif %}">{{ row.test_id }}</a>
   {#- One badge per failing track (issue #84) — both when the test fails in both. -#}
   {%- for t in row.tracks %} <span class="badge track">{{ t }}</span>{% endfor -%}
   {%- if row.flaky %} <span class="badge flaky">flaky</span>{% endif -%}

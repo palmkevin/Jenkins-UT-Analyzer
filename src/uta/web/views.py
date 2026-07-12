@@ -363,7 +363,7 @@ _CHIP_LABELS = {
 }
 
 
-def _triage_url(filters: dict[str, str], sort: str | None) -> str:
+def triage_url(filters: dict[str, str], sort: str | None) -> str:
     """The triage-queue URL encoding the given filter set + sort — the shareable state."""
     params = {k: v for k, v in filters.items() if v}
     if sort:
@@ -386,12 +386,12 @@ def triage_filter_chips(filters: dict[str, str], sort: str | None = None) -> lis
             continue
         remaining = {k: v for k, v in filters.items() if k != key}
         chips.append(
-            {"key": key, "label": f"{name}: {value}", "remove_url": _triage_url(remaining, sort)}
+            {"key": key, "label": f"{name}: {value}", "remove_url": triage_url(remaining, sort)}
         )
     if filters.get("flaky"):
         remaining = {k: v for k, v in filters.items() if k != "flaky"}
         chips.append(
-            {"key": "flaky", "label": "flaky only", "remove_url": _triage_url(remaining, sort)}
+            {"key": "flaky", "label": "flaky only", "remove_url": triage_url(remaining, sort)}
         )
     return chips
 
@@ -406,7 +406,7 @@ def triage_sort_links(filters: dict[str, str], sort: str | None = None) -> dict[
     return {
         key: {
             "active": (sort or "") == key,
-            "url": _triage_url(filters, None if (sort or "") == key else key),
+            "url": triage_url(filters, None if (sort or "") == key else key),
         }
         for key in _SORT_KEYS
     }
