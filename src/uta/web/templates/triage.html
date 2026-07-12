@@ -133,11 +133,14 @@
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
           <button class="btn btn-sm btn-primary" type="submit">Acknowledge</button>
         </form>
-        {% if row.signature_id %}
+        {#- Signature-wide ack shows its blast radius up front (issue #152): the count is the
+            number of New tests sharing this failure signature — exactly what one click would
+            acknowledge. Hidden when it's 1: it would add nothing over plain Acknowledge. -#}
+        {% if row.signature_id and row.signature_ack_count > 1 %}
         <form method="post" action="/signatures/{{ row.signature_id }}/acknowledge">
           <button class="btn btn-sm btn-outline-primary" type="submit"
-                  title="Acknowledge every unacknowledged failing test sharing this failure signature">
-            Ack all w/ signature
+                  title="Acknowledge all {{ row.signature_ack_count }} unacknowledged failing tests sharing this failure signature">
+            Ack all w/ signature ({{ row.signature_ack_count }})
           </button>
         </form>
         {% endif %}

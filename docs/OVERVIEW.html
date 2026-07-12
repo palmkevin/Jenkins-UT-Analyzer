@@ -535,10 +535,12 @@
       test name carries a muted <b>one-line error snippet</b> (the traceback's closing exception line,
       falling back to the details field) so triage is possible without opening the record. The action
       queue: predicted cause + an <b>Acknowledge</b> button, a row checkbox for <b>bulk-acknowledge
-      selected</b>, and a one-click <b>“acknowledge all with this signature”</b> — matches other
-      unacknowledged failures with the same exception type + message (own-function stack frames
-      excluded), since a signature key is test-identity-scoped and so never literally shared across
-      tests. Driven toward empty.</p></div>
+      selected</b>, and — when other unacknowledged failures share the row's signature — a one-click
+      <b>“Ack all w/ signature (N)”</b> showing that blast radius <i>before</i> the click: N is the
+      count of unacknowledged failures (this row included) matching the same exception type + message
+      (own-function stack frames excluded, since a signature key is test-identity-scoped and so never
+      literally shared across tests); the button only appears once N&nbsp;&gt;&nbsp;1. Driven toward
+      empty.</p></div>
     <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with the
       same error snippet under the test name, plus age, triage status, causing person, and a one-line
       cause. Row checkboxes support a <b>bulk “apply to selected”</b> (triage status / causing person /

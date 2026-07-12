@@ -324,6 +324,24 @@ def test_shared_outage_pair_offers_signature_wide_attribution(session_factory):
         assert f'formaction="/signatures/{record["recurrence"]["signature_id"]}/attribute"' in page
 
 
+def test_shared_outage_pair_shows_ack_blast_radius(session_factory, queue):
+    """Issue #152: the SMTP-outage pair's New rows carry the signature-wide ack blast radius, so
+    the live demo renders "Ack all w/ signature (2)" on exactly those two rows — every other New
+    row's signature matches only itself, so it shows no bulk-ack button at all."""
+    from uta.web.app import create_app
+
+    pair = {
+        f"ut_notify.nt_dispatch.TestClass.{m}" for m in ("test_email_dispatch", "test_sms_dispatch")
+    }
+    for row in queue["new"]:
+        expected = 2 if row["test_id"] in pair else 1
+        assert row["signature_ack_count"] == expected, row["test_id"]
+
+    page = TestClient(create_app(session_factory=session_factory)).get("/").text
+    assert page.count("Ack all w/ signature (2)") == 2  # one per row of the pair, nothing else
+    assert page.count("Ack all w/ signature") == 2
+
+
 def test_reseeding_the_same_store_converges():
     """Issue #122: re-running ``uta seed-demo`` against a persistent store must converge, not
     crash — the control-state rows used to be blindly ``add``ed, so a second seed died with a
