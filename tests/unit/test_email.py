@@ -21,6 +21,7 @@ from uta.delivery.email import (
     SmtpEmailSender,
     build_regression_report,
     send_alert,
+    send_ops_alert,
 )
 from uta.models import CodeChangeCandidate, TestIdentity
 
@@ -170,8 +171,8 @@ def test_send_alert_swallows_sender_failure():
 class _RecordingSmtp:
     """A fake ``smtplib.SMTP`` recording the call sequence — no socket is ever opened (#120)."""
 
-    def __init__(self, host: str, port: int) -> None:
-        self.host, self.port = host, port
+    def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
+        self.host, self.port, self.timeout = host, port, timeout
         self.calls: list[tuple] = []
 
     def __enter__(self):
@@ -193,8 +194,8 @@ class _RecordingSmtp:
 def _send_via_fake_smtp(monkeypatch, sender: SmtpEmailSender) -> _RecordingSmtp:
     made: list[_RecordingSmtp] = []
 
-    def _factory(host, port):
-        made.append(_RecordingSmtp(host, port))
+    def _factory(host, port, timeout=None):
+        made.append(_RecordingSmtp(host, port, timeout))
         return made[-1]
 
     monkeypatch.setattr(smtplib, "SMTP", _factory)
@@ -250,3 +251,47 @@ def test_empty_smtp_starttls_env_means_unset():
     """`.env.example` ships `SMTP_STARTTLS=`; an empty value must mean "default", not a crash."""
     assert Settings(smtp_starttls="").smtp_starttls is None
     assert Settings(smtp_starttls="false").smtp_starttls is False
+
+
+def test_send_ops_alert_delivers_via_sender():
+    sender = RecordingEmailSender()
+    msg = send_ops_alert(sender, RCPT, subject="poller is stale", body="b")
+    assert msg is not None
+    assert sender.sent == [msg]
+    assert msg.subject == "UT Analyzer ops — poller is stale"
+
+
+def test_send_ops_alert_swallows_sender_failure():
+    """Ops alerting is best-effort like send_alert: a raising sender yields ``None``, not an
+    exception — an SMTP outage must not 500 ``/health`` or erase the poller's tick record."""
+
+    class _RaisingSender:
+        def send(self, message: EmailMessage) -> None:
+            raise smtplib.SMTPException("relay down")
+
+    assert send_ops_alert(_RaisingSender(), RCPT, subject="poller is stale", body="b") is None
+
+
+def test_smtp_sender_dials_with_timeout(monkeypatch):
+    """A black-holed relay must fail fast, not hang the caller — the dial carries a timeout."""
+    seen: dict = {}
+
+    class _FakeSmtp:
+        def __init__(self, host, port, timeout=None):
+            seen.update(host=host, port=port, timeout=timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def send_message(self, mime):
+            seen["sent"] = True
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSmtp)
+    SmtpEmailSender("relay.example", 25, "uta@example.com").send(
+        EmailMessage(subject="s", body="b", recipients=RCPT)
+    )
+    assert seen["sent"] is True
+    assert seen["timeout"] is not None and seen["timeout"] > 0
