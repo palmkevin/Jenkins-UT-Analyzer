@@ -47,10 +47,12 @@
     .empty { color: #868e96; font-style: italic; }
     code { font-size: 0.85em; }
 
-    /* Test-status colouring (applied to cells / inline spans by status name). */
+    /* Test-status colouring (applied to cells / inline spans by status name). Bare counts also
+       carry a ✓/✕/○ glyph (the count_cell macro) so status reads without colour (issue #144). */
     .FAILED, .REGRESSION, .FAILING { color: #b00020; font-weight: 600; }
     .PASSED, .FIXED { color: #137333; font-weight: 600; }
     .SKIPPED, .REMOVED { color: #868e96; }
+    .status-glyph { font-size: 0.8em; }
 
     /* Badges: keep the single-class call sites working on top of Bootstrap's .badge base. */
     .badge { background: #e6eaf0; color: #333; font-weight: 600; vertical-align: middle; }
