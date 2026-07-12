@@ -61,15 +61,17 @@ def check_health(
     """Evaluate DB reachability and heartbeat freshness; alert (once) on a stale poller.
 
     Freshness reference is ``last_success_at`` — a poller that ticks but keeps failing goes stale
-    too, matching "no successful poll in N intervals". ``last_poll_at`` stands in only for a
-    heartbeat that predates the ``last_success_at`` column (upgrade window).
+    too, matching "no successful poll in N intervals". For a heartbeat with no success yet —
+    a row predating the ``last_success_at`` column (upgrade window) or a deployment that has
+    failed from birth — the row's ``created_at`` stands in, granting one grace window before
+    going stale (``last_poll_at`` must not stand in: it stays fresh on failing ticks).
     """
     now = now or datetime.now(UTC)
     try:
         with session_scope(session_factory) as session:
             session.execute(text("SELECT 1"))
             hb = read_heartbeat(session)
-            last_success = (hb.last_success_at or hb.last_poll_at) if hb else None
+            last_success = (hb.last_success_at or hb.created_at) if hb else None
             stale_alerted = hb.stale_alerted_at if hb else None
     except Exception as exc:  # noqa: BLE001 — any DB fault means unhealthy, whatever its type
         return HealthReport(
