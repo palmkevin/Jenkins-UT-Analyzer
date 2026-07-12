@@ -544,6 +544,32 @@ def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
             assert lc.acknowledged_by == "erin"
 
 
+def test_signature_ack_button_shows_blast_radius_and_hides_when_solo(session_factory):
+    """Issue #152: the New-bucket bulk-ack button carries its blast radius up front — "Ack all w/
+    signature (2)" on the shared-error pair — and is not rendered at all for a row whose signature
+    matches only itself (a count of 1 adds nothing over the plain Acknowledge button)."""
+    from uta.kb.store import record_signatures_for_run
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+    page = TestClient(create_app(session_factory=session_factory)).get("/").text
+    assert page.count("Ack all w/ signature (2)") == 2  # one per row of the shared pair
+    assert page.count("Ack all w/ signature") == 2  # gamma (count 1) renders no bulk button
+    assert "Acknowledge all 2 unacknowledged failing tests sharing this failure signature" in page
+
+
 def test_attribute_by_signature_route_attributes_matching_tests(session_factory):
     from uta.kb.store import record_signatures_for_run
     from uta.web import actions

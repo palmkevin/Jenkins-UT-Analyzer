@@ -981,6 +981,96 @@ def test_acknowledge_by_signature_skips_already_acknowledged(session_factory):
         assert _lc(s, "beta").acknowledged_by == "dana"  # untouched
 
 
+# ── signature ack blast radius on New rows (issue #152) ─────────────────────
+
+
+def test_triage_new_rows_carry_signature_ack_blast_radius(session_factory):
+    """Two tests sharing an error key count 2 on each row; a distinct error counts 1 — the "(N)"
+    the "Ack all w/ signature" button shows before the click (and its render-at-all threshold)."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("boom", "Traceback"),
+                "beta": ("boom", "Traceback"),
+                "gamma": ("different", "Traceback"),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        rows = {r["test_id"]: r for r in views.triage_queue(s)["new"]}
+        assert rows["alpha"]["signature_ack_count"] == 2
+        assert rows["beta"]["signature_ack_count"] == 2
+        assert rows["gamma"]["signature_ack_count"] == 1
+
+
+def test_signature_ack_count_zero_without_signature(session_factory):
+    """A New row with no recorded signature shows no bulk-ack control — count 0, id None."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["signature_id"] is None
+        assert row["signature_ack_count"] == 0
+
+
+def test_signature_ack_count_equals_action_blast_radius(session_factory):
+    """The "(N)" shown before the click equals what :func:`acknowledge_by_signature` then
+    acknowledges — same ``_error_key`` grouping over the same unacknowledged-failing scope, even
+    though each test's frame lines (and therefore signature rows) are distinct."""
+
+    def _stack(func: str) -> str:
+        return (
+            "Traceback (most recent call last):\n"
+            f'  File "/opt/ls/lx/release/permanent/tests/dev/ut_notify/nt_dispatch.py", '
+            f"line 63, in {func}\n"
+            "    result = run_case()\n"
+            "ConnectionError: SMTP relay unreachable: connection refused"
+        )
+
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"email": "FAILED", "sms": "FAILED", "push": "FAILED"},
+            errors={n: (None, _stack(f"test_{n}_dispatch")) for n in ("email", "sms", "push")},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+        # An already-acknowledged sharer sits in Still failing — outside both the New bucket and
+        # the bulk action's unacknowledged-only scope, so it must not inflate the count.
+        actions.acknowledge(s, get_identity(s, "push").id, "dana")
+
+        rows = {r["test_id"]: r for r in views.triage_queue(s)["new"]}
+        shown = rows["email"]["signature_ack_count"]
+        assert shown == rows["sms"]["signature_ack_count"] == 2
+
+        acked = actions.acknowledge_by_signature(s, rows["email"]["signature_id"], "erin")
+        assert acked == shown
+
+
+def test_signature_ack_count_ignores_view_filters(session_factory):
+    """A filtered view still reports the full blast radius — the bulk action acknowledges every
+    matching test regardless of the filters that produced the page."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"both": "FAILED", "py39only": "FAILED"},
+            errors={"both": ("boom", "Traceback"), "py39only": ("boom", "Traceback")},
+            fail_tracks={"py39only": ("permanent_py39",)},
+        )
+        apply_run(s, r1, baseline=None)
+        record_signatures_for_run(s, r1)
+
+        q = views.triage_queue(s, filters={"track": "permanent"})
+        assert {r["test_id"] for r in q["new"]} == {"both"}  # the sibling is filtered out …
+        assert q["new"][0]["signature_ack_count"] == 2  # … but one click still acks both
+
+
 def test_bulk_set_attribution_applies_to_all_episodes(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})

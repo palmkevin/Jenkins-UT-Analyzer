@@ -9,6 +9,7 @@ bookkeeping exists to drift.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Collection, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -38,7 +39,7 @@ from uta.models import (
 )
 from uta.models.enums import LifecycleState
 from uta.web import charts
-from uta.web.actions import open_episodes_for_signature
+from uta.web.actions import _error_key, open_episodes_for_signature
 
 # Default max rows a dashboard section renders before it is capped behind a "Load all N Tests" link.
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
@@ -211,6 +212,35 @@ def _failure_infos(
         ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
         for ep in episodes
     }
+
+
+def _signature_ack_counts(
+    session: Session, signature_ids: Collection[int | None]
+) -> dict[int, int]:
+    """Blast radius per signature for the "Ack all w/ signature (N)" button (issue #152).
+
+    Signatures are **per-test** (identity is part of the hash), so grouping by ``signature_id``
+    would always count 1 — the real cross-test grouping key is the exception type + message with
+    the stack-frame lines stripped (:func:`uta.web.actions._error_key`), the same computation
+    :func:`uta.web.actions.acknowledge_by_signature` performs at commit time. Callers pass the New
+    bucket's (unacknowledged, failing) rows' signature ids — the same scope the bulk action
+    targets — so each signature's count *is* the number of tests one click would acknowledge.
+    One batched query for the normalized texts, grouping in Python: the queue projection stays
+    O(1) queries in the number of rows (issue #52).
+    """
+    ids = [i for i in signature_ids if i is not None]
+    if not ids:
+        return {}
+    keys = {
+        sig_id: _error_key(text)
+        for sig_id, text in session.execute(
+            select(FailureSignature.id, FailureSignature.normalized_text).where(
+                FailureSignature.id.in_(set(ids))
+            )
+        )
+    }
+    counts = Counter(keys[i] for i in ids if i in keys)
+    return {sig_id: counts[key] for sig_id, key in keys.items()}
 
 
 def _latest_classification(session: Session, episode_id: int) -> Classification | None:
@@ -558,7 +588,8 @@ def triage_queue(
 
     Query count is **O(1) in the number of rows** (issue #52): one eager-loaded lifecycle scan
     (identity + current episode + attribution), one batched latest-classification lookup, one
-    batched run-ref lookup, one batched failure-info (track/signature) lookup.
+    batched run-ref lookup, one batched failure-info (track/signature) lookup, and one batched
+    signature-text lookup for the New rows' ack blast radius (issue #152).
     """
     filters = filters or {}
     lifecycles = (
@@ -593,6 +624,17 @@ def triage_queue(
         [ep.first_failure_run_id for ep in episodes] + [ep.fixed_in_run_id for ep in episodes],
     )
     failure_infos = _failure_infos(session, episodes)
+    # Blast radius for the New rows' "Ack all w/ signature (N)" button (issue #152) — grouped over
+    # the *whole* pre-filter, pre-cap New bucket, because the bulk action acknowledges every
+    # matching test regardless of the current view's filters or row cap.
+    signature_ack_counts = _signature_ack_counts(
+        session,
+        [
+            (failure_infos.get(lc.current_episode.id) or {}).get("signature_id")
+            for bucket, lc in selected
+            if bucket == "new" and lc.current_episode is not None
+        ],
+    )
 
     new: list[dict] = []
     still_failing: list[dict] = []
@@ -604,6 +646,7 @@ def triage_queue(
         if not _matches_filters(row, filters):
             continue
         if bucket == "new":
+            row["signature_ack_count"] = signature_ack_counts.get(row["signature_id"], 0)
             new.append(row)
         elif bucket == "still_failing":
             still_failing.append(row)

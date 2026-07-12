@@ -212,9 +212,10 @@ _SPECS: tuple[TestSpec, ...] = (
     # error text -> distinct signatures (identity is part of the hash) but identical normalized
     # text, exactly what the triage queue's "Acknowledge all with this signature" bulk action
     # (issue #63) and the test record's signature-wide "apply to all N affected tests"
-    # attribution (issue #106) target. Deliberately left untriaged by the seed so both controls
-    # render and stay clickable in the live demo. A fresh suite/owner also widens the filter
-    # bar's dropdown options.
+    # attribution (issue #106) target — and the queue button announces the pair as its "(2)"
+    # blast radius up front (issue #152); the solo failures around it show no bulk button at all.
+    # Deliberately left untriaged by the seed so both controls render and stay clickable in the
+    # live demo. A fresh suite/owner also widens the filter bar's dropdown options.
     TestSpec(
         "ut_notify.nt_dispatch.TestClass",
         "test_email_dispatch",
