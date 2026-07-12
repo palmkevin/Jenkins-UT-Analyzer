@@ -130,9 +130,11 @@
     <tr>
       <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" data-bulk-item="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
       <td>{{ test_link(row) }}{{ error_snippet(row) }}</td>
-      <td>{{ row.owner or "" }}</td>
+      {#- Owner / predicted-cause facts pivot into the queue filtered on just that value
+          (issue #157) — URLs pre-built in the view layer (views.pivot_url). -#}
+      <td>{{ ui.pivot(row.owner, row.owner_url, fallback="") }}</td>
       <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|reltime }}</td>
-      <td>{{ row.predicted_cause or "—" }}</td>
+      <td>{{ ui.pivot(row.predicted_cause, row.cause_url) }}</td>
       <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
           <input type="hidden" name="anchor" value="new">
@@ -185,7 +187,8 @@
       <td>{{ row.age_runs if row.age_runs is not none else "?" }} runs / {{ row.age_days if row.age_days is not none else "?" }}d</td>
       <td>{{ row.triage_status or "—" }}</td>
       <td>{{ row.causing_person or "—" }}</td>
-      <td>{{ row.reason_text or row.predicted_cause or "—" }}</td>
+      {#- The human reason wins; a bare predicted cause pivots like the New bucket's (issue #157). -#}
+      <td>{{ row.reason_text if row.reason_text else ui.pivot(row.predicted_cause, row.cause_url) }}</td>
     </tr>
     {% endfor %}
   </tbody>

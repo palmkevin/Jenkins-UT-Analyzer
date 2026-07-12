@@ -20,7 +20,10 @@
 
 {% if kb.query %}
   {% if not kb.results %}
-    <p class="empty">No similar past failures (above the similarity cutoff).</p>
+    {#- Cross-referring empty state (issue #157): the inverse of /search's — the text might be a
+        test name rather than an error message, so hand the query to the test search. -#}
+    <p class="empty">No similar past failures (above the similarity cutoff).
+      <a href="/search?q={{ kb.query|urlencode }}">Search tests by name for this text</a></p>
   {% else %}
   <div class="table-responsive">
   <table class="table table-hover table-sm align-middle">
