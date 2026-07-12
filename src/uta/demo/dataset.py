@@ -268,6 +268,7 @@ class SyntheticSvnBlame:
         idx = sum(ord(c) for c in repo_path) % len(_MAIN_DEVELOPERS)
         return _MAIN_DEVELOPERS[idx]
 
+
 _JENKINS_URL = (
     "https://jenkins.example.invalid/job/Development/job/"
     "lsdevbuild-build-release-permanent/{build}/"
