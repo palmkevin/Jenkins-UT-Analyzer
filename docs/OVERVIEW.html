@@ -202,7 +202,8 @@
         bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
-        one-click <b>“acknowledge all with this signature”</b> per New-bucket row, and its attribution twin
+        one-click <b>“Ack all w/ signature (N)”</b> — shown per New-bucket row only when other
+        unacknowledged failures share its signature — and its attribution twin
         on the per-test record page (apply cause/reason/Jira ticket/triage status to every open failing test
         sharing the signature) — run summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
