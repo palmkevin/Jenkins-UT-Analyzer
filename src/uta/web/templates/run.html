@@ -24,7 +24,12 @@
 <h1>Run #{{ run.build }} — {{ run.status }}{% if not run.complete %} (incomplete){% endif %}</h1>
 <p class="meta">
   {{ run.started_at|ts }} → {{ run.finished_at|ts }}<br>
-  {{ run.totals.passed }} passed · {{ run.totals.failed }} failed · {{ run.totals.skipped }} skipped
+  {#- A non-zero failed count is actionable (issue #157): it deep-links to the failures-only
+      results view below (the same GET param the checkbox sets). Zero stays plain text. -#}
+  {{ run.totals.passed }} passed ·
+  {% if run.totals.failed -%}
+  <a class="pivot-link" href="/runs/{{ run.build }}?failures_only=1#results">{{ run.totals.failed }} failed</a>
+  {%- else %}{{ run.totals.failed }} failed{% endif %} · {{ run.totals.skipped }} skipped
   {% if run.url %}· <a href="{{ run.url }}">Jenkins</a>{% endif %}
 </p>
 
@@ -54,11 +59,16 @@
 </table>
 </div>
 
-<h2 id="results">Results ({{ run.results_total }})</h2>
+{#- The heading names the active filter (issue #157): "failures only (512 of 24813)" — the
+    filtered count against the run's full result-row total (passed+failed+skipped counts
+    per-(test, track) results, the same rows the table paginates; no extra query). -#}
+<h2 id="results">Results{% if run.failures_only %} — failures only ({{ run.results_total }} of {{ run.totals.passed + run.totals.failed + run.totals.skipped }}){% else %} ({{ run.results_total }}){% endif %}</h2>
+{#- The checkbox submits on change (same instant-filter pattern as the triage selects, issue #77);
+    the Apply button stays as the no-JS fallback. -#}
 <form class="d-flex align-items-center gap-2 mb-2" method="get" action="/runs/{{ run.build }}#results">
   <div class="form-check">
     <input class="form-check-input" type="checkbox" name="failures_only" value="1" id="failures-only"
-           {% if run.failures_only %}checked{% endif %}>
+           onchange="this.form.submit()" {% if run.failures_only %}checked{% endif %}>
     <label class="form-check-label" for="failures-only">Failures only</label>
   </div>
   <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
@@ -74,7 +84,7 @@
       <td class="{{ r.status }}">{{ r.status }}</td>
       <td>{{ r.track }}</td>
       <td><a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a></td>
-      <td>{{ r.owner or "" }}</td>
+      <td>{{ ui.pivot(r.owner, r.owner_url, fallback="") }}</td>
       <td>{{ "%.2f"|format(r.duration) }}s</td>
       <td>{% if r.file_path %}<code>{{ r.file_path }}:{{ r.line }}</code>{% endif %}</td>
     </tr>

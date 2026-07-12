@@ -76,5 +76,11 @@ def make_run(
                     error_stack_trace=stack if track_status == status else None,
                 )
             )
+    # Mirror the ingest pipeline's totals (per-result-row counts) so views built on run.total_*
+    # (the run-page header / failures-only heading, issue #157) see the real invariant:
+    # total_passed + total_failed + total_skipped == the run's result-row count.
+    run.total_passed = sum(1 for r in run.results if r.status in ("PASSED", "FIXED"))
+    run.total_failed = sum(1 for r in run.results if r.status in ("FAILED", "REGRESSION"))
+    run.total_skipped = sum(1 for r in run.results if r.status == "SKIPPED")
     session.flush()
     return run

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Search — UT Analyzer{% endblock %}
 
 {% block content %}
@@ -17,7 +18,10 @@
 
 {% if query %}
   {% if not results %}
-    <p class="empty">No tests match "{{ query }}".</p>
+    {#- Cross-referring empty state (issue #157): the same text might still match a past failure —
+        hand the query to the knowledge base instead of dead-ending. -#}
+    <p class="empty">No tests match "{{ query }}".
+      <a href="/kb?q={{ query|urlencode }}">Search the knowledge base for this text</a></p>
   {% else %}
   <div class="table-responsive">
   <table class="table table-hover table-sm align-middle">
@@ -26,8 +30,9 @@
       {% for r in results %}
       <tr>
         <td><a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a></td>
-        <td>{{ r.suite or "—" }}</td>
-        <td>{{ r.owner or "—" }}</td>
+        {#- Suite / owner pivot into the triage queue filtered on that value (issue #157). -#}
+        <td>{{ ui.pivot(r.suite, r.suite_url) }}</td>
+        <td>{{ ui.pivot(r.owner, r.owner_url) }}</td>
       </tr>
       {% endfor %}
     </tbody>

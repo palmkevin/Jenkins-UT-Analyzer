@@ -315,6 +315,9 @@ def _row(
         "test_id": ident.canonical_name,
         "suite": ident.suite,
         "owner": ident.owner_initials,
+        # Pivot links (issue #157): the row's plain facts double as filters on the queue itself.
+        "owner_url": pivot_url("owner", ident.owner_initials),
+        "cause_url": pivot_url("cause", classification.predicted_cause if classification else None),
         "state": lc.state,
         "flaky": lc.flaky,
         "reopen_count": lc.reopen_count,
@@ -409,6 +412,19 @@ def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str
         params["expand"] = ",".join(expand)
     query = urlencode(params, safe=",")
     return f"/?{query}" if query else "/"
+
+
+def pivot_url(key: str, value: str | None) -> str | None:
+    """The triage-queue URL filtered on just this **one** value (issue #157) — the pivot behind a
+    clickable owner / suite / predicted-cause fact.
+
+    Single-filter by design: clicking an owner anywhere means "show me everything of this owner",
+    not "add this owner to my current view" — so the URL never inherits the page's other filters.
+    ``None`` for an empty value, so templates fall back to the plain-text placeholder.
+    """
+    if not value:
+        return None
+    return triage_url({key: str(value)}, None)
 
 
 def triage_filter_chips(
@@ -1016,6 +1032,7 @@ def flaky_leaderboard(
     for row in rows:
         hist = _test_history(session, row["identity_id"], window_days=window_days)
         row["spark"] = charts.sparkline(hist)
+        row["owner_url"] = pivot_url("owner", row["owner"])
     return {"rows": rows, "total": len(candidates), "window_days": window_days}
 
 
@@ -1063,6 +1080,8 @@ def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
             "test_id": i.canonical_name,
             "suite": i.suite,
             "owner": i.owner_initials,
+            "suite_url": pivot_url("suite", i.suite),
+            "owner_url": pivot_url("owner", i.owner_initials),
         }
         for i in idents
     ]
@@ -1170,6 +1189,7 @@ def run_summary(
                 "status": r.status,
                 "duration": r.duration,
                 "owner": r.owner_initials,
+                "owner_url": pivot_url("owner", r.owner_initials),
                 "file_path": r.file_path,
                 "line": r.line,
             }

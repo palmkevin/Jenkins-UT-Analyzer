@@ -72,6 +72,11 @@
     details.card[open] > summary { margin-bottom: 0.8rem; }
     details.episodes > summary { font-size: 1.15rem; margin: 1.6rem 0 0.8rem; }
 
+    /* Clickable pivot facts (issue #157): owner / suite / predicted-cause values link to the
+       pre-filtered triage queue. Kept subtle — inherited colour, dotted underline — so data
+       cells don't shout; hover restores the ordinary link colour. */
+    .pivot-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+    .pivot-link:hover { color: var(--bs-link-hover-color); }
     /* Classification-evidence rows on the test record's why-block (issue #159). */
     dl.evidence { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; margin: 0; }
     dl.evidence dt { font-weight: 600; }

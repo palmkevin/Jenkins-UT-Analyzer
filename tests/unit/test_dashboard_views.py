@@ -807,6 +807,56 @@ def test_triage_expand_urls_merge_with_already_expanded_sections():
     assert urls["new"] == "/?expand=new#new"
 
 
+# ── pivot links (issue #157) ──────────────────────────────────────────────────
+
+
+def test_pivot_url_builds_single_filter_queue_urls():
+    assert views.pivot_url("owner", "KP") == "/?owner=KP"
+    assert views.pivot_url("cause", "CODE_CHANGE") == "/?cause=CODE_CHANGE"
+    # Values are URL-encoded; the pivot carries exactly one filter, never inherited state.
+    assert views.pivot_url("suite", "ut a&b") == "/?suite=ut+a%26b"
+
+
+def test_pivot_url_empty_value_yields_none():
+    assert views.pivot_url("owner", None) is None
+    assert views.pivot_url("suite", "") is None
+
+
+def test_triage_rows_carry_pivot_urls(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "t").owner_initials = "KP"
+        s.add(
+            Classification(
+                episode_id=_lc(s, "t").current_episode_id,
+                predicted_cause=PredictedCause.DATA_CHANGE,
+            )
+        )
+        s.flush()
+        row = views.triage_queue(s)["new"][0]
+        assert row["owner_url"] == "/?owner=KP"
+        assert row["cause_url"] == "/?cause=DATA_CHANGE"
+
+
+def test_triage_row_pivot_urls_none_without_owner_or_classification(session_factory):
+    with session_scope(session_factory) as s:
+        apply_run(s, make_run(s, 1, {"t": "FAILED"}), baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["owner_url"] is None
+        assert row["cause_url"] is None
+
+
+def test_search_rows_carry_suite_and_owner_pivot_urls(session_factory):
+    with session_scope(session_factory) as s:
+        ident = get_identity(s, "ut_a.TestClass.test_thing")
+        ident.suite = "ut_a"
+        ident.owner_initials = "KP"
+        (row,) = views.test_search(s, "thing")
+        assert row["suite_url"] == "/?suite=ut_a"
+        assert row["owner_url"] == "/?owner=KP"
+
+
 def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(
