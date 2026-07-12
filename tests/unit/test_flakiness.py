@@ -102,6 +102,29 @@ def test_shard_correlation(session_factory):
     assert st.flaky is True
 
 
+def test_alternating_track_failures_are_not_shard_correlated(session_factory):
+    """Failures flip-flopping between tracks across runs are ordinary flakiness, not shard-tied."""
+    with session_factory() as s:
+        make_run(s, 1, {T: "PASSED"})
+        make_run(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
+        make_run(s, 3, {T: "PASSED"})
+        make_run(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
+        s.commit()
+        st = _stats(s)
+    assert st.shard_correlated is False
+    assert st.flaky is True
+
+
+def test_single_run_single_track_failure_is_shard_correlated(session_factory):
+    """One failing run confined to one track (the other passing) already sets the flag."""
+    with session_factory() as s:
+        make_run(s, 1, {T: "PASSED"})
+        make_run(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
+        s.commit()
+        st = _stats(s)
+    assert st.shard_correlated is True
+
+
 def test_history_counts(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["FAILED", "PASSED", "FAILED"], start=1):

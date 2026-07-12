@@ -6,12 +6,20 @@
   {%- if ref -%}<a href="/runs/{{ ref.build }}">#{{ ref.build }}</a>{%- else -%}—{%- endif -%}
 {%- endmacro %}
 
+{#- Record links carry the queue's filtered/sorted URL as ?return= (issue #143), so the record's
+    "← Triage queue" breadcrumb restores this exact view. Empty on the unfiltered queue. -#}
 {% macro test_link(row) -%}
-  <a href="/tests/{{ row.identity_id }}">{{ row.test_id }}</a>
+  <a href="/tests/{{ row.identity_id }}{% if return_qs %}?return={{ return_qs }}{% endif %}">{{ row.test_id }}</a>
   {#- One badge per failing track (issue #84) — both when the test fails in both. -#}
   {%- for t in row.tracks %} <span class="badge track">{{ t }}</span>{% endfor -%}
   {%- if row.flaky %} <span class="badge flaky">flaky</span>{% endif -%}
   {%- if row.reopen_count %} <span class="badge">reopened ×{{ row.reopen_count }}</span>{% endif -%}
+{%- endmacro %}
+
+{# One-line error snippet (issue #145): the failure's exception line, muted, under the test name —
+   enough context to triage without opening the record. Empty when the row has no error text. #}
+{% macro error_snippet(row) -%}
+  {%- if row.error_snippet %}<div class="error-snippet" title="{{ row.error_snippet }}">{{ row.error_snippet }}</div>{% endif -%}
 {%- endmacro %}
 
 {# Clickable column-sort header (issue #77): applies that sort, or toggles back to the age
@@ -117,7 +125,7 @@
     {% for row in queue.new %}
     <tr>
       <td><input type="checkbox" name="identity_ids" value="{{ row.identity_id }}" form="bulk-ack-new" data-bulk-item="bulk-ack-new" aria-label="select {{ row.test_id }}"></td>
-      <td>{{ test_link(row) }}</td>
+      <td>{{ test_link(row) }}{{ error_snippet(row) }}</td>
       <td>{{ row.owner or "" }}</td>
       <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|reltime }}</td>
       <td>{{ row.predicted_cause or "—" }}</td>
@@ -163,6 +171,7 @@
       <td>
         {{ test_link(row) }}
         {% if row.removed %}<span class="badge removed">Removed</span>{% endif %}
+        {{ error_snippet(row) }}
       </td>
       <td>{{ row.age_runs if row.age_runs is not none else "?" }} runs / {{ row.age_days if row.age_days is not none else "?" }}d</td>
       <td>{{ row.triage_status or "—" }}</td>
