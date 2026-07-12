@@ -14,7 +14,14 @@ from tests.builders import _EPOCH, make_run
 from tests.fakes.email import RecordingEmailSender
 from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
-from uta.delivery.email import EmailMessage, build_regression_report, send_alert
+from uta.clients import build_email_sender
+from uta.config import Settings
+from uta.delivery.email import (
+    EmailMessage,
+    SmtpEmailSender,
+    build_regression_report,
+    send_alert,
+)
 from uta.models import CodeChangeCandidate, TestIdentity
 
 RCPT = ("team@example.com",)
@@ -158,3 +165,88 @@ def test_send_alert_swallows_sender_failure():
 
     msg = EmailMessage(subject="s", body="b", recipients=RCPT)
     assert send_alert(_RaisingSender(), msg) is False
+
+
+class _RecordingSmtp:
+    """A fake ``smtplib.SMTP`` recording the call sequence — no socket is ever opened (#120)."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host, self.port = host, port
+        self.calls: list[tuple] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass
+
+    def starttls(self) -> None:
+        self.calls.append(("starttls",))
+
+    def login(self, user: str, password: str) -> None:
+        self.calls.append(("login", user, password))
+
+    def send_message(self, mime) -> None:
+        self.calls.append(("send_message", mime["To"]))
+
+
+def _send_via_fake_smtp(monkeypatch, sender: SmtpEmailSender) -> _RecordingSmtp:
+    made: list[_RecordingSmtp] = []
+
+    def _factory(host, port):
+        made.append(_RecordingSmtp(host, port))
+        return made[-1]
+
+    monkeypatch.setattr(smtplib, "SMTP", _factory)
+    sender.send(EmailMessage(subject="s", body="b", recipients=RCPT))
+    assert len(made) == 1
+    return made[0]
+
+
+def test_smtp_sender_with_credentials_starttls_then_login_before_send(monkeypatch):
+    """Configured credentials mean STARTTLS + login, in that order, before the message (#120)."""
+    sender = SmtpEmailSender("relay", 587, "uta@example.com", user="bot", password="hunter2")
+    smtp = _send_via_fake_smtp(monkeypatch, sender)
+    assert smtp.calls == [("starttls",), ("login", "bot", "hunter2"), ("send_message", RCPT[0])]
+
+
+def test_smtp_sender_without_credentials_is_plain_send(monkeypatch):
+    """No credentials ⇒ exactly today's behavior: no starttls, no login."""
+    smtp = _send_via_fake_smtp(monkeypatch, SmtpEmailSender("relay", 25, "uta@example.com"))
+    assert smtp.calls == [("send_message", RCPT[0])]
+
+
+def test_smtp_sender_explicit_starttls_overrides_credential_default(monkeypatch):
+    """SMTP_STARTTLS set explicitly wins over the "on when credentials" default, both ways."""
+    off = SmtpEmailSender("relay", 25, "f@x", user="bot", password="pw", starttls=False)
+    assert _send_via_fake_smtp(monkeypatch, off).calls == [
+        ("login", "bot", "pw"),
+        ("send_message", RCPT[0]),
+    ]
+    on = SmtpEmailSender("relay", 25, "f@x", starttls=True)
+    assert _send_via_fake_smtp(monkeypatch, on).calls == [("starttls",), ("send_message", RCPT[0])]
+
+
+def test_build_email_sender_passes_credentials_through(monkeypatch):
+    """The settings→sender builder forwards user/password/starttls, not just host/port/from."""
+    settings = Settings(
+        smtp_host="relay",
+        smtp_port=587,
+        smtp_from="uta@example.com",
+        smtp_recipients="team@example.com",
+        smtp_user="bot",
+        smtp_password="hunter2",
+        smtp_starttls=None,
+    )
+    sender = build_email_sender(settings)
+    assert isinstance(sender, SmtpEmailSender)
+    smtp = _send_via_fake_smtp(monkeypatch, sender)
+    assert smtp.host == "relay"
+    assert smtp.port == 587
+    assert smtp.calls == [("starttls",), ("login", "bot", "hunter2"), ("send_message", RCPT[0])]
+
+
+def test_empty_smtp_starttls_env_means_unset():
+    """`.env.example` ships `SMTP_STARTTLS=`; an empty value must mean "default", not a crash."""
+    assert Settings(smtp_starttls="").smtp_starttls is None
+    assert Settings(smtp_starttls="false").smtp_starttls is False

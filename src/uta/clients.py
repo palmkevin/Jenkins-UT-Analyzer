@@ -53,7 +53,14 @@ def build_email_sender(settings: Settings):
         return None
     from uta.delivery.email import SmtpEmailSender
 
-    return SmtpEmailSender(settings.smtp_host, settings.smtp_port, settings.smtp_from)
+    return SmtpEmailSender(
+        settings.smtp_host,
+        settings.smtp_port,
+        settings.smtp_from,
+        user=settings.smtp_user,
+        password=settings.smtp_password,
+        starttls=settings.smtp_starttls,
+    )
 
 
 def build_hypothesis_provider(settings: Settings):

@@ -46,12 +46,30 @@ class EmailSender(Protocol):
 
 
 class SmtpEmailSender:
-    """Sends via stdlib ``smtplib`` (PLAN tech stack). Lives behind :class:`EmailSender`."""
+    """Sends via stdlib ``smtplib`` (PLAN tech stack). Lives behind :class:`EmailSender`.
 
-    def __init__(self, host: str, port: int, sender: str) -> None:
+    Credentials are optional: with ``user`` set the sender negotiates STARTTLS and logs in before
+    sending (an authenticated relay); with no credentials it stays the plain unauthenticated send.
+    ``starttls`` overrides that TLS default explicitly — ``None`` means "on exactly when ``user``
+    is set". The password is held for :meth:`send` only and never logged.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        sender: str,
+        *,
+        user: str = "",
+        password: str = "",
+        starttls: bool | None = None,
+    ) -> None:
         self._host = host
         self._port = port
         self._sender = sender
+        self._user = user
+        self._password = password
+        self._starttls = bool(user) if starttls is None else starttls
 
     def send(self, message: EmailMessage) -> None:
         if not message.recipients:
@@ -62,6 +80,10 @@ class SmtpEmailSender:
         mime["Subject"] = message.subject
         mime.set_content(message.body)
         with smtplib.SMTP(self._host, self._port) as smtp:
+            if self._starttls:
+                smtp.starttls()
+            if self._user:
+                smtp.login(self._user, self._password)
             smtp.send_message(mime)
 
 
