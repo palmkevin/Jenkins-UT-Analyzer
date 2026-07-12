@@ -29,27 +29,47 @@ _HASH_CHUNK = 1000
 def _recompute_aggregates_bulk(session: Session, signature_ids: set[int]) -> None:
     """Refresh occurrence_count + first/last-seen for all affected signatures in ONE grouped query.
 
-    Signatures with no remaining linked results (idempotent re-ingest may orphan them) are reset to
-    a zero/empty aggregate, matching the per-signature recompute's behaviour.
+    Signatures with no remaining linked results (a re-ingest whose failure content changed orphans
+    them) are reset to a zero/empty aggregate. First/last-seen run ids are the runs holding the
+    min/max ``started_at`` — NOT min/max run id, which diverges after a historical re-ingest (an
+    older build recovered later gets a higher run id), so a plain per-column min/max can't be used.
     """
     if not signature_ids:
         return
-    aggregates = {
-        sig_id: (count, first_at, last_at, first_run, last_run)
-        for sig_id, count, first_at, last_at, first_run, last_run in session.execute(
-            select(
-                TestResult.signature_id,
-                func.count(TestResult.id),
-                func.min(Run.started_at),
-                func.max(Run.started_at),
-                func.min(Run.id),
-                func.max(Run.id),
+    # Rank each signature's linked results by run start in both directions (run id breaks
+    # started_at ties): the rank-1 rows carry the first/last-seen facts, count() the occurrences.
+    ranked = (
+        select(
+            TestResult.signature_id.label("signature_id"),
+            Run.id.label("run_id"),
+            Run.started_at.label("started_at"),
+            func.count().over(partition_by=TestResult.signature_id).label("count"),
+            func.row_number()
+            .over(
+                partition_by=TestResult.signature_id,
+                order_by=(Run.started_at.asc(), Run.id.asc()),
             )
-            .join(Run, Run.id == TestResult.run_id)
-            .where(TestResult.signature_id.in_(signature_ids))
-            .group_by(TestResult.signature_id)
-        ).all()
-    }
+            .label("first_rank"),
+            func.row_number()
+            .over(
+                partition_by=TestResult.signature_id,
+                order_by=(Run.started_at.desc(), Run.id.desc()),
+            )
+            .label("last_rank"),
+        )
+        .join(Run, Run.id == TestResult.run_id)
+        .where(TestResult.signature_id.in_(signature_ids))
+        .subquery()
+    )
+    aggregates: dict[int, list] = {}
+    for row in session.execute(
+        select(ranked).where((ranked.c.first_rank == 1) | (ranked.c.last_rank == 1))
+    ):
+        agg = aggregates.setdefault(row.signature_id, [row.count, None, None, None, None])
+        if row.first_rank == 1:
+            agg[1], agg[3] = row.started_at, row.run_id
+        if row.last_rank == 1:
+            agg[2], agg[4] = row.started_at, row.run_id
     for sig_id in signature_ids:
         signature = session.get(FailureSignature, sig_id)
         if signature is None:
@@ -64,12 +84,17 @@ def _recompute_aggregates_bulk(session: Session, signature_ids: set[int]) -> Non
         signature.last_seen_run_id = last_run
 
 
-def record_signatures_for_run(session: Session, run: Run) -> int:
+def record_signatures_for_run(
+    session: Session, run: Run, stale_signature_ids: set[int] | None = None
+) -> int:
     """Compute, upsert and link a signature for every failing result in ``run``.
 
     Returns the number of failing results signed. Must run after the run's results are flushed (they
     need ids). Idempotent on re-ingest: the run's results were replaced, so we just re-link and
-    recompute the affected signatures' aggregates.
+    recompute the affected signatures' aggregates. ``stale_signature_ids`` are the signatures the
+    run's **old** results linked to (captured by the pipeline before its idempotent delete) — a
+    signature whose failure vanished from the re-ingested content gains no new link, so it must be
+    recomputed too or its aggregates stay permanently stale.
     """
     # Read the run's failing results (id + identity + error text + name) rather than run.results,
     # which a Core bulk insert leaves unpopulated.
@@ -154,5 +179,5 @@ def record_signatures_for_run(session: Session, run: Run) -> int:
         if obj is not None:
             session.expire(obj, ["signature_id"])
 
-    _recompute_aggregates_bulk(session, affected)
+    _recompute_aggregates_bulk(session, affected | (stale_signature_ids or set()))
     return sum(len(ids) for ids in ids_per_signature.values())

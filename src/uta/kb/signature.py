@@ -124,6 +124,25 @@ def normalize(
     return NormalizedSignature(text="\n".join(parts), exception_type=exc_type)
 
 
+def display_message(error_details: str | None, error_stack_trace: str | None) -> str | None:
+    """The human-readable one-line failure summary — for **display**, never for keying.
+
+    Returns the traceback's *closing* exception line (``AssertionError: values differ …``) when one
+    exists — the same "last exception line wins" rule :func:`normalize` uses, so the snippet and
+    the signature always describe the same failure — else the raw details field (JUnit
+    ``errorDetails`` is usually just the constant "test failure", which is why the exception line
+    is preferred). Unmasked: dynamic values stay readable; nothing derived from this is persisted.
+    """
+    line: str | None = None
+    for raw in (error_stack_trace or "").splitlines():
+        if _EXC_LINE.match(raw.strip()):
+            line = raw.strip()
+    if line:
+        return line
+    details = (error_details or "").strip()
+    return details or None
+
+
 def compute_hash(identity_name: str, normalized_text: str) -> str:
     """sha256 over ``identity + normalized text`` — the exact-recurrence key (index-backed)."""
     digest = hashlib.sha256()

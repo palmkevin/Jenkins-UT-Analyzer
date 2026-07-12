@@ -71,6 +71,11 @@ class TestSpec:
     # When set, the schedule's F characters apply to this track only (the test passes in the
     # other) — a track-divergent failure, e.g. a genuine Python-3.9-only incompatibility.
     fail_only_track: str | None = None
+    # Extra *library* frames (2 lines each) padded into the traceback — deep enough to exercise
+    # the test record's >15-line trace clamp / "Show full trace" toggle (issue #145). Library
+    # paths are ignored by the signature normalizer, so the signature (and every KB/similarity
+    # story built on it) is untouched.
+    deep_frames: int = 0
 
     @property
     def canonical_name(self) -> str:
@@ -106,7 +111,10 @@ _SPECS: tuple[TestSpec, ...] = (
     ),
     # Still failing (DATA cause), acknowledged in the seed -> "Still failing"; long recurrence.
     # Its error names the changed LORDER entity, so the relevance ranking puts that ut_ref change
-    # first (entity mention) — the data-side match-reason example on the test record.
+    # first (entity mention) — the data-side match-reason example on the test record. Its trace is
+    # padded past 15 lines (library frames) so the record demonstrates the trace clamp +
+    # "Show full trace" toggle (issue #145); the queue rows' one-line snippets come from every
+    # failing spec's exception line.
     TestSpec(
         "ut_core.co_time.TestClass",
         "test_timezone_convert",
@@ -115,6 +123,7 @@ _SPECS: tuple[TestSpec, ...] = (
         message="values differ for LORDER: expected 2 got 1",
         line=88,
         owner="tha",
+        deep_frames=7,
     ),
     # Infrastructure cause: an Oracle/TNS fault outranks any coincidental change -> INFRASTRUCTURE.
     TestSpec(
@@ -280,8 +289,16 @@ def _stack_trace(spec: TestSpec, track: str) -> str:
         "Traceback (most recent call last):",
         f'  File "{frame_path}", line {spec.line}, in {spec.method}',
         "    result = run_case()",
-        exc_line,
     ]
+    for n in range(spec.deep_frames):
+        # Out-of-tree frames (site-packages) — realistic depth without touching the signature,
+        # whose normalizer keeps only in-tree frames.
+        lines += [
+            f'  File "/opt/ls/pyenv/lib/python3.12/site-packages/zoneinfo_compat/layer{n}.py",'
+            f" line {40 + 3 * n}, in resolve",
+            "    return self._delegate.resolve(key)",
+        ]
+    lines.append(exc_line)
     if spec.owner:
         # ZEPHYR ownership signal (parsed into owner_initials + the referenced test case ids).
         # Shaped like the real "ZEPHYR TEST CASE INFO" block so the parser exercises the same path.

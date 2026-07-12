@@ -531,16 +531,18 @@
   predicted cause, triage status, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
   bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
   <div class="grid g3">
-    <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. The action
+    <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. Each row's
+      test name carries a muted <b>one-line error snippet</b> (the traceback's closing exception line,
+      falling back to the details field) so triage is possible without opening the record. The action
       queue: predicted cause + an <b>Acknowledge</b> button, a row checkbox for <b>bulk-acknowledge
       selected</b>, and a one-click <b>“acknowledge all with this signature”</b> — matches other
       unacknowledged failures with the same exception type + message (own-function stack frames
       excluded), since a signature key is test-identity-scoped and so never literally shared across
       tests. Driven toward empty.</p></div>
-    <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with age,
-      triage status, causing person, and a one-line cause. Row checkboxes support a <b>bulk “apply to
-      selected”</b> (triage status / causing person / reason) across the caseload. <code>REMOVED</code>
-      mid-failure is flagged distinctly.</p></div>
+    <div class="card"><h3>★ Still failing</h3><p>Failing and acknowledged — the open caseload, with the
+      same error snippet under the test name, plus age, triage status, causing person, and a one-line
+      cause. Row checkboxes support a <b>bulk “apply to selected”</b> (triage status / causing person /
+      reason) across the caseload. <code>REMOVED</code> mid-failure is flagged distinctly.</p></div>
     <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
@@ -548,7 +550,8 @@
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
   mention, most relevant first — rather than one flat run-wide list; see Classification above), the
   predicted cause's <b>confidence</b> badge, ownership, linked ZEPHYR test case(s), LLM hypothesis,
-  error type, stack trace) plus the editable fields the human owns
+  error type, stack trace — clamped past 15 lines behind a “Show full trace” toggle, with a
+  copy-to-clipboard button) plus the editable fields the human owns
   — <b>causing person</b>,
   <b>reason for failure</b>, <b>Jira ticket</b>, and triage status. A one-click <b>Confirm</b> sits next to each
   AI suggestion. When the current failure's signature also afflicts other open failing tests, a second
