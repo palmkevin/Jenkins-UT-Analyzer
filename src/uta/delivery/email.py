@@ -126,7 +126,11 @@ def build_regression_report(
     """The email for a processed run, or ``None`` if nothing should be sent.
 
     Returns a message only when the run introduced ≥1 new failing test, or — if ``recovery_notice``
-    is on — when the run is back to green (no new failures and no failing tests at all).
+    is on — when the run is back to green (no new failures and no failing tests at all). "Back to
+    green" means an actual **red→green transition**: the baseline had ≥1 failing test that this run
+    resolved — fixed (``diff.newly_fixed``) or absent this run (``diff.removed``; a deleted failing
+    test still turns the suite green). A run that is merely *still* green (already-green baseline,
+    or a first-ever all-green run with no baseline) sends nothing — silence stays the steady state.
 
     When ``app_base_url`` is set (issue #108) the body carries dashboard deep links — each new
     failure links to its per-test record (``/tests/{identity_id}``) and the message links the run
@@ -143,7 +147,8 @@ def build_regression_report(
     run_link = _dashboard_url(app_base_url, f"/runs/{run.build_number}")
 
     if not new_failures:
-        if recovery_notice and run.total_failed == 0 and not diff.still_failing:
+        transitioned = bool(diff.newly_fixed or diff.removed)  # baseline had ≥1 failing test
+        if recovery_notice and run.total_failed == 0 and not diff.still_failing and transitioned:
             body = (
                 f"Build #{run.build_number} introduced no new failures and has no failing "
                 f"tests.\nNewly fixed this run: {len(diff.newly_fixed)}.\n{run.url}\n"
