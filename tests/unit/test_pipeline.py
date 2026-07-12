@@ -849,6 +849,51 @@ def test_reingest_newest_build_still_analyzed(session_factory):
         assert s.scalar(select(TestLifecycle)).state == LifecycleState.FIXED
 
 
+def test_reingest_with_changed_content_resets_orphaned_signature_aggregates(session_factory):
+    """A re-ingest whose failure vanished must recompute the now-orphaned signature (issue #116).
+
+    #104 and #105 both fail ``t`` — one signature, occurrence 4 (2 runs × 2 tracks). The re-run
+    #105 now passes: the signature loses #105's links but gains none, so it is only reachable via
+    the pre-delete link capture — occurrence must drop to 2 and last-seen must point back at #104,
+    the newest run actually containing the failure (the KB page and the LLM evidence read these).
+    """
+    fake = _ScriptedJenkins({104: {"t": "FAILED"}, 105: {"t": "FAILED"}})
+    ingest_build(fake, session_factory, 104)
+    ingest_build(fake, session_factory, 105)
+
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        run105 = s.scalar(select(Run).where(Run.build_number == 105))
+        assert sig.occurrence_count == 4
+        assert sig.last_seen_run_id == run105.id
+
+    fake.builds[105] = {"t": "PASSED"}  # the re-run build now passes
+    ingest_build(fake, session_factory, 105)
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        run104 = s.scalar(select(Run).where(Run.build_number == 104))
+        assert sig.occurrence_count == 2  # only #104's two tracks remain
+        assert sig.first_seen_run_id == run104.id
+        assert sig.last_seen_run_id == run104.id
+        assert sig.last_seen_at == run104.started_at
+
+
+def test_reingest_orphaning_all_links_resets_signature_to_zero(session_factory):
+    """A signature that loses its every link on re-ingest gets the documented zero/empty reset."""
+    fake = _ScriptedJenkins({104: {"t": "FAILED"}})
+    ingest_build(fake, session_factory, 104)
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(FailureSignature)).occurrence_count == 2
+
+    fake.builds[104] = {"t": "PASSED"}
+    ingest_build(fake, session_factory, 104)
+    with session_scope(session_factory) as s:
+        sig = s.scalar(select(FailureSignature))
+        assert sig.occurrence_count == 0
+        assert sig.first_seen_at is None and sig.last_seen_at is None
+        assert sig.first_seen_run_id is None and sig.last_seen_run_id is None
+
+
 class _FailingReportFake(FakeJenkinsClient):
     """``test_report`` always 5xxs — the failure the poller's transient-retry path expects."""
 
