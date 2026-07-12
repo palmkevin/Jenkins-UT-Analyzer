@@ -7,6 +7,7 @@
 {%- endmacro %}
 
 {% block content %}
+{{ ui.breadcrumb("Triage queue", back_url) }}
 {% if not record %}
   <h1>No record for test #{{ identity_id }}</h1>
   <p class="meta">A per-test record exists only for tests that are or have been failing.</p>
@@ -51,7 +52,9 @@
 <details class="episodes" open>
   <summary>Failure episodes</summary>
   {% for ep in record.episodes %}
-  <div class="card">
+  {# Stable per-episode anchor (issue #143): episode actions redirect back to #episode-N so the
+     PRG round trip lands on the card that was just edited, not the top of the page. #}
+  <div class="card" id="episode-{{ ep.episode_number }}">
     <h3 style="margin-top:0">
       Episode {{ ep.episode_number }}
       {% if ep.is_open %}<span class="badge removed">open</span>{% else %}<span class="badge">closed</span>{% endif %}
@@ -94,6 +97,7 @@
     {% if ep.llm_hypothesis %}<p class="meta">Hypothesis: {{ ep.llm_hypothesis }}</p>{% endif %}
     {% if (ep.suggested_contact or ep.llm_hypothesis) %}
     <form method="post" action="/episodes/{{ ep.id }}/confirm">
+      <input type="hidden" name="anchor" value="episode-{{ ep.episode_number }}">
       <button class="btn btn-sm btn-success" type="submit">Confirm AI suggestion</button>
     </form>
     {% endif %}
@@ -106,6 +110,7 @@
     </p>
 
     <form class="mt-3" style="max-width: 34rem" method="post" action="/episodes/{{ ep.id }}/attribute">
+      <input type="hidden" name="anchor" value="episode-{{ ep.episode_number }}">
       <label class="form-label mb-1">Causing person</label>
       <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
       <label class="form-label mb-1">Reason for failure</label>
