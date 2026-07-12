@@ -26,6 +26,7 @@ from uta.analyze.relevance import rank_candidates
 from uta.control.heartbeat import read_heartbeat
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
+from uta.kb.signature import display_message
 from uta.models import (
     Classification,
     FailureEpisode,
@@ -43,6 +44,27 @@ from uta.web.actions import open_episodes_for_signature
 # Mirrors ``Settings.ui_row_limit``; kept here so the view layer has a sane default when called
 # directly (tests, CLI). A limit of 0 disables the cap.
 DEFAULT_ROW_LIMIT = 100
+
+# Max characters of the one-line error snippet a triage row shows (issue #145) — long enough for a
+# typical exception line, short enough that a row stays a row.
+_SNIPPET_MAX_CHARS = 160
+
+
+def _error_snippet(
+    error_type: str | None, error_details: str | None, error_stack_trace: str | None
+) -> str | None:
+    """One display line summarising a failure for the triage tables (issue #145).
+
+    Prefers the traceback's closing exception line (``AssertionError: …``) via
+    :func:`display_message` — the JUnit ``errorDetails`` field is usually the constant
+    "test failure" — falling back to the first non-blank line of the details, then to the derived
+    error type. Truncated to :data:`_SNIPPET_MAX_CHARS` with an ellipsis.
+    """
+    message = display_message(error_details, error_stack_trace)
+    first = next((ln.strip() for ln in (message or "").splitlines() if ln.strip()), "")
+    if len(first) > _SNIPPET_MAX_CHARS:
+        first = first[: _SNIPPET_MAX_CHARS - 1].rstrip() + "…"
+    return first or error_type or None
 
 
 def _now() -> datetime:
@@ -117,11 +139,12 @@ def latest_run(session: Session) -> dict | None:
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:
-    """Batch variant of the failure-detail lookup, projected down to ``{tracks, signature_id}``.
+    """Batch variant of the failure-detail lookup, projected down to
+    ``{tracks, signature_id, error_type, error_details, error_stack_trace}``.
 
-    Used by the triage queue to filter/display by track and to surface the "acknowledge all with
-    this signature" bulk action — one query for every episode's characterising failure instead of
-    one per row.
+    Used by the triage queue to filter/display by track, to surface the "acknowledge all with
+    this signature" bulk action, and to render the per-row error snippet (issue #145) — one query
+    for every episode's characterising failure instead of one per row.
 
     ``tracks`` carries **every** failing track of the ``(identity, run)`` pair — a test normally
     runs in both tracks, so failing in both is the common case, and collapsing to one row's track
@@ -129,6 +152,8 @@ def _failure_infos(
     first failing row's (track order): the normalizer strips the track prefix, so both tracks'
     failures hash to the same signature in practice — and the bulk action matches on the
     signature's error *text*, not its id, so any one of the pair's signatures anchors it equally.
+    The error fields come from the first row carrying any error text (same anchor rule) — the
+    signature normalizer likewise treats both tracks' error text as the same failure.
     """
     pairs = {
         (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
@@ -142,6 +167,9 @@ def _failure_infos(
             TestResult.run_id,
             TestResult.track,
             TestResult.signature_id,
+            TestResult.error_type,
+            TestResult.error_details,
+            TestResult.error_stack_trace,
         )
         .where(
             tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
@@ -150,11 +178,29 @@ def _failure_infos(
         .order_by(TestResult.track, TestResult.id)
     ).all()
     by_pair: dict[tuple[int, int], dict] = {}
-    for identity_id, run_id, track, signature_id in rows:
-        info = by_pair.setdefault((identity_id, run_id), {"tracks": [], "signature_id": None})
+    for identity_id, run_id, track, signature_id, error_type, details, stack in rows:
+        info = by_pair.setdefault(
+            (identity_id, run_id),
+            {
+                "tracks": [],
+                "signature_id": None,
+                "error_type": None,
+                "error_details": None,
+                "error_stack_trace": None,
+            },
+        )
         info["tracks"].append(track)
         if info["signature_id"] is None:
             info["signature_id"] = signature_id
+        if info["error_type"] is None:
+            info["error_type"] = error_type
+        if (
+            info["error_details"] is None
+            and info["error_stack_trace"] is None
+            and (details or stack)
+        ):
+            info["error_details"] = details
+            info["error_stack_trace"] = stack
     return {
         ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
         for ep in episodes
@@ -252,6 +298,14 @@ def _row(
         "reason_text": attribution.reason_text if attribution else None,
         "tracks": failure_info["tracks"] if failure_info else [],
         "signature_id": failure_info["signature_id"] if failure_info else None,
+        "error_type": failure_info["error_type"] if failure_info else None,
+        "error_snippet": _error_snippet(
+            failure_info["error_type"],
+            failure_info["error_details"],
+            failure_info["error_stack_trace"],
+        )
+        if failure_info
+        else None,
     }
 
 

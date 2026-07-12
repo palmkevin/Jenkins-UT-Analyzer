@@ -87,6 +87,68 @@ def test_recently_fixed_window_includes_recent_excludes_old(session_factory):
         assert "old" not in names
 
 
+# ── triage error snippets (issue #145) ────────────────────────────────────────
+
+_SNIPPET_STACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "AssertionError: values differ: expected 1 got 2"
+)
+
+
+def test_triage_rows_carry_error_snippet_from_exception_line(session_factory):
+    """The snippet is the trace's closing exception line — errorDetails is often 'test failure'."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"t": "FAILED"},
+            error_type={"t": "ASSERTION"},
+            errors={"t": ("test failure", _SNIPPET_STACK)},
+        )
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_type"] == "ASSERTION"
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_survives_into_still_failing_bucket(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (None, _SNIPPET_STACK)})
+        apply_run(s, r1, baseline=None)
+        actions.acknowledge(s, get_identity(s, "t").id, "alice")
+        row = views.triage_queue(s)["still_failing"][0]
+        assert row["error_snippet"] == "AssertionError: values differ: expected 1 got 2"
+
+
+def test_triage_snippet_falls_back_to_first_details_line(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": ("boom happened\nsecond line", None)})
+        apply_run(s, r1, baseline=None)
+        assert views.triage_queue(s)["new"][0]["error_snippet"] == "boom happened"
+
+
+def test_triage_snippet_truncated_to_one_sane_line(session_factory):
+    long_msg = "x" * 400
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"}, errors={"t": (long_msg, None)})
+        apply_run(s, r1, baseline=None)
+        snippet = views.triage_queue(s)["new"][0]["error_snippet"]
+        assert snippet.endswith("…")
+        assert len(snippet) <= 160
+        assert "\n" not in snippet
+
+
+def test_triage_snippet_none_without_error_text(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"t": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        row = views.triage_queue(s)["new"][0]
+        assert row["error_snippet"] is None
+        assert row["error_type"] is None
+
+
 # ── long-list capping (issue #19) ─────────────────────────────────────────────
 
 

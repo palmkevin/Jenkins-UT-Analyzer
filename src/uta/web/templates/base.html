@@ -8,6 +8,7 @@
   <!-- htmx 2.0.10, vendored (no CDN at runtime; from the htmx.org npm tarball) — issue #78. -->
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/bulk-select.js" defer></script>
+  <script src="/static/trace.js" defer></script>
   <script>
     // Applied before first paint (blocking <head> script) to avoid a flash of the wrong theme.
     // No saved choice yet -> follow the OS/browser preference (prefers-color-scheme).
@@ -73,6 +74,12 @@
     .count { font-weight: 700; }
     .more { color: #6c757d; font-size: 0.9rem; margin: 0.4rem 0 1rem; }
 
+    /* One-line error snippet under a triage row's test name (issue #145). */
+    .error-snippet { color: #6c757d; font-size: 0.82em; font-family: var(--bs-font-monospace); }
+    /* Trace clamp/copy controls (trace.js, issue #145). */
+    .trace-toggle { margin: 0 0.4rem 0.8rem 0; }
+    .trace-actions { margin-bottom: 0.8rem; }
+
     /* Trend charts (issue #53): inline SVG, no JS/CDN — colours mirror the status classes above. */
     .timeline-chart { display: block; }
     .timeline-chart polyline.FAILED { stroke: #b00020; }
@@ -107,6 +114,7 @@
     [data-bs-theme="dark"] .badge.track { background: #1c3355; color: #8ab4f8; }
     [data-bs-theme="dark"] summary:hover { color: #fff; }
     [data-bs-theme="dark"] .more { color: #9aa1a9; }
+    [data-bs-theme="dark"] .error-snippet { color: #9aa1a9; }
     [data-bs-theme="dark"] .timeline-chart polyline.FAILED { stroke: #ff6b6b; }
     [data-bs-theme="dark"] .timeline-chart polyline.REGRESSION { stroke: #b28cf5; }
     [data-bs-theme="dark"] .timeline-legend { color: #9aa1a9; }
