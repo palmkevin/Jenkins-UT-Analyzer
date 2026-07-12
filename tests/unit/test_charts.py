@@ -57,6 +57,16 @@ def test_sparkline_one_bar_per_point():
         assert spark.bars[i]["x"] >= prev["x"] + prev["width"]
 
 
+def test_sparkline_failed_bars_taller_than_passed_bars():
+    """Height is a second, non-hue pass/fail channel (issue #144): failed = full, passed = short."""
+    points = [{"build": 1, "failed": True}, {"build": 2, "failed": False}]
+    spark = charts.sparkline(points, width=100, height=20, gap=2.0)
+    failed, passed = spark.bars
+    assert failed["y"] == 0.0 and failed["height"] == 20.0  # full-height
+    assert 0 < passed["height"] < failed["height"]  # visibly shorter
+    assert passed["y"] + passed["height"] == spark.height  # bottom-aligned
+
+
 def test_sparkline_caps_to_most_recent_points():
     points = [{"build": i, "failed": False} for i in range(1, 31)]
     spark = charts.sparkline(points, max_points=20)

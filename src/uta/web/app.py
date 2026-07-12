@@ -57,20 +57,32 @@ _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _STATIC_DIR = _WEB_DIR / "static"
 
 
-def format_ts(value: object) -> str:
-    """Render a timestamp to seconds precision as ordinary, wrappable text (issue #35).
+def _ts_text(value: datetime) -> str:
+    """The plain-text timestamp form: seconds precision plus an explicit ``UTC`` label.
 
-    Drops the sub-second component and the ``+00:00`` tz suffix that ``datetime.__str__``
-    emits (the app normalizes to UTC, so bare wall-clock seconds is what's wanted). Returns
-    ``"—"`` for ``None`` so every render site can drop its own ``or "—"`` fallback. Non-datetime
-    values fall through to ``str`` unchanged.
+    The app normalizes every stored instant to UTC, but readers are in Luxembourg (UTC+1/+2), so
+    an unlabelled wall-clock string is silently ambiguous (issue #144). Used for the visible text
+    of :func:`format_ts` and for hover ``title`` attributes (:func:`format_reltime`).
+    """
+    return value.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+
+
+def format_ts(value: object) -> str:
+    """Render a timestamp to seconds precision, explicitly labelled ``UTC`` (issues #35, #144).
+
+    Drops the sub-second component; the visible text ends in `` UTC`` and the wrapping ``<span>``
+    carries the full ISO-8601 form (with offset) in its hover ``title``. Naive datetimes are
+    treated as UTC (SQLite drops tzinfo; the app normalizes to UTC). Returns ``"—"`` for ``None``
+    so every render site can drop its own ``or "—"`` fallback. Non-datetime values fall through
+    to ``str`` unchanged.
     """
     if value is None:
         return "—"
-    strftime = getattr(value, "strftime", None)
-    if strftime is None:
+    if not isinstance(value, datetime):
         return str(value)
-    return strftime("%Y-%m-%d %H:%M:%S")
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    iso = aware.isoformat(timespec="seconds")
+    return Markup(f'<span title="{escape(iso)}">{escape(_ts_text(value))}</span>')
 
 
 def format_duration(value: object) -> str:
@@ -115,7 +127,7 @@ def _relative_text(seconds: float) -> str:
 def format_reltime(value: object) -> str:
     """Render a timestamp as relative age with the absolute form in a hover title (issue #79).
 
-    ``<span title="2026-06-29 16:15:46">2 days ago</span>`` — server-side, no JS. Applied where
+    ``<span title="2026-06-29 16:15:46 UTC">2 days ago</span>`` — server-side, no JS. Applied where
     *age* is what the reader cares about (triage first-failed/fixed-at, test-record lifecycle and
     episode times); tabular run listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
     and non-datetimes fall through to ``str``, mirroring :func:`format_ts`.
@@ -127,7 +139,7 @@ def format_reltime(value: object) -> str:
     # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     age = (datetime.now(UTC) - aware).total_seconds()
-    return Markup(f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>')
+    return Markup(f'<span title="{escape(_ts_text(value))}">{escape(_relative_text(age))}</span>')
 
 
 _TEMPLATES.env.filters["ts"] = format_ts
