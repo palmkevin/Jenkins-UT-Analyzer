@@ -33,6 +33,10 @@ from uta.models import Classification, FailureEpisode, Run, TestIdentity
 
 logger = logging.getLogger(__name__)
 
+#: Connect/read timeout for the SMTP dial — a black-holed relay must fail fast, not hang the
+#: caller (``/health`` probes the sender synchronously when the poller goes stale).
+_SMTP_TIMEOUT_SECONDS = 10.0
+
 
 @dataclass(frozen=True)
 class EmailMessage:
@@ -46,12 +50,30 @@ class EmailSender(Protocol):
 
 
 class SmtpEmailSender:
-    """Sends via stdlib ``smtplib`` (PLAN tech stack). Lives behind :class:`EmailSender`."""
+    """Sends via stdlib ``smtplib`` (PLAN tech stack). Lives behind :class:`EmailSender`.
 
-    def __init__(self, host: str, port: int, sender: str) -> None:
+    Credentials are optional: with ``user`` set the sender negotiates STARTTLS and logs in before
+    sending (an authenticated relay); with no credentials it stays the plain unauthenticated send.
+    ``starttls`` overrides that TLS default explicitly — ``None`` means "on exactly when ``user``
+    is set". The password is held for :meth:`send` only and never logged.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        sender: str,
+        *,
+        user: str = "",
+        password: str = "",
+        starttls: bool | None = None,
+    ) -> None:
         self._host = host
         self._port = port
         self._sender = sender
+        self._user = user
+        self._password = password
+        self._starttls = bool(user) if starttls is None else starttls
 
     def send(self, message: EmailMessage) -> None:
         if not message.recipients:
@@ -61,7 +83,11 @@ class SmtpEmailSender:
         mime["To"] = ", ".join(message.recipients)
         mime["Subject"] = message.subject
         mime.set_content(message.body)
-        with smtplib.SMTP(self._host, self._port) as smtp:
+        with smtplib.SMTP(self._host, self._port, timeout=_SMTP_TIMEOUT_SECONDS) as smtp:
+            if self._starttls:
+                smtp.starttls()
+            if self._user:
+                smtp.login(self._user, self._password)
             smtp.send_message(mime)
 
 
@@ -199,13 +225,25 @@ def send_ops_alert(
     """Send an operational alert (poller stale, build quarantined/skipped — issue #51).
 
     Rides the same :class:`EmailSender` seam as the regression report; a missing sender or empty
-    recipient list means email is not configured, so nothing is sent. Returns the message (or
-    ``None``) so callers/tests can see what went out.
+    recipient list means email is not configured, so nothing is sent. Delivery is **best-effort**,
+    like :func:`send_alert`: a send failure is logged and swallowed, never raised — an SMTP outage
+    must not turn ``/health`` into a 500 or wipe the poller tick's heartbeat record. Returns the
+    message only when it actually went out (``None`` otherwise), so callers that latch on delivery
+    (``check_health``'s ``stale_alerted_at``) re-try on the next occasion.
     """
     if sender is None or not recipients:
         return None
     message = EmailMessage(subject=f"UT Analyzer ops — {subject}", body=body, recipients=recipients)
-    sender.send(message)
+    try:
+        sender.send(message)
+    except Exception:  # noqa: BLE001 — ops alerting is best-effort; never break the caller
+        logger.warning(
+            "ops alert %r failed to send — the fault stays visible on /health and the "
+            "control panel; the alert is dropped",
+            message.subject,
+            exc_info=True,
+        )
+        return None
     return message
 
 

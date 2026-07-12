@@ -6,6 +6,7 @@ recorder instead of real backoff waits.
 
 from __future__ import annotations
 
+import smtplib
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -91,6 +92,13 @@ class _Rotated404Fake(_MultiBuildFake):
             response = httpx.Response(404, request=request)
             raise httpx.HTTPStatusError("Not Found", request=request, response=response)
         return super().build_meta(build)
+
+
+class _RaisingEmailSender:
+    """Implements the ``EmailSender`` protocol, but the relay is down — every send raises."""
+
+    def send(self, message) -> None:
+        raise smtplib.SMTPException("relay down")
 
 
 class _SleepRecorder:
@@ -244,6 +252,40 @@ def test_404_build_is_quarantined_immediately_and_alerted(session_factory):
     assert len(_ops_mails(sender)) == 1
 
 
+def test_failing_ops_alert_does_not_lose_the_tick_record(session_factory):
+    """An SMTP failure during the skip/quarantine alert must not escape ``poll_once`` — the
+    heartbeat still records the builds the tick actually ingested (issue #121)."""
+    client = _Rotated404Fake(last_completed=3, missing=2)
+    processed = poll_tick(
+        client,
+        session_factory,
+        Settings(),
+        email_sender=_RaisingEmailSender(),
+        email_recipients=_RECIPIENTS,
+        sleep=_SleepRecorder(),
+    )
+    assert processed == [1, 3]  # the ingested builds are reported despite the failed alert
+    with session_scope(session_factory) as s:
+        hb = read_heartbeat(s)
+        assert hb.last_processed == "1,3"
+        assert hb.last_success_at is not None  # the tick counts as a success — retention ran
+    assert _quarantine_row(session_factory, 2).quarantined_at is not None
+
+
+def test_failing_quarantine_alert_does_not_end_the_tick(session_factory):
+    client = _MalformedBuildFake(last_completed=2, failing=1)
+    processed = poll_once(
+        client,
+        session_factory,
+        quarantine_attempts=1,
+        email_sender=_RaisingEmailSender(),
+        email_recipients=_RECIPIENTS,
+        sleep=_SleepRecorder(),
+    )
+    assert processed == [2]  # the tick advanced past the quarantined build despite the raise
+    assert _quarantine_row(session_factory, 1).quarantined_at is not None
+
+
 def test_ondemand_reingest_clears_a_quarantined_build(session_factory):
     client = _MalformedBuildFake(last_completed=1, failing=1)
     # One-strike limit ⇒ quarantined on the first failing tick (no BuildIngestError raised).
@@ -346,6 +388,37 @@ def test_health_stale_heartbeat_is_degraded_and_alerts_once(session_factory):
     assert len(sender.sent) == 2
 
 
+def test_health_stale_with_failing_smtp_still_reports_and_realerts_later(session_factory):
+    """An SMTP outage during the stale alert must not make ``/health`` raise, and must not
+    latch ``stale_alerted_at`` — the next probe with a working relay still alerts (issue #121)."""
+    record_heartbeat(session_factory, processed=[1], error=None)
+    late = datetime.now(UTC) + timedelta(hours=2)
+
+    report = check_health(
+        session_factory,
+        _client_settings(),
+        email_sender=_RaisingEmailSender(),
+        email_recipients=_RECIPIENTS,
+        now=late,
+    )
+    assert not report.ok and report.db == "ok" and report.poller == "stale"
+    with session_scope(session_factory) as s:
+        assert read_heartbeat(s).stale_alerted_at is None  # unlatched — nothing was delivered
+
+    # The relay comes back: the (single) alert still goes out and latches.
+    sender = RecordingEmailSender()
+    check_health(
+        session_factory,
+        _client_settings(),
+        email_sender=sender,
+        email_recipients=_RECIPIENTS,
+        now=late,
+    )
+    assert len(sender.sent) == 1 and "stale" in sender.sent[0].subject
+    with session_scope(session_factory) as s:
+        assert read_heartbeat(s).stale_alerted_at is not None
+
+
 def test_health_poller_that_ticks_but_never_succeeds_goes_stale(session_factory):
     record_heartbeat(session_factory, processed=[1], error=None)
     # From then on every tick fails: last_poll_at stays fresh, last_success_at doesn't move.
@@ -353,6 +426,25 @@ def test_health_poller_that_ticks_but_never_succeeds_goes_stale(session_factory)
     late = datetime.now(UTC) + timedelta(hours=2)
     report = check_health(session_factory, _client_settings(), now=late)
     assert not report.ok and report.poller == "stale"
+
+
+def test_health_poller_failing_since_birth_goes_stale_after_grace(session_factory):
+    # Misconfigured from day one: every tick fails, so last_success_at is never set while
+    # last_poll_at stays forever fresh — freshness must key off created_at, not last_poll_at.
+    record_heartbeat(session_factory, processed=[], error="boom")
+    with session_scope(session_factory) as s:
+        hb = read_heartbeat(s)
+        assert hb.last_success_at is None
+        hb.created_at = datetime.now(UTC) - timedelta(hours=2)  # 2h ≫ 3 × 300s
+    report = check_health(session_factory, _client_settings())
+    assert not report.ok and report.poller == "stale"
+
+
+def test_health_poller_failing_since_birth_is_ok_within_grace_window(session_factory):
+    # A fresh row with no success yet gets one grace window (same as the upgrade window).
+    record_heartbeat(session_factory, processed=[], error="boom")
+    report = check_health(session_factory, _client_settings())
+    assert report.ok and report.poller == "ok"
 
 
 def test_health_endpoint_returns_503_when_db_unreachable():

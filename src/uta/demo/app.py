@@ -15,13 +15,16 @@ Tests build their own in-memory store and call :func:`create_demo_app` with that
 from __future__ import annotations
 
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
+from fastapi import Request
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from uta.db import Base, make_session_factory
+from uta.control.heartbeat import read_heartbeat
+from uta.db import Base, make_session_factory, session_scope
 from uta.demo.seed import seed_demo_data
 from uta.web.app import create_app
 
@@ -53,7 +56,26 @@ def build_demo_session_factory(database_url: str | None = None) -> sessionmaker[
     return session_factory
 
 
-def create_demo_app(database_url: str | None = None):
+def _freshen_heartbeat(session_factory: sessionmaker[Session]) -> None:
+    """Re-stamp the seeded heartbeat's freshness so the demo's ``/health`` never goes stale.
+
+    The demo runs no poller, so the heartbeat seeded for the ``/control`` panel would otherwise
+    cross the staleness window (``poll_interval_seconds × poller_stale_after_intervals``, ~21 min
+    with defaults) and flip ``/health`` to 503 — and Render's ``healthCheckPath`` would then
+    restart the service, wiping the ephemeral store mid-session (issue #125). Only the timestamps
+    move; the seeded tick details (processed builds, count) stay as the panel shows them.
+    """
+    now = datetime.now(UTC)
+    with session_scope(session_factory) as session:
+        hb = read_heartbeat(session)
+        if hb is not None:
+            hb.last_poll_at = now
+            hb.last_success_at = now
+
+
+def create_demo_app(
+    database_url: str | None = None, session_factory: sessionmaker[Session] | None = None
+):
     """The FastAPI app backed by a fresh, seeded demo store.
 
     ``demo_mode=True`` locks down the control panel's mutations (issue #89): the demo is public and
@@ -61,8 +83,21 @@ def create_demo_app(database_url: str | None = None):
     other visitor — and on-demand ingest — which would build a real Jenkins client and send
     outbound requests from the public host — return 403. The panel still renders fully populated,
     and triage actions stay live (the store is ephemeral).
+
+    Every ``/health`` probe re-stamps the seeded poller heartbeat first (see
+    :func:`_freshen_heartbeat`), so the pollerless demo stays healthy for the process's whole
+    lifetime — staleness detection for real deployments is untouched.
     """
-    return create_app(session_factory=build_demo_session_factory(database_url), demo_mode=True)
+    factory = session_factory or build_demo_session_factory(database_url)
+    app = create_app(session_factory=factory, demo_mode=True)
+
+    @app.middleware("http")
+    async def keep_heartbeat_fresh(request: Request, call_next):
+        if request.url.path == "/health":
+            _freshen_heartbeat(factory)
+        return await call_next(request)
+
+    return app
 
 
 app = create_demo_app()

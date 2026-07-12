@@ -7,7 +7,7 @@ different bugs stay apart; the mask table from the PLAN is honoured.
 
 from __future__ import annotations
 
-from uta.kb.signature import compute_hash, normalize
+from uta.kb.signature import compute_hash, display_message, normalize
 
 _STACK_TMPL = (
     "Traceback (most recent call last):\n"
@@ -76,6 +76,35 @@ def test_hash_is_identity_scoped_and_stable():
 def test_empty_input_yields_no_signature():
     assert normalize(None, None) is None
     assert normalize("", "") is None
+
+
+def test_display_message_prefers_exception_line_over_details():
+    """`errorDetails` is usually the constant "test failure" — the exception line is the signal."""
+    stack = _STACK_TMPL.format(track="permanent", line=42, msg="13 != 99")
+    assert display_message("test failure", stack) == "AssertionError: 13 != 99"
+
+
+def test_display_message_keeps_last_exception_line_of_chained_traceback():
+    stack = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/dev/a.py", line 1, in test_a\n'
+        "KeyError: 'MSH'\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/dev/a.py", line 2, in test_a\n'
+        "RuntimeError: could not build ACK\n"
+    )
+    # Same "last exception line wins" rule as normalize() — snippet and signature agree.
+    assert display_message("test failure", stack) == "RuntimeError: could not build ACK"
+
+
+def test_display_message_falls_back_to_details_then_none():
+    assert display_message("boom happened", None) == "boom happened"
+    assert display_message("boom happened", "no traceback here") == "boom happened"
+    assert display_message("  ", None) is None
+    assert display_message(None, None) is None
 
 
 def test_keeps_only_our_frames_top_n():

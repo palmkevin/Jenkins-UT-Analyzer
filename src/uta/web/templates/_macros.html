@@ -1,31 +1,57 @@
 {#- Shared UI macros. Import with: {% import "_macros.html" as ui %} -#}
 
+{#- Back-link breadcrumb on drill-down pages (issue #143) — "← <parent list>". `href` must be a
+    server-sanitized same-origin relative path (the handler validates ?return= / falls back to the
+    plain list URL); templates never place raw request input here. -#}
+{% macro breadcrumb(label, href) -%}
+  <nav class="breadcrumb-back mb-2" aria-label="breadcrumb">
+    <a href="{{ href }}">&larr; {{ label }}</a>
+  </nav>
+{%- endmacro %}
+
 {#- "Load all N Tests" hint (issue #19). Rendered under a section whose rows were capped for
-    responsiveness; the link re-requests the page with this section added to ?expand= so it renders
-    in full (other sections stay capped). `expand` is the current list of expanded section keys. -#}
-{% macro more_hint(section, total, shown, expand) -%}
+    responsiveness; `url` comes pre-built from the view layer (views.triage_expand_urls) so the
+    link re-requests the page with this section added to ?expand= while the active filters and
+    sort survive (issue #77's URL-is-state contract; other sections stay capped). -#}
+{% macro more_hint(total, shown, url) -%}
   {%- if total > shown -%}
   <p class="more">
     Showing first {{ shown }} of {{ total }}.
-    <a href="?expand={{ (expand + [section]) | unique | join(',') }}#{{ section }}">Load all {{ total }} Tests</a>
+    <a href="{{ url }}">Load all {{ total }} Tests</a>
   </p>
   {%- endif -%}
 {%- endmacro %}
 
 {#- Per-test pass/fail sparkline (issue #53) — one bar per recent run, oldest-first, red = failed.
-    `spark` is the geometry dict built by uta.web.charts.sparkline; `None` when there's no history. -#}
+    Failed bars are full-height, passed bars shorter (bottom-aligned): a second, non-hue channel so
+    the signal survives color-vision deficiency (issue #144). `spark` is the geometry dict built by
+    uta.web.charts.sparkline; `None` when there's no history. -#}
 {% macro sparkline(spark) -%}
   {%- if spark -%}
   <svg class="sparkline" viewBox="0 0 {{ spark.width }} {{ spark.height }}"
        width="{{ spark.width }}" height="{{ spark.height }}"
-       role="img" aria-label="recent pass/fail history">
+       role="img" aria-label="recent pass/fail history (tall bar = failed, short bar = passed)">
     {%- for bar in spark.bars %}
-    <rect x="{{ bar.x }}" y="0" width="{{ bar.width }}" height="{{ spark.height }}"
+    <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}"
           class="{{ 'FAILED' if bar.failed else 'PASSED' }}"><title>#{{ bar.build }} {{ 'failed' if bar.failed else 'passed' }}</title></rect>
     {%- endfor %}
   </svg>
   {%- else -%}
   <span class="empty">—</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{#- Numeric status cell (issue #144): a right-aligned count that is colour-coded *and* prefixed
+    with a small glyph (✓ passed / ✕ failed / ○ skipped) so pass/fail reads without colour.
+    `always` keeps the styling on zero counts (Passed/Skipped columns); without it a zero renders
+    as a plain undecorated number (Failed/Regressions/Newly fixed columns highlight only when
+    non-zero). The glyph is aria-hidden — the column header already names the status. -#}
+{% macro count_cell(value, kind, always=false) -%}
+  {%- set glyph = {"PASSED": "✓", "FAILED": "✕", "SKIPPED": "○"}[kind] -%}
+  {%- if always or value -%}
+  <td class="text-end {{ kind }}"><span class="status-glyph" aria-hidden="true">{{ glyph }}</span> {{ value }}</td>
+  {%- else -%}
+  <td class="text-end">{{ value }}</td>
   {%- endif -%}
 {%- endmacro %}
 

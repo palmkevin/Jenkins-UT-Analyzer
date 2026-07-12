@@ -45,7 +45,8 @@ def test_future_renders_as_in():
 def test_absolute_timestamp_in_title_tooltip():
     dt = _ago(days=2, minutes=1)
     out = format_reltime(dt)
-    assert f'<span title="{dt.strftime("%Y-%m-%d %H:%M:%S")}">' in out
+    # The hover title carries the absolute form, explicitly labelled UTC (issue #144).
+    assert f'<span title="{dt.strftime("%Y-%m-%d %H:%M:%S")} UTC">' in out
 
 
 def test_output_is_safe_markup_not_escaped():

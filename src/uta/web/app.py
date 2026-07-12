@@ -13,10 +13,12 @@ never touch a live session (the Slice-0 pattern).
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
@@ -55,20 +57,32 @@ _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _STATIC_DIR = _WEB_DIR / "static"
 
 
-def format_ts(value: object) -> str:
-    """Render a timestamp to seconds precision as ordinary, wrappable text (issue #35).
+def _ts_text(value: datetime) -> str:
+    """The plain-text timestamp form: seconds precision plus an explicit ``UTC`` label.
 
-    Drops the sub-second component and the ``+00:00`` tz suffix that ``datetime.__str__``
-    emits (the app normalizes to UTC, so bare wall-clock seconds is what's wanted). Returns
-    ``"—"`` for ``None`` so every render site can drop its own ``or "—"`` fallback. Non-datetime
-    values fall through to ``str`` unchanged.
+    The app normalizes every stored instant to UTC, but readers are in Luxembourg (UTC+1/+2), so
+    an unlabelled wall-clock string is silently ambiguous (issue #144). Used for the visible text
+    of :func:`format_ts` and for hover ``title`` attributes (:func:`format_reltime`).
+    """
+    return value.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+
+
+def format_ts(value: object) -> str:
+    """Render a timestamp to seconds precision, explicitly labelled ``UTC`` (issues #35, #144).
+
+    Drops the sub-second component; the visible text ends in `` UTC`` and the wrapping ``<span>``
+    carries the full ISO-8601 form (with offset) in its hover ``title``. Naive datetimes are
+    treated as UTC (SQLite drops tzinfo; the app normalizes to UTC). Returns ``"—"`` for ``None``
+    so every render site can drop its own ``or "—"`` fallback. Non-datetime values fall through
+    to ``str`` unchanged.
     """
     if value is None:
         return "—"
-    strftime = getattr(value, "strftime", None)
-    if strftime is None:
+    if not isinstance(value, datetime):
         return str(value)
-    return strftime("%Y-%m-%d %H:%M:%S")
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    iso = aware.isoformat(timespec="seconds")
+    return Markup(f'<span title="{escape(iso)}">{escape(_ts_text(value))}</span>')
 
 
 def format_duration(value: object) -> str:
@@ -113,7 +127,7 @@ def _relative_text(seconds: float) -> str:
 def format_reltime(value: object) -> str:
     """Render a timestamp as relative age with the absolute form in a hover title (issue #79).
 
-    ``<span title="2026-06-29 16:15:46">2 days ago</span>`` — server-side, no JS. Applied where
+    ``<span title="2026-06-29 16:15:46 UTC">2 days ago</span>`` — server-side, no JS. Applied where
     *age* is what the reader cares about (triage first-failed/fixed-at, test-record lifecycle and
     episode times); tabular run listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
     and non-datetimes fall through to ``str``, mirroring :func:`format_ts`.
@@ -125,7 +139,7 @@ def format_reltime(value: object) -> str:
     # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     age = (datetime.now(UTC) - aware).total_seconds()
-    return Markup(f'<span title="{escape(format_ts(value))}">{escape(_relative_text(age))}</span>')
+    return Markup(f'<span title="{escape(_ts_text(value))}">{escape(_relative_text(age))}</span>')
 
 
 _TEMPLATES.env.filters["ts"] = format_ts
@@ -165,6 +179,46 @@ def _expanded(request: Request) -> list[str]:
 def _n(count: int, noun: str) -> str:
     """``3 tests`` / ``1 test`` — count-bearing flash messages without pluralization typos."""
     return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+# In-page anchors appended to PRG redirects (issue #143) — a bare fragment id like "episode-3".
+# Fragments never reach the server (browsers strip them from Referer), so actions that should land
+# on a specific card pass the id explicitly via a hidden form field, validated against this.
+_ANCHOR_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _same_origin_path(raw: str | None) -> str | None:
+    """Validate user-controllable URL input (``?return=`` / a reduced Referer) as a same-origin
+    relative path — the only thing the app may redirect to or emit as a back-link (issue #143).
+
+    Accepts an absolute-path reference only: no scheme, no authority (which also kills the
+    scheme-relative ``//host`` form), a leading ``/``, and no backslash anywhere (browsers
+    normalize ``\\`` to ``/``, so ``/\\host`` would turn scheme-relative client-side). Anything
+    else yields ``None`` and the caller falls back to a known-safe URL.
+    """
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    if parts.scheme or parts.netloc:
+        return None
+    path = parts.path
+    if not path.startswith("/") or "\\" in path:
+        return None
+    return f"{path}?{parts.query}" if parts.query else path
+
+
+def _referer_path(request: Request) -> str | None:
+    """The Referer header reduced to a validated same-origin relative path (or ``None``).
+
+    Browsers send an absolute Referer; only its path + query are kept — scheme and host are
+    discarded, not trusted — so a PRG bounce can never leave the app whatever the header claims.
+    """
+    raw = request.headers.get("referer")
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    rel = f"{parts.path}?{parts.query}" if parts.query else parts.path
+    return _same_origin_path(rel)
 
 
 _TRIAGE_FILTER_KEYS = ("owner", "suite", "track", "cause", "triage_status", "flaky")
@@ -250,7 +304,6 @@ def create_app(
             "jira_base_url": cfg.jira_base_url,
             "fisheye_changelog_url": cfg.fisheye_changelog_url,
             "zephyr_test_case_url_prefix": cfg.zephyr_test_case_url_prefix,
-            "expand": _expanded(request),
             "row_limit": cfg.ui_row_limit,
             "flash": get_flash(request),
         }
@@ -260,9 +313,15 @@ def create_app(
             clear_flash(response)
         return response
 
-    def back(request: Request, fallback: str = "/") -> RedirectResponse:
-        # Post/Redirect/Get: bounce back to the page the action came from.
-        target = request.headers.get("referer") or fallback
+    def back(request: Request, fallback: str = "/", *, anchor: str = "") -> RedirectResponse:
+        # Post/Redirect/Get: bounce back to the page the action came from. Only the referer's
+        # path + query are used — never its scheme/host — so the redirect can't leave the app
+        # (a crafted absolute referer degrades to its path, an unusable one to the fallback).
+        # `anchor` optionally appends a `#fragment` so the browser lands on the acted-on card
+        # (issue #143); it's validated because it, too, arrives as request input.
+        target = _referer_path(request) or fallback
+        if anchor and _ANCHOR_RE.fullmatch(anchor):
+            target = f"{target}#{anchor}"
         return RedirectResponse(target, status_code=303)
 
     @app.get("/health")
@@ -282,13 +341,14 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def triage(request: Request, sort: str = ""):
         filters = _triage_filters(request)
+        expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
             queue = views.triage_queue(
                 s,
                 recently_fixed_days=cfg.recently_fixed_days,
                 limit=cfg.ui_row_limit,
-                expand=_expanded(request),
+                expand=expand,
                 filters=filters,
                 sort=sort or None,
             )
@@ -297,6 +357,10 @@ def create_app(
         options["tracks"] = ["permanent", "permanent_py39"]
         options["causes"] = list(PredictedCause)
         options["triage_statuses"] = list(TriageStatus)
+        # Record links carry the queue's URL-encoded state as ?return=, so the record page's
+        # back-link restores this exact filtered/sorted view (issue #143). Empty on the plain
+        # queue — the record's back-link already defaults to "/".
+        queue_url = views.triage_url(filters, sort or None)
         return render(
             request,
             "triage.html",
@@ -308,12 +372,17 @@ def create_app(
                 "last_run": last_run,
                 "chips": views.triage_filter_chips(filters, sort or None),
                 "sort_links": views.triage_sort_links(filters, sort or None),
+                "expand_urls": views.triage_expand_urls(filters, sort or None, expand),
+                "return_qs": quote(queue_url, safe="") if queue_url != "/" else "",
             },
             cfg=cfg,
         )
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
     def test_record(request: Request, identity_id: int):
+        # The breadcrumb's back target (issue #143): the referring triage-queue URL carried in
+        # ?return= (sanitized — same-origin relative paths only), else the plain queue.
+        back_url = _same_origin_path(request.query_params.get("return")) or "/"
         with session_scope(session_factory) as s:
             cfg = effective(s)
             record = views.test_record(
@@ -325,7 +394,10 @@ def create_app(
                 kb_cutoff=cfg.pgtrgm_similarity_cutoff,
             )
         return render(
-            request, "test_record.html", {"record": record, "identity_id": identity_id}, cfg=cfg
+            request,
+            "test_record.html",
+            {"record": record, "identity_id": identity_id, "back_url": back_url},
+            cfg=cfg,
         )
 
     @app.get("/runs", response_class=HTMLResponse)
@@ -534,6 +606,7 @@ def create_app(
         reason_text: str = Form(""),
         triage_status: str = Form(""),
         jira_ticket: str = Form(""),
+        anchor: str = Form(""),
     ):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
@@ -546,7 +619,7 @@ def create_app(
                 triage_status=triage_status or None,
                 jira_ticket=jira_ticket,
             )
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if count:
             parts = []
             if causing_person.strip():
@@ -591,12 +664,12 @@ def create_app(
         return resp
 
     @app.post("/episodes/{episode_id}/confirm")
-    def confirm(request: Request, episode_id: int):
+    def confirm(request: Request, episode_id: int, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             attr = actions.confirm(s, episode_id, actor)
             confirmed_cause = attr.causing_person if attr else None
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if attr is not None:
             suffix = f" — cause → {confirmed_cause}" if confirmed_cause else ""
             set_flash(resp, f"AI suggestion confirmed{suffix}")
@@ -612,6 +685,7 @@ def create_app(
         reason_text: str = Form(""),
         triage_status: str = Form(""),
         jira_ticket: str = Form(""),
+        anchor: str = Form(""),
     ):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
@@ -624,7 +698,7 @@ def create_app(
                 triage_status=triage_status or None,
                 jira_ticket=jira_ticket,
             )
-        resp = back(request)
+        resp = back(request, anchor=anchor)
         if attr is None:
             set_flash(resp, "Episode not found — nothing saved", "error")
             return resp
