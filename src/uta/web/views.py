@@ -194,8 +194,10 @@ def _failure_infos(
             info["signature_id"] = signature_id
         if info["error_type"] is None:
             info["error_type"] = error_type
-        if info["error_details"] is None and info["error_stack_trace"] is None and (
-            details or stack
+        if (
+            info["error_details"] is None
+            and info["error_stack_trace"] is None
+            and (details or stack)
         ):
             info["error_details"] = details
             info["error_stack_trace"] = stack
