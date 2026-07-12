@@ -86,6 +86,78 @@ def test_reingest_does_not_double_count(session_factory):
         assert sig.occurrence_count == 2  # not 4 — recomputed from the live links
 
 
+def test_reingest_with_changed_error_text_resets_the_orphaned_signature(session_factory):
+    """Changed failure text hashes to a NEW signature; the old one — linked only via the deleted
+    rows — is recomputed through ``stale_signature_ids`` (the pipeline's pre-delete capture) and
+    gets the documented zero/empty reset instead of staying permanently stale."""
+    from uta.models import Run, TestResult
+
+    value_stack = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/dev/ut_ar/arinv_csvc.py", line 92, in test_x\n'
+        "    parse(x)\n"
+        "ValueError: bad literal\n"
+    )
+    with session_factory() as s:
+        _fail_run(s, 1)
+        s.commit()
+    with session_factory() as s:
+        run = s.scalar(select(Run).where(Run.build_number == 1))
+        # The pipeline's idempotent re-ingest path: capture the old links, then clear + rebuild
+        # with a different failure (ValueError instead of AssertionError → different hash).
+        stale = set(
+            s.scalars(
+                select(TestResult.signature_id.distinct()).where(
+                    TestResult.run_id == run.id, TestResult.signature_id.is_not(None)
+                )
+            )
+        )
+        run.results.clear()
+        s.flush()
+        ident = get_identity(s, T)
+        for track in ("permanent", "permanent_py39"):
+            run.results.append(
+                TestResult(
+                    identity=ident,
+                    track=track,
+                    status="FAILED",
+                    error_details="test failure",
+                    error_stack_trace=value_stack,
+                )
+            )
+        s.flush()
+        record_signatures_for_run(s, run, stale_signature_ids=stale)
+        s.commit()
+        by_exc = {sig.exception_type: sig for sig in s.scalars(select(FailureSignature)).all()}
+        assert set(by_exc) == {"AssertionError", "ValueError"}
+        old, new = by_exc["AssertionError"], by_exc["ValueError"]
+        assert old.occurrence_count == 0  # orphaned → the documented zero/empty reset
+        assert old.first_seen_at is None and old.last_seen_at is None
+        assert old.first_seen_run_id is None and old.last_seen_run_id is None
+        assert new.occurrence_count == 2
+        assert new.last_seen_run_id == run.id
+
+
+def test_first_last_seen_run_ids_follow_started_at_not_run_id(session_factory):
+    """A historical re-ingest gives an OLDER build a HIGHER run id (quarantine recovery); the
+    first/last-seen run ids must belong to the runs with min/max ``started_at``, never min/max
+    run id."""
+    from uta.models import Run
+
+    with session_factory() as s:
+        newer = _fail_run(s, 105)  # ingested first → lower run id, later started_at
+        older = _fail_run(s, 104)  # recovered later → higher run id, earlier started_at
+        s.commit()
+        assert older.id > newer.id and older.started_at < newer.started_at  # the premise
+        sig = s.scalar(select(FailureSignature))
+        # Compare against DB-round-tripped values (SQLite drops tzinfo on the way through).
+        started = dict(s.execute(select(Run.id, Run.started_at)).all())
+        assert sig.first_seen_run_id == older.id
+        assert sig.first_seen_at == started[older.id]
+        assert sig.last_seen_run_id == newer.id
+        assert sig.last_seen_at == started[newer.id]
+
+
 def test_exact_recurrence_lookup(session_factory):
     with session_factory() as s:
         _fail_run(s, 1)
@@ -139,3 +211,58 @@ def test_provenance_weighting_orders_confirmed_first(session_factory):
         match = next(c for c in cases if c.signature_id == sig_b.id)
         assert match.reason_text == "off-by-one in reminder fee"
         assert match.provenance_weight == 3
+
+
+def test_human_entered_cause_outranks_unconfirmed_ai_reason(session_factory):
+    """A triager may validate only *who* caused it — that's human knowledge (issue #126).
+
+    ``cause_provenance=HUMAN_ENTERED`` with ``reason_provenance`` still at its AI_UNCONFIRMED
+    default must rank above an unconfirmed AI reason on equal text similarity and carry the
+    human provenance label — not weight 0 from reading ``reason_provenance`` alone.
+    """
+    with session_factory() as s:
+        _fail_run(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
+        _fail_run(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
+        _fail_run(s, 3, name="ut_ar.arinv_csvc.test_c", msg="zzz")
+        s.commit()
+        sig = {
+            t: s.scalar(
+                select(FailureSignature).where(
+                    FailureSignature.test_identity_id
+                    == get_identity(s, f"ut_ar.arinv_csvc.test_{t}").id
+                )
+            )
+            for t in ("a", "b", "c")
+        }
+        # B: the set-attribution path with only causing_person filled — cause becomes
+        # HUMAN_ENTERED while reason_provenance keeps its AI_UNCONFIRMED default.
+        s.add(
+            Attribution(
+                episode_id=1,
+                signature_id=sig["b"].id,
+                causing_person="ako",
+                cause_provenance=Provenance.HUMAN_ENTERED,
+            )
+        )
+        # C: an unconfirmed AI reason only.
+        s.add(
+            Attribution(
+                episode_id=2,
+                signature_id=sig["c"].id,
+                reason_text="maybe a fee rounding change",
+                reason_provenance=Provenance.AI_UNCONFIRMED,
+            )
+        )
+        s.commit()
+        cases = similar_cases(
+            s, sig["a"].normalized_text, k=5, cutoff=0.1, exclude_signature_id=sig["a"].id
+        )
+        b_case = next(c for c in cases if c.signature_id == sig["b"].id)
+        c_case = next(c for c in cases if c.signature_id == sig["c"].id)
+        assert b_case.provenance == Provenance.HUMAN_ENTERED
+        assert b_case.provenance_weight == 3
+        assert b_case.causing_person == "ako"
+        assert c_case.provenance_weight == 0
+        # Same normalized text → equal similarity; the human-entered cause must win the tie.
+        assert b_case.similarity == c_case.similarity
+        assert cases.index(b_case) < cases.index(c_case)

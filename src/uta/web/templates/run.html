@@ -12,6 +12,7 @@
 {%- endmacro %}
 
 {% block content %}
+{{ ui.breadcrumb("Job runs", "/runs") }}
 {% if not run %}
   <h1>No run ingested for build #{{ build }}</h1>
   <p class="meta">Run the back-fill CLI: <code>uta backfill &lt;build&gt;</code></p>
