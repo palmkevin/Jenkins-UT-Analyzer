@@ -50,10 +50,11 @@
     </tr>
   </table>
   <p>
-    A <strong>filter/sort bar</strong> above the buckets (owner, suite, track, predicted cause,
-    triage status, flaky-only) works entirely through the URL, so a filtered view can be
-    bookmarked or shared. Use the <strong>search box</strong> in the navbar to jump straight to a
-    test by name. Owner, suite and predicted-cause values shown throughout the queue, a run's
+    A <strong>filter/sort bar</strong> above the buckets (<strong>owner</strong> — the test's main
+    developer, resolved from an <code>svn blame</code> of its source file — plus suite, track,
+    predicted cause, triage status, flaky-only) works entirely through the URL, so a filtered view
+    can be bookmarked or shared. Use the <strong>search box</strong> in the navbar to jump straight
+    to a test by name. Owner, suite and predicted-cause values shown throughout the queue, a run's
     results and the flaky leaderboard are themselves <strong>clickable pivots</strong> — click one
     to jump straight to the triage queue filtered to just that value.
   </p>
@@ -226,7 +227,7 @@
   <ul class="mb-0">
     <li><strong>Jira</strong> — the ticket field links to <code>{{ jira_base_url }}/browse/&lt;TICKET&gt;</code>.</li>
     <li><strong>FishEye</strong> — each candidate SVN revision links to <code>{{ fisheye_changelog_url }}?cs=&lt;revision&gt;</code>.</li>
-    <li><strong>ZEPHYR (Kanoah Test Management)</strong> — test case IDs parsed from a failure's stack trace (e.g. <code>LX-T4792</code>) link to <code>{{ zephyr_test_case_url_prefix }}&lt;ID&gt;</code>.</li>
+    <li><strong>ZEPHYR (Kanoah Test Management)</strong> — test case IDs parsed from a failure's stack trace (e.g. <code>LX-T4792</code>) link to <code>{{ zephyr_test_case_url_prefix }}&lt;ID&gt;</code>. Each case's own <strong>ZEPHYR owner</strong> initials are shown next to it — the owner of the manual test case, kept separate from the dashboard <strong>Owner</strong> (the unit test's main developer).</li>
   </ul>
 </div>
 {% endblock %}

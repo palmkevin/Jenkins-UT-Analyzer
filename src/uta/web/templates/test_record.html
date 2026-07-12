@@ -21,6 +21,7 @@
     {%- for tc in record.zephyr_test_cases %}
       <a href="{{ zephyr_test_case_url_prefix }}{{ tc }}" target="_blank" rel="noopener">{{ tc }}</a>{{ "," if not loop.last }}
     {%- endfor %}
+    {%- if record.zephyr_owner %} (owner {{ record.zephyr_owner }}){% endif %}
   {% endif %}
 </p>
 

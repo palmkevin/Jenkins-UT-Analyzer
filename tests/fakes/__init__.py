@@ -2,5 +2,6 @@
 
 from .jenkins import FakeJenkinsClient
 from .oracle import FakeTrackingFeed
+from .svn import FakeSvnBlameClient
 
-__all__ = ["FakeJenkinsClient", "FakeTrackingFeed"]
+__all__ = ["FakeJenkinsClient", "FakeSvnBlameClient", "FakeTrackingFeed"]

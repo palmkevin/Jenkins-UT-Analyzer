@@ -132,7 +132,7 @@ def _new_failure_lines(session: Session, run: Run, regression_ids: list[int]) ->
             {
                 "identity_id": identity_id,
                 "test_id": ident.canonical_name if ident else str(identity_id),
-                "owner": ident.owner_initials if ident else None,
+                "owner": ident.main_developer if ident else None,
                 "predicted_cause": classification.predicted_cause if classification else "UNKNOWN",
                 "suggested_contact": classification.suggested_contact if classification else None,
             }

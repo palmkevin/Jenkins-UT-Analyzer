@@ -382,7 +382,7 @@ def many_owned_failures_client(session_factory, monkeypatch):
         r1 = make_run(s, 1, {n: "FAILED" for n in names})
         apply_run(s, r1, baseline=None)
         for name in names:
-            get_identity(s, name).owner_initials = "ZZ" if name == "zzz_unrelated" else "KP"
+            get_identity(s, name).main_developer = "ZZ" if name == "zzz_unrelated" else "KP"
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
 
@@ -504,9 +504,9 @@ def multi_owner_client(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").main_developer = "AB"
         get_identity(s, "alpha").suite = "ut_pricing"
-        get_identity(s, "beta").owner_initials = "CD"
+        get_identity(s, "beta").main_developer = "CD"
         get_identity(s, "beta").suite = "ut_billing"
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
@@ -991,11 +991,9 @@ def pivots_client(session_factory):
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
         apply_run(s, r1, baseline=None)
         ident = get_identity(s, "alpha")
-        ident.owner_initials = "AB"
-        # The run-results table reads the per-result owner (ingest stamps both); mirror that.
-        for res in r1.results:
-            if res.identity is ident:
-                res.owner_initials = "AB"
+        # Owner = the test's main developer (#114); the triage and run-results tables both read it
+        # from the identity, so a single assignment drives every surface.
+        ident.main_developer = "AB"
         s.add(
             Classification(
                 episode_id=ident.lifecycle.current_episode_id,
@@ -1076,7 +1074,7 @@ def test_flaky_leaderboard_owner_pivots(session_factory):
             )
             apply_run(s, run, baseline=prev)
             prev = run
-        get_identity(s, "flappy").owner_initials = "KP"
+        get_identity(s, "flappy").main_developer = "KP"
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     page = client.get("/flaky").text
     assert '<a class="pivot-link" href="/?owner=KP"' in page
@@ -1087,7 +1085,7 @@ def test_search_results_suite_and_owner_pivot_with_encoding(session_factory):
         for name in ("ut_a.TestClass.test_alpha_one", "ut_a.TestClass.test_alpha_two"):
             ident = get_identity(s, name)
             ident.suite = "ut a&b"  # forces visible URL-encoding in the pivot href
-            ident.owner_initials = "KP"
+            ident.main_developer = "KP"
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     page = client.get("/search?q=alpha").text
     assert '<a class="pivot-link" href="/?suite=ut+a%26b"' in page

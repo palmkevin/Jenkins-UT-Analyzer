@@ -681,9 +681,9 @@ def test_triage_filters_by_owner_and_suite(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").main_developer = "AB"
         get_identity(s, "alpha").suite = "ut_pricing"
-        get_identity(s, "beta").owner_initials = "CD"
+        get_identity(s, "beta").main_developer = "CD"
         get_identity(s, "beta").suite = "ut_billing"
 
         by_owner = views.triage_queue(s, filters={"owner": "ab"})
@@ -720,8 +720,8 @@ def test_triage_sort_by_name_and_owner(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"zeta": "FAILED", "alpha": "FAILED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "zeta").owner_initials = "AA"
-        get_identity(s, "alpha").owner_initials = "ZZ"
+        get_identity(s, "zeta").main_developer = "AA"
+        get_identity(s, "alpha").main_developer = "ZZ"
 
         by_name = views.triage_queue(s, sort="name")
         assert [r["test_id"] for r in by_name["new"]] == ["alpha", "zeta"]
@@ -734,7 +734,7 @@ def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory)
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "alpha").owner_initials = "AB"
+        get_identity(s, "alpha").main_developer = "AB"
         get_identity(s, "alpha").suite = "ut_pricing"
 
         options = views.triage_filter_options(s)
@@ -826,7 +826,7 @@ def test_triage_rows_carry_pivot_urls(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_run(s, 1, {"t": "FAILED"})
         apply_run(s, r1, baseline=None)
-        get_identity(s, "t").owner_initials = "KP"
+        get_identity(s, "t").main_developer = "KP"
         s.add(
             Classification(
                 episode_id=_lc(s, "t").current_episode_id,
@@ -851,7 +851,7 @@ def test_search_rows_carry_suite_and_owner_pivot_urls(session_factory):
     with session_scope(session_factory) as s:
         ident = get_identity(s, "ut_a.TestClass.test_thing")
         ident.suite = "ut_a"
-        ident.owner_initials = "KP"
+        ident.main_developer = "KP"
         (row,) = views.test_search(s, "thing")
         assert row["suite_url"] == "/?suite=ut_a"
         assert row["owner_url"] == "/?owner=KP"

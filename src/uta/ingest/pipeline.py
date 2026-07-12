@@ -25,6 +25,7 @@ from uta.analyze.error_type import derive_error_type
 from uta.analyze.flakiness import recompute_flaky_flags
 from uta.analyze.hypothesize import hypothesize_run
 from uta.analyze.lifecycle import apply_run
+from uta.analyze.ownership import resolve_for_cases
 from uta.db import session_scope
 from uta.delivery.email import EmailMessage, EmailSender, build_regression_report, send_alert
 from uta.ingest.jenkins import JenkinsClient
@@ -50,6 +51,7 @@ from uta.models import (
     TestResult,
 )
 from uta.refdb.oracle import TrackingFeed
+from uta.refdb.svn import SvnBlameClient
 
 _PASSED = frozenset({"PASSED", "FIXED"})
 _FAILED = frozenset({"FAILED", "REGRESSION"})
@@ -108,8 +110,9 @@ def _resolve_identities(session: Session, cases: list[TestCaseResult]) -> dict[s
 
     Existing identities are fetched with a chunked ``canonical_name IN (...)`` query; the missing
     ones are created and added to the dict, then flushed once so their ids exist before results
-    reference them. Descriptive attributes (suite/class/method/owner) are refreshed from the latest
-    case, exactly as the per-case path did.
+    reference them. Descriptive attributes (suite/class/method/zephyr_owner/zephyr_test_cases) are
+    refreshed from the latest case, exactly as the per-case path did. ``main_developer`` is *not*
+    set here — it comes from SVN blame, resolved separately (issue #114).
     """
     names = {case.test_id for case in cases}
     identities: dict[str, TestIdentity] = {}
@@ -133,8 +136,8 @@ def _resolve_identities(session: Session, cases: list[TestCaseResult]) -> dict[s
         ident.suite = case.suite_name
         ident.class_name = case.class_name
         ident.method = case.name
-        if case.owner_initials:
-            ident.owner_initials = case.owner_initials
+        if case.zephyr_owner:
+            ident.zephyr_owner = case.zephyr_owner
         if case.zephyr_ids:
             ident.zephyr_test_cases = ",".join(case.zephyr_ids)
 
@@ -163,6 +166,7 @@ def ingest_build(
     ingest_unittest_logs: bool = False,
     unittest_suites: frozenset[str] | set[str] | None = None,
     recompute_flaky: bool = True,
+    svn_blame_client: SvnBlameClient | None = None,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
 
@@ -304,7 +308,7 @@ def ingest_build(
                 "duration": case.duration,
                 "file_path": case.file_path,
                 "line": case.line,
-                "owner_initials": case.owner_initials,
+                "zephyr_owner": case.zephyr_owner,
                 "error_type": derive_error_type(
                     case.status, case.error_details, case.error_stack_trace
                 ),
@@ -315,6 +319,13 @@ def ingest_build(
         ]
         if result_rows:
             session.execute(insert(TestResult), result_rows)
+
+        # Owner = the test's main developer, from SVN blame (issue #114). Gated: only when a blame
+        # client is wired (SVN_BLAME_ENABLED) — off for the offline gate, local dev and the demo.
+        # Scoped to this run's failing tests (only failures carry a source path); identities keep
+        # their resolved owner across runs, so this fills newly-seen tests incrementally.
+        if svn_blame_client is not None:
+            resolve_for_cases(identities, cases, svn_blame_client)
 
         for change in change_sets.changes:
             run.code_changes.append(

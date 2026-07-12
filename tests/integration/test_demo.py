@@ -8,6 +8,8 @@ marker), so CI executes them on every PR.
 
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -475,14 +477,17 @@ def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     row = next(
         r for r in queue["new"] if r["owner"] and r["test_id"].endswith("test_invoice_rounding")
     )
+    # Owner is now the main developer (#114) — a name that may contain spaces, so the pivot URL is
+    # URL-encoded (e.g. "M. Weber" -> "owner=M.+Weber"), matching pivot_url()/urlencode.
+    owner_q = urlencode({"owner": row["owner"]})
 
     triage_page = client.get("/").text
-    assert f'<a class="pivot-link" href="/?owner={row["owner"]}"' in triage_page
+    assert f'<a class="pivot-link" href="/?{owner_q}"' in triage_page
     assert f'<a class="pivot-link" href="/?cause={row["predicted_cause"]}"' in triage_page
 
     # Build 612's results include the owned invoice-rounding failure -> owner column pivots.
     run_page = client.get(f"/runs/{FIRST_BUILD + 11}").text
-    assert f'<a class="pivot-link" href="/?owner={row["owner"]}"' in run_page
+    assert f'<a class="pivot-link" href="/?{owner_q}"' in run_page
 
     flaky_page = client.get("/flaky").text
     assert 'class="pivot-link" href="/?owner=' in flaky_page

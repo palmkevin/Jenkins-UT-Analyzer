@@ -314,9 +314,9 @@ def _row(
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
         "suite": ident.suite,
-        "owner": ident.owner_initials,
+        "owner": ident.main_developer,
         # Pivot links (issue #157): the row's plain facts double as filters on the queue itself.
-        "owner_url": pivot_url("owner", ident.owner_initials),
+        "owner_url": pivot_url("owner", ident.main_developer),
         "cause_url": pivot_url("cause", classification.predicted_cause if classification else None),
         "state": lc.state,
         "flaky": lc.flaky,
@@ -537,7 +537,7 @@ def triage_filter_options(session: Session) -> dict:
         {
             o
             for o in session.scalars(
-                select(TestIdentity.owner_initials)
+                select(TestIdentity.main_developer)
                 .join(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
                 .distinct()
             ).all()
@@ -990,7 +990,8 @@ def test_record(
         "suite": ident.suite,
         "class_name": ident.class_name,
         "method": ident.method,
-        "owner": ident.owner_initials,
+        "owner": ident.main_developer,
+        "zephyr_owner": ident.zephyr_owner,
         "zephyr_test_cases": [z for z in (ident.zephyr_test_cases or "").split(",") if z],
         "lifecycle": None
         if lc is None
@@ -1079,9 +1080,9 @@ def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
             "identity_id": i.id,
             "test_id": i.canonical_name,
             "suite": i.suite,
-            "owner": i.owner_initials,
+            "owner": i.main_developer,
             "suite_url": pivot_url("suite", i.suite),
-            "owner_url": pivot_url("owner", i.owner_initials),
+            "owner_url": pivot_url("owner", i.main_developer),
         }
         for i in idents
     ]
@@ -1144,7 +1145,7 @@ def run_summary(
     page, pages, offset = _page_window(results_total, limit=limit, page=page)
     # Only the visible page is fetched, with the identity name joined in (no per-row lazy load).
     results_query = (
-        select(TestResult, TestIdentity.canonical_name)
+        select(TestResult, TestIdentity.canonical_name, TestIdentity.main_developer)
         .join(TestIdentity, TestIdentity.id == TestResult.test_identity_id)
         .where(*result_filters)
         .order_by(TestResult.status, TestResult.test_identity_id, TestResult.track, TestResult.id)
@@ -1188,12 +1189,12 @@ def run_summary(
                 "track": r.track,
                 "status": r.status,
                 "duration": r.duration,
-                "owner": r.owner_initials,
-                "owner_url": pivot_url("owner", r.owner_initials),
+                "owner": main_developer,
+                "owner_url": pivot_url("owner", main_developer),
                 "file_path": r.file_path,
                 "line": r.line,
             }
-            for r, canonical_name in visible_results
+            for r, canonical_name, main_developer in visible_results
         ],
         "results_total": results_total,
         "page": page,

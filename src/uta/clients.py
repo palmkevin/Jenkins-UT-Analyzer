@@ -40,6 +40,23 @@ def build_feed(settings: Settings):
     )
 
 
+def build_svn_blame_client(settings: Settings):
+    """The SVN blame client (test ownership = main developer, #114), or ``None`` when disabled.
+
+    Gated by ``SVN_BLAME_ENABLED`` and a configured ``SVN_REPO_BASE_URL`` — with either unset no
+    client is built and ``main_developer`` stays NULL, so the offline gate and demo never touch SVN.
+    """
+    if not settings.svn_blame_enabled or not settings.svn_repo_base_url:
+        return None
+    from uta.refdb.svn import SvnCliBlameClient
+
+    return SvnCliBlameClient(
+        settings.svn_repo_base_url,
+        username=settings.svn_user,
+        password=settings.svn_password,
+    )
+
+
 def windows(settings: Settings) -> tuple[timedelta, timedelta]:
     return (
         timedelta(hours=settings.data_change_lookback_hours),

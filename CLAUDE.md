@@ -125,7 +125,11 @@ Two tiers — offline (the gate) and `live` (local-only):
 - **`live`-marked tests are local-only**, never in CI (they hit the gated external systems).
 - **Every step ships with its unit tests.** A milestone isn't done until its new logic is covered.
 - CI (`.github/workflows/ci.yml`): lint (ruff) → `pytest -m "not live"` → coverage; **required
-  status on protected `main`**.
+  status on protected `main`**. The lint step runs **both** `ruff check .` **and**
+  `ruff format --check .`, so run **both before every commit** — `ruff check .` alone passes while a
+  formatting-only diff still fails CI (a green `ruff check` is *not* enough). `ruff format .` fixes
+  it in place. Also run `pytest -m "not live"` **in batches** in the devcontainer — the whole suite
+  at once OOM-kills (exit 137); that's the environment, not a failure.
 
 ## Reference: the build #1702 facts the fixtures came from
 - Job `Development/lsdevbuild-build-release-permanent`, anonymous read works (token optional).

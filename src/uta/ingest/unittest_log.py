@@ -173,7 +173,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
 
     def _case(cls: str, name: str, status: str) -> TestCaseResult:
         details, stack, file_path, line = blocks.get((cls, name), (None, None, None, None))
-        zephyr_ids, owner = extract_zephyr(stack)
+        zephyr_ids, zephyr_owner = extract_zephyr(stack)
         return TestCaseResult(
             track=track,
             suite_name=suite_name,
@@ -189,7 +189,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
             line=line,
             zephyr_id=zephyr_ids[0] if zephyr_ids else None,
             zephyr_ids=zephyr_ids,
-            owner_initials=owner,
+            zephyr_owner=zephyr_owner,
         )
 
     # A parsed FAIL/ERROR block is authoritative: a test that prints to stdout mid-run garbles

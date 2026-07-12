@@ -42,7 +42,7 @@ def test_file_path_and_line_extracted_from_trace(test_report_1702):
     assert case.line == 793
 
 
-def test_owner_initials_extracted_from_zephyr(test_report_1702):
+def test_zephyr_owner_extracted_from_zephyr(test_report_1702):
     parsed = parse_test_report(test_report_1702)
     case = next(
         c
@@ -51,14 +51,15 @@ def test_owner_initials_extracted_from_zephyr(test_report_1702):
     )
     assert case.zephyr_id == "LX-T4447"
     assert case.zephyr_ids == ("LX-T4447",)
-    assert case.owner_initials == "kam"
+    # This is the ZEPHYR test-case owner, not the unit test's developer (see #114).
+    assert case.zephyr_owner == "kam"
 
 
 def test_passed_case_has_no_location_or_owner(test_report_1702):
     parsed = parse_test_report(test_report_1702)
     passed = next(c for c in parsed.cases if c.status == "PASSED")
     assert passed.file_path is None
-    assert passed.owner_initials is None
+    assert passed.zephyr_owner is None
     assert passed.zephyr_id is None
     assert passed.zephyr_ids == ()
 

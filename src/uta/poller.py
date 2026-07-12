@@ -42,6 +42,7 @@ from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
 from uta.refdb.oracle import TrackingFeed
+from uta.refdb.svn import SvnBlameClient
 from uta.retention import prune
 
 if TYPE_CHECKING:
@@ -158,6 +159,7 @@ def poll_once(
     kb_similarity_cutoff: float = 0.3,
     ingest_unittest_logs: bool = False,
     unittest_suites: frozenset[str] | set[str] | None = None,
+    svn_blame_client: SvnBlameClient | None = None,
     backfill_depth: int = 10,
     retry_attempts: int = 3,
     retry_base_seconds: float = 2.0,
@@ -207,6 +209,7 @@ def poll_once(
                     kb_similarity_cutoff=kb_similarity_cutoff,
                     ingest_unittest_logs=ingest_unittest_logs,
                     unittest_suites=unittest_suites,
+                    svn_blame_client=svn_blame_client,
                 ),
                 what=f"ingest of build #{build}",
                 attempts=retry_attempts,
@@ -271,6 +274,7 @@ def poll_tick(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     hypothesis_provider: HypothesisProvider | None = None,
+    svn_blame_client: SvnBlameClient | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[int]:
     """One scheduled poll: resolve live overrides, ingest new builds, record the heartbeat.
@@ -309,6 +313,7 @@ def poll_tick(
             kb_similarity_cutoff=cfg.pgtrgm_similarity_cutoff,
             ingest_unittest_logs=cfg.ingest_unittest_stages,
             unittest_suites=cfg.unittest_suite_set,
+            svn_blame_client=svn_blame_client,
             backfill_depth=cfg.backfill_depth,
             retry_attempts=cfg.poll_retry_attempts,
             retry_base_seconds=cfg.poll_retry_base_seconds,
@@ -342,6 +347,7 @@ def run_scheduler(
     email_sender: EmailSender | None = None,
     email_recipients: tuple[str, ...] = (),
     hypothesis_provider: HypothesisProvider | None = None,
+    svn_blame_client: SvnBlameClient | None = None,
 ) -> None:
     """Block forever, polling on the configured interval (the ``uta poll`` entrypoint).
 
@@ -358,6 +364,7 @@ def run_scheduler(
             email_sender=email_sender,
             email_recipients=email_recipients,
             hypothesis_provider=hypothesis_provider,
+            svn_blame_client=svn_blame_client,
         )
 
     scheduler = build_scheduler(_tick, base_settings.poll_interval_seconds)
