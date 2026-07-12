@@ -128,9 +128,7 @@ def test_reingest_with_changed_error_text_resets_the_orphaned_signature(session_
         s.flush()
         record_signatures_for_run(s, run, stale_signature_ids=stale)
         s.commit()
-        by_exc = {
-            sig.exception_type: sig for sig in s.scalars(select(FailureSignature)).all()
-        }
+        by_exc = {sig.exception_type: sig for sig in s.scalars(select(FailureSignature)).all()}
         assert set(by_exc) == {"AssertionError", "ValueError"}
         old, new = by_exc["AssertionError"], by_exc["ValueError"]
         assert old.occurrence_count == 0  # orphaned → the documented zero/empty reset
