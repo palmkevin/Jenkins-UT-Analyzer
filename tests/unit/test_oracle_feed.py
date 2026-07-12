@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime
 
 from tests.fakes import FakeTrackingFeed
+from uta.refdb.oracle import _row_to_change
 
 
 def test_window_filter_uses_local_clock_and_returns_utc():
@@ -67,6 +68,57 @@ def test_fall_back_night_change_before_window_end_is_not_excluded(tmp_path):
     assert len(changes) == 1
     # Ambiguous CREDATIM 02:40 reads as the first occurrence (CEST) -> the true 00:40 UTC.
     assert changes[0].cre_utc == datetime(2025, 10, 26, 0, 40, tzinfo=UTC)
+
+
+def test_null_stringified_columns_become_empty_never_the_string_none():
+    # Issue #119: the live feed builds the row dict from cursor.description, so every column key
+    # exists and a SQL NULL arrives as Python None — str() must not turn it into the literal "None".
+    row = {
+        "SESSIONLOGID": None,
+        "LXTABLECODE": None,
+        "PKLST": None,
+        "LXTABLECODEREF": None,
+        "PKLSTREF": None,
+        "TYPE": None,
+        "COMPONENTNAME": None,
+        "CREDATIM": datetime(2026, 6, 26, 8, 0),  # noqa: DTZ001 - naive local, as Oracle returns it
+        "UPDDATIM": None,
+        "USRIDCRE": None,
+        "USRCODE": None,
+    }
+    c = _row_to_change(row)
+    assert c.entity == ""
+    assert c.pk == ""
+    assert c.change_type == ""
+    assert c.entity_ref is None
+    assert c.pk_ref is None
+    assert c.component is None
+    assert c.user_code is None
+    assert "None" not in {v for v in vars(c).values() if isinstance(v, str)}
+
+
+def test_normal_values_pass_through_unchanged():
+    row = {
+        "SESSIONLOGID": 7,
+        "LXTABLECODE": "LORDER",
+        "PKLST": 12345,
+        "LXTABLECODEREF": "LSAMPLE",
+        "PKLSTREF": 678,
+        "TYPE": "U",
+        "COMPONENTNAME": "LORDER_CSVC",
+        "CREDATIM": datetime(2026, 6, 26, 8, 0),  # noqa: DTZ001 - naive local, as Oracle returns it
+        "UPDDATIM": None,
+        "USRIDCRE": 1,
+        "USRCODE": "ABC",
+    }
+    c = _row_to_change(row)
+    assert c.entity == "LORDER"
+    assert c.pk == "12345"
+    assert c.entity_ref == "LSAMPLE"
+    assert c.pk_ref == "678"
+    assert c.change_type == "U"
+    assert c.component == "LORDER_CSVC"
+    assert c.user_code == "ABC"
 
 
 def test_no_moddata_leaks_into_feed():
