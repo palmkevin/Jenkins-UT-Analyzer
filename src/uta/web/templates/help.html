@@ -53,7 +53,9 @@
     A <strong>filter/sort bar</strong> above the buckets (owner, suite, track, predicted cause,
     triage status, flaky-only) works entirely through the URL, so a filtered view can be
     bookmarked or shared. Use the <strong>search box</strong> in the navbar to jump straight to a
-    test by name.
+    test by name. Owner, suite and predicted-cause values shown throughout the queue, a run's
+    results and the flaky leaderboard are themselves <strong>clickable pivots</strong> — click one
+    to jump straight to the triage queue filtered to just that value.
   </p>
   <p class="mb-0">
     Clicking a test name opens its <strong>per-test record</strong>: the full failure history,
@@ -141,6 +143,12 @@
 <h2 id="feedback">Acting on an AI suggestion</h2>
 <div class="card">
   <p>
+    When an episode's prediction carries evidence, a collapsed <strong>"Why this
+    prediction"</strong> panel sits right next to the Confirm button — expand it to see the top
+    code/data match, how a tie between candidates was broken, and the inputs behind the confidence
+    score, so you can sanity-check the suggestion before you act on it.
+  </p>
+  <p>
     On a test record with a predicted cause and/or an LLM hypothesis, you have two ways to
     respond:
   </p>
@@ -193,13 +201,16 @@
   <p class="mb-0">
     The <a href="/kb">Knowledge base</a> page lets you paste an error message or stack fragment
     and search across all past failures by similarity, independent of any specific test record.
+    If a search there turns up nothing, it offers to try the same text as a test-name search
+    instead (and the navbar test search does the reverse when it finds no matching test) — the
+    text you typed might have been the other kind of query.
   </p>
 </div>
 
 <h2 id="pages">Other pages</h2>
 <div class="card">
   <table class="table table-sm align-middle mb-0">
-    <tr><td style="width: 10rem"><a href="/runs">Job runs</a></td><td>Every ingested run, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a run-health timeline chart and the poller's last/next tick.</td></tr>
+    <tr><td style="width: 10rem"><a href="/runs">Job runs</a></td><td>Every ingested run, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a run-health timeline chart and the poller's last/next tick. A run's failed count links straight to that run's results filtered to failures only.</td></tr>
     <tr><td><a href="/flaky">Flaky</a></td><td>Tests ranked by <strong>oscillation</strong> (how often they flip between pass and fail), not just fail count — a solidly-failing test is a regression, not flaky.</td></tr>
     <tr><td><a href="/kb">Knowledge base</a></td><td>Free-text search over past failures, described above.</td></tr>
     <tr><td><a href="/control">Control</a></td><td>Live-tunable thresholds (flaky sensitivity, knowledge-base cutoffs, retention windows, and more — no redeploy needed), the AI suggestion accuracy table, poller health, build quarantine, and on-demand ingest of a specific build or range.</td></tr>
