@@ -179,6 +179,66 @@ def test_unknown_test_record_is_graceful(client):
     assert "No record" in resp.text
 
 
+# ── triage error snippets + trace clamp/copy (issue #145) ──────────────────────
+
+_TRACE_TMPL = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/ls/lx/release/permanent/tests/dev/ut_x/mod.py", line 12, in test_t\n'
+    "    check()\n"
+    "{exc}"
+)
+
+
+@pytest.fixture
+def errors_client(session_factory):
+    """One new + one acknowledged failing test, both with real error text."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(
+            s,
+            1,
+            {"alpha": "FAILED", "gamma": "FAILED"},
+            errors={
+                "alpha": ("test failure", _TRACE_TMPL.format(exc="AssertionError: 7 != 9")),
+                "gamma": ("test failure", _TRACE_TMPL.format(exc="KeyError: 'MSH'")),
+            },
+        )
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    ident_id = _identity_id(session_factory, "gamma")
+    resp = client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+    assert resp.status_code == 303
+    return client
+
+
+def test_triage_tables_show_error_snippets(errors_client):
+    page = errors_client.get("/").text
+    new_idx = page.index('id="new"')
+    still_idx = page.index('id="still_failing"')
+    fixed_idx = page.index('id="recently_fixed"')
+    # New bucket: alpha's exception line as a muted one-liner under the test name.
+    assert 'class="error-snippet"' in page[new_idx:still_idx]
+    assert "AssertionError: 7 != 9" in page[new_idx:still_idx]
+    # Still-failing bucket: gamma's snippet (HTML-escaped quotes around MSH).
+    assert 'class="error-snippet"' in page[still_idx:fixed_idx]
+    assert "KeyError:" in page[still_idx:fixed_idx]
+
+
+def test_test_record_trace_has_clamp_hook_and_copy_button(session_factory):
+    """The full >15-line trace ships in the HTML (no-JS fallback) with clamp + copy hooks."""
+    deep = "\n".join(f"    frame_{i}()" for i in range(20))
+    stack = _TRACE_TMPL.format(exc=deep + "\nValueError: bottom of a deep stack")
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"alpha": "FAILED"}, errors={"alpha": ("test failure", stack)})
+        apply_run(s, r1, baseline=None)
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
+    assert 'data-clamp="15"' in page
+    assert 'data-copy-target="trace-' in page
+    assert "Copy trace" in page
+    assert "ValueError: bottom of a deep stack" in page  # full text present pre-clamp
+    assert "/static/trace.js" in page  # the clamp/copy behaviour is wired on every page
+
+
 # ── long-list capping (issue #19) ──────────────────────────────────────────────
 
 
