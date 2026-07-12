@@ -14,7 +14,13 @@ from tests.builders import _EPOCH, make_run
 from tests.fakes.email import RecordingEmailSender
 from uta.analyze.classify import classify_run
 from uta.analyze.lifecycle import apply_run
-from uta.delivery.email import EmailMessage, build_regression_report, send_alert
+from uta.delivery.email import (
+    EmailMessage,
+    SmtpEmailSender,
+    build_regression_report,
+    send_alert,
+    send_ops_alert,
+)
 from uta.models import CodeChangeCandidate, TestIdentity
 
 RCPT = ("team@example.com",)
@@ -158,3 +164,47 @@ def test_send_alert_swallows_sender_failure():
 
     msg = EmailMessage(subject="s", body="b", recipients=RCPT)
     assert send_alert(_RaisingSender(), msg) is False
+
+
+def test_send_ops_alert_delivers_via_sender():
+    sender = RecordingEmailSender()
+    msg = send_ops_alert(sender, RCPT, subject="poller is stale", body="b")
+    assert msg is not None
+    assert sender.sent == [msg]
+    assert msg.subject == "UT Analyzer ops — poller is stale"
+
+
+def test_send_ops_alert_swallows_sender_failure():
+    """Ops alerting is best-effort like send_alert: a raising sender yields ``None``, not an
+    exception — an SMTP outage must not 500 ``/health`` or erase the poller's tick record."""
+
+    class _RaisingSender:
+        def send(self, message: EmailMessage) -> None:
+            raise smtplib.SMTPException("relay down")
+
+    assert send_ops_alert(_RaisingSender(), RCPT, subject="poller is stale", body="b") is None
+
+
+def test_smtp_sender_dials_with_timeout(monkeypatch):
+    """A black-holed relay must fail fast, not hang the caller — the dial carries a timeout."""
+    seen: dict = {}
+
+    class _FakeSmtp:
+        def __init__(self, host, port, timeout=None):
+            seen.update(host=host, port=port, timeout=timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def send_message(self, mime):
+            seen["sent"] = True
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSmtp)
+    SmtpEmailSender("relay.example", 25, "uta@example.com").send(
+        EmailMessage(subject="s", body="b", recipients=RCPT)
+    )
+    assert seen["sent"] is True
+    assert seen["timeout"] is not None and seen["timeout"] > 0
