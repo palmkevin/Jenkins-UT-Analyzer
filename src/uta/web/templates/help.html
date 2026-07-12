@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Help — UT Analyzer{% endblock %}
+
+{% block content %}
+<h1>Help — how to use this dashboard</h1>
+<p class="meta">
+  This tool watches the nightly unit-test run, gathers the evidence for every new failure, and
+  presents it here for a human to triage. It is deliberately <strong>assistive</strong>: it
+  gathers, correlates, predicts and suggests — a person always confirms the cause and reason.
+  Every action you take (Acknowledge, Confirm, Save) is stamped with the name in the
+  <strong>acting as</strong> box in the top right, so the triage history says who decided what.
+</p>
+
+<p class="mb-4">
+  <a href="#workflow">Daily workflow</a> ·
+  <a href="#statuses">Statuses &amp; badges</a> ·
+  <a href="#llm">How the LLM contributes</a> ·
+  <a href="#feedback">Acting on an AI suggestion</a> ·
+  <a href="#kb">Knowledge base</a> ·
+  <a href="#pages">Other pages</a> ·
+  <a href="#links">External links</a>
+</p>
+
+<h2 id="workflow">Daily workflow</h2>
+<div class="card">
+  <p>
+    The dashboard opens on the <strong>triage queue</strong> — every failing or recently-fixed
+    test, organized into three buckets:
+  </p>
+  <table class="table table-sm align-middle mb-3">
+    <tr>
+      <td style="width: 12rem"><strong>New</strong></td>
+      <td>Failing tests nobody has looked at yet. Each row shows the predicted cause and a
+        one-line error snippet, with an <strong>Acknowledge</strong> button. Acknowledging just
+        moves it into "Still failing" — it records that a human has seen it, nothing more.
+        When several unacknowledged failures share the same underlying error, an
+        <strong>"Ack all w/ signature (N)"</strong> button appears so you can clear a whole
+        outage in one click.</td>
+    </tr>
+    <tr>
+      <td><strong>Still failing</strong></td>
+      <td>The open caseload: acknowledged and not yet fixed. This is where you set the
+        <strong>triage status</strong>, <strong>causing person</strong> and <strong>reason</strong>
+        — one row at a time on the per-test record, or in bulk across a checkbox selection.</td>
+    </tr>
+    <tr>
+      <td><strong>Recently fixed</strong></td>
+      <td>Tests that turned green again within the last {{ recently_fixed_days }} days —
+        visible here for a short window so a fix can be confirmed before it scrolls away.</td>
+    </tr>
+  </table>
+  <p>
+    A <strong>filter/sort bar</strong> above the buckets (owner, suite, track, predicted cause,
+    triage status, flaky-only) works entirely through the URL, so a filtered view can be
+    bookmarked or shared. Use the <strong>search box</strong> in the navbar to jump straight to a
+    test by name.
+  </p>
+  <p class="mb-0">
+    Clicking a test name opens its <strong>per-test record</strong>: the full failure history,
+    every candidate code/data change ranked by relevance, the AI suggestion (see below), and the
+    editable fields you own — causing person, reason, Jira ticket, triage status. When the same
+    failure signature affects other open tests, a second button lets you apply the same
+    conclusion to all of them at once.
+  </p>
+</div>
+
+<h2 id="statuses">Statuses &amp; badges</h2>
+<div class="card">
+  <h3 class="h6 fw-bold">Test result (per run)</h3>
+  <p class="meta">The raw outcome of one test in one run — always shown with both a colour and a
+    glyph so it reads without colour vision.</p>
+  <table class="table table-sm align-middle mb-3">
+    <tr><td style="width: 10rem"><span class="PASSED"><span class="status-glyph">✓</span> PASSED</span></td><td>The test passed.</td></tr>
+    <tr><td><span class="FAILED"><span class="status-glyph">✕</span> FAILED</span></td><td>The test failed in this run.</td></tr>
+    <tr><td><span class="SKIPPED"><span class="status-glyph">○</span> SKIPPED</span></td><td>The test did not run (e.g. disabled).</td></tr>
+    <tr><td><span class="REGRESSION">REGRESSION</span></td><td>A failure that is <em>new</em> versus the previous complete run — the thing the daily queue and email digest are built around.</td></tr>
+    <tr><td><span class="FIXED">FIXED</span></td><td>Passed again after having failed — shows up in "Recently fixed".</td></tr>
+  </table>
+
+  <h3 class="h6 fw-bold">Test lifecycle</h3>
+  <p class="meta">The test's ongoing state, independent of any single run.</p>
+  <table class="table table-sm align-middle mb-3">
+    <tr><td style="width: 10rem"><span class="FAILING">FAILING</span></td><td>Currently failing — open in "Still failing" until it passes again.</td></tr>
+    <tr><td><span class="FIXED">FIXED</span></td><td>Passing again. A test that fails again later reopens with a fresh <em>failure episode</em> — its history is never overwritten, so repeat regressions are visible.</td></tr>
+    <tr><td><span class="badge removed">REMOVED</span></td><td>The test no longer appears in the report (deleted or renamed). If it was failing when removed, its row is flagged so the episode isn't silently lost.</td></tr>
+    <tr><td><span class="badge flaky">flaky</span></td><td>An oscillation flag, not a lifecycle state — see Flakiness below. A test can be flaky <em>and</em> failing, or flaky and passing.</td></tr>
+  </table>
+
+  <h3 class="h6 fw-bold">Triage status</h3>
+  <p class="meta">Set by hand on the "Still failing" caseload — use it to track where each open failure stands.</p>
+  <table class="table table-sm align-middle mb-3">
+    <tr><td style="width: 10rem">UNTRIAGED</td><td>Default — acknowledged, nothing decided yet.</td></tr>
+    <tr><td>INVESTIGATING</td><td>Someone is actively looking into it.</td></tr>
+    <tr><td>ROOT_CAUSED</td><td>The cause is understood (reason/causing person filled in) but the fix hasn't landed.</td></tr>
+    <tr><td>RESOLVED</td><td>Considered done — typically once the fix has been confirmed in a later run.</td></tr>
+  </table>
+
+  <h3 class="h6 fw-bold">Predicted cause &amp; confidence</h3>
+  <p class="meta">A deterministic guess computed for every new regression — no LLM involved (see below for what the LLM adds on top).</p>
+  <table class="table table-sm align-middle mb-3">
+    <tr><td style="width: 10rem">CODE_CHANGE</td><td>An SVN commit in the lookback window touches this test's module/stack.</td></tr>
+    <tr><td>DATA_CHANGE</td><td>An Oracle <code>ut_ref</code> data change in the lookback window names an entity this test's error mentions.</td></tr>
+    <tr><td>INFRASTRUCTURE</td><td>The error looks environmental (timeout, connection, infra) rather than code/data related.</td></tr>
+    <tr><td>UNKNOWN</td><td>No candidate clearly wins — left for a human to work out.</td></tr>
+    <tr><td>confidence <span class="badge">0.63</span></td><td>A number in [0, 1] next to the predicted cause: a flat 0.9 for infrastructure, 0.2 for unknown; for code/data change it starts at 0.5 and rises with how decisively the evidence favours that cause and with how much validated history (confirmed, not just guessed) this exact failure already has in the knowledge base.</td></tr>
+  </table>
+
+  <h3 class="h6 fw-bold">Other badges you'll see</h3>
+  <table class="table table-sm align-middle mb-0">
+    <tr><td style="width: 10rem"><span class="badge track">permanent</span></td><td>Which parallel test track (shard) the failure is in — a test can fail in one track or both.</td></tr>
+    <tr><td>reopened ×N</td><td>How many times this test has failed, been fixed, and failed again.</td></tr>
+    <tr><td><span class="badge match">match</span></td><td>Used on the knowledge base / similar-cases tables to flag a matching signature.</td></tr>
+    <tr><td>shard-correlated</td><td>On the flaky leaderboard: this test only ever fails in one track, a tell for a shard-specific (rather than genuinely random) flake.</td></tr>
+    <tr><td>pattern: consecutive / intermittent / stable / none</td><td>How a flaky test's failures are distributed over the window — consecutive runs in a row, scattered intermittently, or effectively stable/none.</td></tr>
+    <tr><td><span class="badge">overridden</span></td><td>Control panel: this threshold has a live override in place, above its env-file default.</td></tr>
+    <tr><td><span class="badge text-bg-success">SUCCESS</span> / <span class="badge text-bg-warning">UNSTABLE</span> / <span class="badge text-bg-danger">FAILURE</span></td><td>Job runs page: the Jenkins build's own result for that run (separate from any individual test's status).</td></tr>
+  </table>
+</div>
+
+<h2 id="llm">How the LLM contributes</h2>
+<div class="card">
+  <p>
+    Everything above — the predicted cause, the confidence score, the suggested contact — is
+    computed by plain, deterministic code from the evidence (SVN commits, data changes, error
+    text). The LLM adds exactly <strong>one</strong> thing on top: a short, human-readable
+    <strong>root-cause hypothesis</strong> — a single sentence shown as "Hypothesis: …" on the
+    per-test record.
+  </p>
+  <p>
+    It's given the deterministic signals for that failure plus the top few most similar past
+    failures already recorded in the knowledge base, and asked to explain, in one sentence, what
+    probably went wrong. It never sets a status, never picks a cause, and never acts on its own —
+    it only ever produces that one sentence for a human to read and judge.
+  </p>
+  <p class="mb-0">
+    If no LLM API key is configured, this is simply blank — everything else in the tool
+    (classification, triage, the knowledge base) works exactly the same either way.
+  </p>
+</div>
+
+<h2 id="feedback">Acting on an AI suggestion</h2>
+<div class="card">
+  <p>
+    On a test record with a predicted cause and/or an LLM hypothesis, you have two ways to
+    respond:
+  </p>
+  <table class="table table-sm align-middle mb-3">
+    <tr>
+      <td style="width: 14rem"><strong>Confirm AI suggestion</strong></td>
+      <td>One click. Takes the suggested contact and the LLM hypothesis exactly as given and
+        saves them as the causing person / reason — cheap, so use it whenever the AI got it
+        right.</td>
+    </tr>
+    <tr>
+      <td><strong>Edit the fields yourself</strong></td>
+      <td>Type your own causing person / reason / Jira ticket / triage status and hit Save. If
+        what you type happens to match the AI's suggestion, it's recorded the same as a Confirm;
+        if it differs, your version is saved and the AI's original guess is kept alongside it
+        (shown as "was (AI): …") so nothing is lost.</td>
+    </tr>
+  </table>
+  <p>
+    Every conclusion is tagged with how it was reached — this is what shows in parentheses next
+    to the causing person / reason on the record:
+  </p>
+  <table class="table table-sm align-middle mb-3">
+    <tr><td style="width: 14rem">AI_UNCONFIRMED</td><td>An AI suggestion exists but no human has confirmed or corrected it yet — the weakest tier.</td></tr>
+    <tr><td>AI_CONFIRMED</td><td>A human confirmed the AI's suggestion (via Confirm, or by entering the same value by hand).</td></tr>
+    <tr><td>HUMAN_CORRECTED</td><td>A human overrode the AI's suggestion with a different value — the strongest signal, because it tells the tool it was wrong.</td></tr>
+    <tr><td>HUMAN_ENTERED</td><td>There was no AI suggestion to confirm or correct — entered from scratch.</td></tr>
+  </table>
+  <p class="mb-0">
+    This matters beyond record-keeping: only <strong>confirmed/corrected</strong> conclusions
+    (never raw AI guesses) feed back into future predictions — a validated match in the
+    knowledge base raises the confidence score the next time this failure recurs. The same
+    confirm/correct verdicts also drive the <strong>AI suggestion accuracy</strong> table on the
+    <a href="/control">Control panel</a> — confirmed vs. corrected counts and a precision figure,
+    all-time and over the last 30 days, so the team can see whether the AI is actually earning
+    its keep. Entries with no AI suggestion in play (HUMAN_ENTERED) are excluded from that
+    figure, since they say nothing about AI quality.
+  </p>
+</div>
+
+<h2 id="kb">Knowledge base — reusing past triage</h2>
+<div class="card">
+  <p>
+    Every failure is reduced to a <strong>signature</strong>: the test's identity plus its error
+    text with the noisy parts (numbers, timestamps, hex, paths) masked out, so the same failure
+    is recognized again even if the odd detail changes. When a new failure matches a past
+    signature, the record surfaces <em>"this looks like the failure on run …; previous reason
+    was …; caused by …"</em> — someone else's already-confirmed answer, ready to reuse.
+  </p>
+  <p class="mb-0">
+    The <a href="/kb">Knowledge base</a> page lets you paste an error message or stack fragment
+    and search across all past failures by similarity, independent of any specific test record.
+  </p>
+</div>
+
+<h2 id="pages">Other pages</h2>
+<div class="card">
+  <table class="table table-sm align-middle mb-0">
+    <tr><td style="width: 10rem"><a href="/runs">Job runs</a></td><td>Every ingested run, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a run-health timeline chart and the poller's last/next tick.</td></tr>
+    <tr><td><a href="/flaky">Flaky</a></td><td>Tests ranked by <strong>oscillation</strong> (how often they flip between pass and fail), not just fail count — a solidly-failing test is a regression, not flaky.</td></tr>
+    <tr><td><a href="/kb">Knowledge base</a></td><td>Free-text search over past failures, described above.</td></tr>
+    <tr><td><a href="/control">Control</a></td><td>Live-tunable thresholds (flaky sensitivity, knowledge-base cutoffs, retention windows, and more — no redeploy needed), the AI suggestion accuracy table, poller health, build quarantine, and on-demand ingest of a specific build or range.</td></tr>
+  </table>
+</div>
+
+<h2 id="links">External links</h2>
+<div class="card mb-0">
+  <p class="mb-0">
+    A few fields on the test record link out to other systems you likely already use — these are
+    read-only deep links, not integrations:
+  </p>
+  <ul class="mb-0">
+    <li><strong>Jira</strong> — the ticket field links to <code>{{ jira_base_url }}/browse/&lt;TICKET&gt;</code>.</li>
+    <li><strong>FishEye</strong> — each candidate SVN revision links to <code>{{ fisheye_changelog_url }}?cs=&lt;revision&gt;</code>.</li>
+    <li><strong>ZEPHYR (Kanoah Test Management)</strong> — test case IDs parsed from a failure's stack trace (e.g. <code>LX-T4792</code>) link to <code>{{ zephyr_test_case_url_prefix }}&lt;ID&gt;</code>.</li>
+  </ul>
+</div>
+{% endblock %}
