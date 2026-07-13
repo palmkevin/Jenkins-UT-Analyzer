@@ -17,8 +17,10 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 RUN pip install --upgrade pip && pip install -e .
 
-# tzdata so ZoneInfo("Europe/Luxembourg") resolves inside the slim image.
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+# tzdata so ZoneInfo("Europe/Luxembourg") resolves inside the slim image; subversion so the owner
+# = main-developer lookup (issue #114) can shell out to `svn blame` — without it every blame
+# silently returns None (missing binary is swallowed) and Owner never resolves (issue #166).
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata subversion \
     && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8000
