@@ -15,7 +15,7 @@
 <h1>{{ record.test_id }}</h1>
 <p class="meta">
   {{ record.suite or "" }}{% if record.class_name %} · {{ record.class_name }}{% endif %}{% if record.method %} · {{ record.method }}{% endif %}
-  {% if record.owner %} · owner {{ record.owner }}{% endif %}
+  {% if record.owner %} · owner {{ ui.pivot(record.owner, record.owner_url) }}{% endif %}
   {% if record.zephyr_test_cases %}
     · ZEPHYR{{ "s" if record.zephyr_test_cases|length > 1 else "" }}
     {%- for tc in record.zephyr_test_cases %}

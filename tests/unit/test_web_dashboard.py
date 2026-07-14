@@ -315,6 +315,27 @@ def errors_client(session_factory):
     return client
 
 
+def test_still_failing_bucket_and_record_show_owner_pivot(session_factory):
+    """Owner surfaces as a pivot link in the Still-failing bucket and on the per-test record
+    page, not just the New bucket (issue #168)."""
+    with session_scope(session_factory) as s:
+        r1 = make_run(s, 1, {"gamma": "FAILED"})
+        apply_run(s, r1, baseline=None)
+        get_identity(s, "gamma").main_developer = "KP"
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    ident_id = _identity_id(session_factory, "gamma")
+    # Acknowledge -> moves gamma out of New and into the Still-failing bucket.
+    client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
+
+    page = client.get("/").text
+    still = page[page.index('id="still_failing"') : page.index('id="recently_fixed"')]
+    assert "sort=owner" in still  # Owner column header now present in this bucket
+    assert 'class="pivot-link"' in still and ">KP<" in still
+
+    record = client.get(f"/tests/{ident_id}").text
+    assert 'class="pivot-link"' in record and ">KP<" in record
+
+
 def test_triage_tables_show_error_snippets(errors_client):
     page = errors_client.get("/").text
     new_idx = page.index('id="new"')
