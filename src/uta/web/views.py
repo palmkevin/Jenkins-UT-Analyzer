@@ -991,6 +991,7 @@ def test_record(
         "class_name": ident.class_name,
         "method": ident.method,
         "owner": ident.main_developer,
+        "owner_url": pivot_url("owner", ident.main_developer),
         "zephyr_owner": ident.zephyr_owner,
         "zephyr_test_cases": [z for z in (ident.zephyr_test_cases or "").split(",") if z],
         "lifecycle": None
