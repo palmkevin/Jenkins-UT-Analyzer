@@ -76,21 +76,29 @@ of work and the closed issue + merged PR *is* the record.
   `.devcontainer/docker-compose.dev.yml` parametrized).
 
 ## Keep the docs in sync (required, every change)
-Two hand-maintained HTML pages must stay truthful as the product evolves, and one agent owns both:
-[docs/OVERVIEW.html](docs/OVERVIEW.html) (architecture, for contributors) and the in-app
+Three hand-maintained doc surfaces describe the product but aren't generated from it, so they rot
+silently, and **one agent owns all three**:
+[docs/OVERVIEW.html](docs/OVERVIEW.html) (architecture, for contributors), the in-app
 **[Help page](src/uta/web/templates/help.html)** at `/help` (the daily workflow, statuses, badges,
-and the LLM feedback loop, for end users). After any change that could alter **what parts the app
-involves, how they communicate, or its workflows** — a new/removed external system or integration,
-a container/service change, a change to the ingest/analysis/triage/learning/alert flow, or a shift
-in what the tool outputs (the triage queue, per-test record, run summary, flakiness, knowledge
-base, or email surfaces) — *or* a change to what an **end user** sees or does in the dashboard — a
-new/renamed status or enum value, a new badge, a new/changed triage bucket or dashboard page, or a
-change to how the LLM hypothesis / Confirm / correct feedback loop works — you **must invoke the
-[`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md) agent** to check whether
-either page needs updating (it edits the page(s), including OVERVIEW.html's system-map SVG, or
-reports "no update needed" per page). Pure bug fixes, refactors, perf work, and test/CI/dependency
-changes that leave the depicted parts, communications, workflows and user-visible surfaces
-unchanged do **not** require it. When in doubt, invoke it — deciding materiality is the agent's job.
+and the LLM feedback loop, for end users), and the **[README.md](README.md) Configuration
+reference + [.env.example](.env.example)** (the settings reference, for operators). You **must
+invoke the [`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md) agent** to check
+whether any of the three needs updating (it edits the surface(s), including OVERVIEW.html's
+system-map SVG, or reports "no update needed" per surface) after any change that could alter:
+- **what parts the app involves, how they communicate, or its workflows** — a new/removed external
+  system or integration, a container/service change, a change to the ingest/analysis/triage/
+  learning/alert flow, or a shift in what the tool outputs (the triage queue, per-test record, run
+  summary, flakiness, knowledge base, or email surfaces);
+- **what an end user sees or does in the dashboard** — a new/renamed status or enum value, a new
+  badge, a new/changed triage bucket or dashboard page, or a change to how the LLM hypothesis /
+  Confirm / correct feedback loop works;
+- **the settings surface** — a [`config.py`](src/uta/config.py) field or `.env.example` key added,
+  removed, renamed, or re-gated, or a changed default/effect (every var needs both a README table
+  row and a documented `.env.example` line).
+
+Pure bug fixes, refactors, perf work, and test/CI/dependency changes that leave the depicted parts,
+communications, workflows, user-visible surfaces **and** the settings surface unchanged do **not**
+require it. When in doubt, invoke it — deciding materiality is the agent's job.
 
 ## Load-bearing invariants (silently corrupting if wrong)
 - **Clocks.** Jenkins timestamps are **epoch millis, UTC** (`timestamp`, `startTimeMillis`). Oracle
