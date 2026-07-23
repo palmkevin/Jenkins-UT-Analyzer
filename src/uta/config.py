@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────────────
     app_default_actor: str = "test-user"
     # Externally reachable base URL of this dashboard, e.g. http://host:8000 — enables deep links
-    # into the per-test record / run summary in alert emails when set. Empty (default) keeps the
+    # into the per-test record / build summary in alert emails when set. Empty (default) keeps the
     # emails link-free.
     app_base_url: str = ""
     flaky_transition_threshold: float = 0.3
@@ -85,14 +85,15 @@ class Settings(BaseSettings):
     # "recently fixed" bucket window — a fix stays visible/confirmable this long.
     recently_fixed_days: int = 7
     # Max test rows rendered per dashboard section before it is capped with a "Load all N Tests"
-    # link (keeps huge lists — the ~25k run-results table — responsive). 0 disables the cap.
+    # link (keeps huge lists — the ~25k build-results table — responsive). 0 disables the cap.
     ui_row_limit: int = 50
     # Cold-start back-fill: on an empty store, ingest the last N completed builds oldest-first
     # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
     # not try to ingest every historical build from #1.
     backfill_depth: int = 10
-    # Retention (issue #52): raw *passing/skipped* results are dropped once their run is older than
-    # this many days (failing results, runs, episodes, lifecycles, attributions and KB signatures
+    # Retention (issue #52): raw *passing/skipped* results are dropped once their build is older
+    # than
+    # this many days (failing results, builds, episodes, lifecycles, attributions and KB signatures
     # are kept forever). 0 keeps everything. Keep it comfortably above FLAKY_WINDOW_DAYS so the
     # flakiness sequence never loses in-window pass points.
     result_retention_days: int = 90
@@ -123,8 +124,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o"
 
     # ── Ingest / correlation windows ───────────────────────────────────────────
-    # Data changes precede the nightly run (the run's own window had none on #1702), so look back
-    # before the run start; the tolerance margin (B1) absorbs residual clock skew between Jenkins
+    # Data changes precede the nightly build (the build's own window had none on #1702), so look
+    # back
+    # before the build start; the tolerance margin (B1) absorbs residual clock skew between Jenkins
     # and the Oracle ut_ref clock.
     data_change_lookback_hours: int = 12
     data_change_tolerance_minutes: int = 5

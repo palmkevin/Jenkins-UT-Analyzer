@@ -3,10 +3,10 @@
 "Owner" in the dashboard is the developer who wrote most of a test's source file. This module maps a
 test's source path to its repo-relative path, blames it via a :class:`~uta.refdb.svn.SvnBlameClient`
 and stores the modal author on ``TestIdentity.main_developer`` (an identity-level property of the
-source file, not of any single run).
+source file, not of any single build).
 
 Two entry points share one resolver:
-- :func:`resolve_for_cases` — called from the ingest pipeline for the run's *failing* tests (only
+- :func:`resolve_for_cases` — called from the ingest pipeline for the build's *failing* tests (only
   failures carry a source path), so new owners appear incrementally.
 - :func:`resolve_all` — the ``uta reattribute-owners`` backfill over the whole store.
 
@@ -58,10 +58,10 @@ def resolve_for_cases(
     *,
     refresh: bool = False,
 ) -> int:
-    """Resolve owners for the run's failing tests (called from the pipeline). Returns count set.
+    """Resolve owners for the build's failing tests (called from the pipeline). Returns count set.
 
     ``identities`` is the pipeline's ``canonical_name -> TestIdentity`` map. Only failing cases with
-    a parsed source path are blameable; each identity is resolved once per run.
+    a parsed source path are blameable; each identity is resolved once per build.
     """
     pairs: list[tuple[TestIdentity, str]] = []
     seen: set[str] = set()
@@ -79,7 +79,7 @@ def resolve_for_cases(
 
 
 def _latest_source_paths(session: Session, identity_ids: list[int]) -> dict[int, str]:
-    """Each identity's most recent failing-result source path (newest run wins)."""
+    """Each identity's most recent failing-result source path (newest build wins)."""
     paths: dict[int, str] = {}
     for start in range(0, len(identity_ids), _CHUNK):
         chunk = identity_ids[start : start + _CHUNK]
@@ -89,7 +89,7 @@ def _latest_source_paths(session: Session, identity_ids: list[int]) -> dict[int,
                 TestResult.test_identity_id.in_(chunk),
                 TestResult.file_path.is_not(None),
             )
-            .order_by(TestResult.test_identity_id, TestResult.run_id.desc())
+            .order_by(TestResult.test_identity_id, TestResult.build_id.desc())
         ).all()
         for tid, file_path in rows:
             if tid not in paths:

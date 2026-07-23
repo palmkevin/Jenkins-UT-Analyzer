@@ -48,13 +48,15 @@ class TestLifecycle(Base, TimestampMixin):
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # All-time first failure is retained across episodes (the current episode tracks its own).
-    all_time_first_failure_run_id: Mapped[int | None] = mapped_column(
-        ForeignKey("runs.id"), nullable=True
+    all_time_first_failure_build_id: Mapped[int | None] = mapped_column(
+        ForeignKey("builds.id"), nullable=True
     )
     all_time_first_failure_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    last_failing_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    last_failing_build_id: Mapped[int | None] = mapped_column(
+        ForeignKey("builds.id"), nullable=True
+    )
     last_failing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     current_episode_id: Mapped[int | None] = mapped_column(
@@ -80,16 +82,18 @@ class FailureEpisode(Base, TimestampMixin):
     test_identity_id: Mapped[int] = mapped_column(ForeignKey("test_identities.id"), index=True)
     episode_number: Mapped[int] = mapped_column(Integer)  # 1, 2, 3 … per identity
 
-    first_failure_run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
+    first_failure_build_id: Mapped[int] = mapped_column(ForeignKey("builds.id"))
     first_failure_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    last_failing_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    last_failing_build_id: Mapped[int | None] = mapped_column(
+        ForeignKey("builds.id"), nullable=True
+    )
     last_failing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set ONLY when the test ran and passed again — never on REMOVED (disappeared ≠ fixed).
-    fixed_in_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    fixed_in_build_id: Mapped[int | None] = mapped_column(ForeignKey("builds.id"), nullable=True)
     fixed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     is_open: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    age_runs: Mapped[int] = mapped_column(Integer, default=0)
+    age_builds: Mapped[int] = mapped_column(Integer, default=0)
     triage_status: Mapped[str] = mapped_column(String(16), default=TriageStatus.UNTRIAGED)
     # Human-entered Jira ticket this episode is tracked under (e.g. "ABC-123"); links into Jira.
     jira_ticket: Mapped[str | None] = mapped_column(String(32), nullable=True)

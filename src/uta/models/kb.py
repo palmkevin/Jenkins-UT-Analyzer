@@ -36,9 +36,9 @@ class FailureSignature(Base, TimestampMixin):
     signature_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     exception_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    first_seen_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    first_seen_build_id: Mapped[int | None] = mapped_column(ForeignKey("builds.id"), nullable=True)
     first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_seen_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    last_seen_build_id: Mapped[int | None] = mapped_column(ForeignKey("builds.id"), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
 

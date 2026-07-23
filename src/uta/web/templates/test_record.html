@@ -2,8 +2,8 @@
 {% import "_macros.html" as ui %}
 {% block title %}{{ record.test_id if record else "Test" }} — UT Analyzer{% endblock %}
 
-{% macro run_link(ref) -%}
-  {%- if ref -%}<a href="/runs/{{ ref.build }}">#{{ ref.build }}</a>{%- else -%}—{%- endif -%}
+{% macro build_link(ref) -%}
+  {%- if ref -%}<a href="/builds/{{ ref.number }}">#{{ ref.number }}</a>{%- else -%}—{%- endif -%}
 {%- endmacro %}
 
 {% block content %}
@@ -37,8 +37,8 @@
     {% if lc.reopen_count %}<span class="badge">reopened ×{{ lc.reopen_count }}</span>{% endif %}
   </p>
   <p class="meta">
-    First failure (all-time): {{ run_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at|reltime }}<br>
-    Last failing run: {{ run_link(lc.last_failing) }} · {{ lc.last_failing_at|reltime }}
+    First failure (all-time): {{ build_link(lc.all_time_first_failure) }} · {{ lc.all_time_first_failure_at|reltime }}<br>
+    Last failing build: {{ build_link(lc.last_failing) }} · {{ lc.last_failing_at|reltime }}
   </p>
   {% if lc.acknowledged %}
     <p>Acknowledged by <strong>{{ lc.acknowledged_by }}</strong> {{ lc.acknowledged_at|reltime }}.</p>
@@ -62,10 +62,10 @@
       {% if lc and ep.id == lc.current_episode_id %}<span class="badge">current</span>{% endif %}
     </h3>
     <p class="meta">
-      First failure: {{ run_link(ep.first_failure) }} · {{ ep.first_failure_at|reltime }}<br>
-      Last failing: {{ run_link(ep.last_failing) }} · {{ ep.last_failing_at|reltime }}<br>
-      Fixed in: {{ run_link(ep.fixed_in) }} · {{ ep.fixed_at|reltime }}<br>
-      Age: {{ ep.age_runs }} runs / {{ ep.age_days if ep.age_days is not none else "?" }} days
+      First failure: {{ build_link(ep.first_failure) }} · {{ ep.first_failure_at|reltime }}<br>
+      Last failing: {{ build_link(ep.last_failing) }} · {{ ep.last_failing_at|reltime }}<br>
+      Fixed in: {{ build_link(ep.fixed_in) }} · {{ ep.fixed_at|reltime }}<br>
+      Age: {{ ep.age_builds }} builds / {{ ep.age_days if ep.age_days is not none else "?" }} days
     </p>
 
     {% if ep.failure %}
@@ -73,11 +73,11 @@
     <details class="card"{% if lc and ep.id == lc.current_episode_id and ep.is_open %} open{% endif %}>
       <summary>Failure detail</summary>
       <p class="meta">
-        Run {{ run_link(ef.run) }} · track {{ ef.track }} ·
+        Build {{ build_link(ef.build) }} · track {{ ef.track }} ·
         status <span class="{{ ef.status }}">{{ ef.status }}</span> ·
         error type {{ ef.error_type or "—" }}
         {% if ef.file_path %}<br><code>{{ ef.file_path }}:{{ ef.line }}</code>{% endif %}
-        {% if ef.run and ef.run.url %}<br><a href="{{ ef.run.url }}">Jenkins run</a>{% endif %}
+        {% if ef.build and ef.build.url %}<br><a href="{{ ef.build.url }}">Jenkins build</a>{% endif %}
       </p>
       {# Long error text / traces are clamped to ~15 lines client-side (trace.js, issue #145) with
          a "Show full trace" toggle; the full text always ships in the HTML (progressive
@@ -178,11 +178,11 @@
     Failed before? {{ "yes" if fl.failed_total else "no" }} ·
     last failed {{ fl.last_failed_at|ts }}<br>
     Failures: {{ fl.failed_in_window }} in window / {{ fl.failed_total }} all-time ·
-    runs in window {{ fl.runs_in_window }}<br>
+    builds in window {{ fl.builds_in_window }}<br>
     Oscillation score {{ "%.2f"|format(fl.score) }}
     ({{ fl.transitions }} transitions) · fail-rate {{ "%.2f"|format(fl.fail_rate) }}
   </p>
-  <p>Recent runs: {{ ui.sparkline(record.spark) }}</p>
+  <p>Recent builds: {{ ui.sparkline(record.spark) }}</p>
 </details>
 {% endif %}
 
@@ -193,8 +193,8 @@
   <p class="meta">
     This exact failure signature has been seen <strong>{{ rec.occurrence_count }}×</strong>
     {% if rec.exception_type %} ({{ rec.exception_type }}){% endif %};
-    first {{ run_link(rec.first_seen) }} · {{ rec.first_seen_at|ts }},
-    last {{ run_link(rec.last_seen) }} · {{ rec.last_seen_at|ts }}.
+    first {{ build_link(rec.first_seen) }} · {{ rec.first_seen_at|ts }},
+    last {{ build_link(rec.last_seen) }} · {{ rec.last_seen_at|ts }}.
   </p>
   {% if rec.similar %}
   <h3 style="font-size:0.92rem">Similar past cases</h3>

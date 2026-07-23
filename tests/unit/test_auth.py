@@ -20,8 +20,8 @@ from itsdangerous import TimestampSigner
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from tests.builders import get_identity, make_run
-from uta.analyze.lifecycle import apply_run
+from tests.builders import get_identity, make_build
+from uta.analyze.lifecycle import apply_build
 from uta.db import Base, make_session_factory, session_scope
 from uta.models import TestLifecycle
 from uta.web.app import create_app
@@ -40,8 +40,8 @@ def seeded():
     Base.metadata.create_all(engine)
     factory = make_session_factory(engine)
     with session_scope(factory) as s:
-        run = make_run(s, 1, {"alpha": "FAILED"})
-        apply_run(s, run, baseline=None)
+        build = make_build(s, 1, {"alpha": "FAILED"})
+        apply_build(s, build, baseline=None)
     return factory
 
 

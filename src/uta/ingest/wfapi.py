@@ -3,7 +3,7 @@
 The UT execution stages are ``devUTs: Execute - permanent`` and ``devUTs: Execute - permanent_py39``
 (one per track). Each carries ``startTimeMillis`` + ``durationMillis`` (Jenkins epoch-millis, UTC).
 "completeness" = all expected tracks reported a stage **and** every stage finished running its
-tests (see :data:`FINISHED_STAGE_STATUSES`). Used to build the complete-run baseline and the
+tests (see :data:`FINISHED_STAGE_STATUSES`). Used to build the complete-build baseline and the
 data-change correlation window.
 
 Golden-tested against ``tests/fixtures/jenkins/wfapi_1702.json``.
@@ -24,7 +24,7 @@ _UT_STAGE_RE = re.compile(r"^devUTs: Execute - (permanent(?:_py39)?)$")
 # outcomes* — the JUnit surface is still full — so they count as complete; the rest of the wfapi
 # vocabulary (ABORTED, IN_PROGRESS, PAUSED, PAUSED_PENDING_INPUT, NOT_EXECUTED) means the shard was
 # cut short or never ran. An **allow-list** (not a deny-list) so an unknown/future status fails
-# safe: a partial run marked complete would become the next baseline and invent phantom
+# safe: a partial build marked complete would become the next baseline and invent phantom
 # removed/newly-fixed mass transitions — exactly what the flag exists to prevent (issue #83).
 FINISHED_STAGE_STATUSES = frozenset({"SUCCESS", "UNSTABLE", "FAILED"})
 
@@ -71,7 +71,7 @@ class RunTiming:
         """All expected shards are present **and** each finished running its tests.
 
         An aborted build still lists the interrupted UT stage in ``wfapi/describe`` (with status
-        ABORTED), so counting shards alone would mark a partial run complete.
+        ABORTED), so counting shards alone would mark a partial build complete.
         """
         return len(self.shards) >= expected_shards and all(
             shard.status in FINISHED_STAGE_STATUSES for shard in self.shards.values()
@@ -79,7 +79,7 @@ class RunTiming:
 
     @property
     def window(self) -> tuple[datetime, datetime]:
-        """The span covering all UT shards (falls back to the overall run span)."""
+        """The span covering all UT shards (falls back to the overall build span)."""
         if self.shards:
             start = min(s.start for s in self.shards.values())
             end = max(s.end for s in self.shards.values())
@@ -138,7 +138,8 @@ def find_unittest_stages(
     return found
 
 
-# The step that runs the tests and prints the console output. The stage node's own ``wfapi/log`` is
+# The step that builds the tests and prints the console output. The stage node's own ``wfapi/log``
+# is
 # empty; the text lives on this child step node.
 _LOG_STEP_NAME = "Shell Script"
 

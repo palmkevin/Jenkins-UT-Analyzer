@@ -1,11 +1,11 @@
-"""Ingest pipeline: fetch one build -> parse -> persist a run, its results and candidates, then
-(for complete runs) drive the cross-run analysis (lifecycle + diff + classification).
+"""Ingest pipeline: fetch one build -> parse -> persist a build, its results and candidates, then
+(for complete builds) drive the cross-build analysis (lifecycle + diff + classification).
 
 Wires the Jenkins client + Oracle feed (real or fake) and the parsers. Idempotent on
-``build_number``: a re-ingest replaces the run's results/shards/candidates rather than duplicating
-them, and re-runs the analysis (which is itself idempotent per baseline+run). The analysis pass
-only runs when the build is (still) the newest complete run — a **historical** re-ingest persists
-the run's data but never drives the lifecycle (issue #82).
+``build_number``: a re-ingest replaces the build's results/shards/candidates rather than duplicating
+them, and re-builds the analysis (which is itself idempotent per baseline+build). The analysis pass
+only runs when the build is (still) the newest complete build — a **historical** re-ingest persists
+the build's data but never drives the lifecycle (issue #82).
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from datetime import timedelta
 from sqlalchemy import insert, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from uta.analyze.baseline import has_newer_complete_run, select_baseline
-from uta.analyze.classify import classify_run
+from uta.analyze.baseline import has_newer_complete_build, select_baseline
+from uta.analyze.classify import classify_build
 from uta.analyze.error_type import derive_error_type
 from uta.analyze.flakiness import recompute_flaky_flags
-from uta.analyze.hypothesize import hypothesize_run
-from uta.analyze.lifecycle import apply_run
+from uta.analyze.hypothesize import hypothesize_build
+from uta.analyze.lifecycle import apply_build
 from uta.analyze.ownership import resolve_for_cases
 from uta.db import session_scope
 from uta.delivery.email import EmailMessage, EmailSender, build_regression_report, send_alert
@@ -40,13 +40,13 @@ from uta.ingest.wfapi import (
     find_unittest_stages,
     parse_wfapi,
 )
-from uta.kb.store import record_signatures_for_run
+from uta.kb.store import record_signatures_for_build
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.models import (
+    Build,
+    BuildShard,
     CodeChangeCandidate,
     DataChangeCandidate,
-    Run,
-    RunShard,
     TestIdentity,
     TestResult,
 )
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 def _dedupe_cases(cases: list[TestCaseResult]) -> list[TestCaseResult]:
     """Collapse duplicate ``(test_id, track)`` results to one, keeping the first occurrence.
 
-    A result is keyed ``(run, test, track)`` (``uq_run_test_track``), so two cases sharing a
+    A result is keyed ``(build, test, track)`` (``uq_build_test_track``), so two cases sharing a
     ``(test_id, track)`` would violate that constraint and roll back the whole ingest. This happens
     because the unittest **console-log** stages are not disjoint from the devUTs nose2 surface:
     nose2 also collects some of the modules those stages run (e.g. ``itf.highlevel.tests.iricell``,
@@ -148,7 +148,7 @@ def _resolve_identities(session: Session, cases: list[TestCaseResult]) -> dict[s
 def ingest_build(
     client: JenkinsClient,
     session_factory: sessionmaker[Session],
-    build: int,
+    number: int,
     *,
     expected_shards: int = 2,
     feed: TrackingFeed | None = None,
@@ -168,13 +168,14 @@ def ingest_build(
     recompute_flaky: bool = True,
     svn_blame_client: SvnBlameClient | None = None,
 ) -> int:
-    """Fetch, parse and persist one build, then analyse it. Returns the run's build_number.
+    """Fetch, parse and persist one build, then analyse it. Returns the build's build_number.
 
-    Persists the run, its per-(test, track) results (with derived error type), per-shard timing and
+    Persists the build, its per-(test, track) results (with derived error type), per-shard timing
+    and
     the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied),
     and records a normalized **failure signature** per failing result (the KB recurrence key).
     For a
-    **complete** run it then drives the lifecycle/episodes, the baseline diff, the deterministic
+    **complete** build it then drives the lifecycle/episodes, the baseline diff, the deterministic
     classification of new regressions, refreshes the oscillation **flaky** flags, and — when an
     ``email_sender`` is supplied — sends the regression-only alert **after the transaction
     commits** (a send failure is logged and dropped, never failing the ingest). When a real
@@ -183,8 +184,8 @@ def ingest_build(
     sender and no provider, so history is never re-mailed or re-hypothesised.
 
     The lifecycle/classification/notify pass only runs when the build is (still) the **newest**
-    complete run. Re-ingesting an older build — the quarantine-recovery path (issue #82) — keeps
-    the run, its results and its KB signatures, but skips the analysis: its diff describes old
+    complete build. Re-ingesting an older build — the quarantine-recovery path (issue #82) — keeps
+    the build, its results and its KB signatures, but skips the analysis: its diff describes old
     facts, and applying it would corrupt the current lifecycle/episode state.
 
     When ``ingest_unittest_logs`` is set, the deferred **unittest console-log** UT stages (``LXS``,
@@ -192,7 +193,7 @@ def ingest_build(
     ``unittest_suites``) are also fetched via ``wfapi/log`` and parsed into the same per-(test,
     track) results, so they share the JUnit tests' identity/lifecycle/classification path. Off by
     default, so the devUTs-only ingest is unchanged unless the caller opts in. A selected stage
-    that didn't run to the end (its wfapi status is not a finished one) marks the run incomplete,
+    that didn't run to the end (its wfapi status is not a finished one) marks the build incomplete,
     mirroring the devUTs shard guard; a suite stage absent from the payload has no effect.
     """
     t_total = time.perf_counter()
@@ -204,10 +205,10 @@ def ingest_build(
     # resolves rather than waiting on all 4 base calls.
     t = time.perf_counter()
     with ThreadPoolExecutor(max_workers=_FETCH_MAX_WORKERS) as pool:
-        meta_f = pool.submit(client.build_meta, build)
-        wfapi_f = pool.submit(client.wfapi, build)
-        report_f = pool.submit(client.test_report, build)
-        change_sets_f = pool.submit(client.change_sets, build)
+        meta_f = pool.submit(client.build_meta, number)
+        wfapi_f = pool.submit(client.wfapi, number)
+        report_f = pool.submit(client.test_report, number)
+        change_sets_f = pool.submit(client.change_sets, number)
 
         wfapi_payload = wfapi_f.result()
 
@@ -217,7 +218,7 @@ def ingest_build(
             suites = DEFAULT_UNITTEST_SUITES if unittest_suites is None else unittest_suites
             log_stages = find_unittest_stages(wfapi_payload, suites)
             stage_futures = [
-                pool.submit(_fetch_stage_log, client, build, stage) for stage in log_stages
+                pool.submit(_fetch_stage_log, client, number, stage) for stage in log_stages
             ]
 
         meta = meta_f.result()
@@ -245,11 +246,11 @@ def ingest_build(
     pending_alert: EmailMessage | None = None
     with session_scope(session_factory) as session:
         t = time.perf_counter()
-        run = session.scalar(select(Run).where(Run.build_number == build))
+        build = session.scalar(select(Build).where(Build.build_number == number))
         stale_signature_ids: set[int] = set()
-        if run is None:
-            run = Run(build_number=build)
-            session.add(run)
+        if build is None:
+            build = Build(build_number=number)
+            session.add(build)
         else:
             # Capture the signatures the old results linked to BEFORE the idempotent delete: a
             # signature whose failure vanished from the re-ingested content gains no new link, so
@@ -257,37 +258,37 @@ def ingest_build(
             stale_signature_ids = set(
                 session.scalars(
                     select(TestResult.signature_id.distinct()).where(
-                        TestResult.run_id == run.id, TestResult.signature_id.is_not(None)
+                        TestResult.build_id == build.id, TestResult.signature_id.is_not(None)
                     )
                 )
             )
-            run.results.clear()  # idempotent re-ingest
-            run.shards.clear()
-            run.code_changes.clear()
-            run.data_changes.clear()
+            build.results.clear()  # idempotent re-ingest
+            build.shards.clear()
+            build.code_changes.clear()
+            build.data_changes.clear()
             session.flush()  # delete old rows before re-inserting (unique constraint)
 
-        run.status = meta.get("result") or timing.status
-        run.url = meta.get("url", "")
-        run.started_at = win_start
-        run.finished_at = win_end
+        build.status = meta.get("result") or timing.status
+        build.url = meta.get("url", "")
+        build.started_at = win_start
+        build.finished_at = win_end
         # Completeness spans both ingest sources: the devUTs JUnit shards (via is_complete) *and*
         # every selected unittest console-log stage. A stage cut short (ABORTED, NOT_EXECUTED, …)
-        # yields a truncated log that parses to a partial case list — marking the run complete
+        # yields a truncated log that parses to a partial case list — marking the build complete
         # would invent phantom removed/newly-fixed transitions and poison the next baseline,
         # exactly the issue-#83 failure mode the shard guard prevents. A suite stage absent from
         # the wfapi payload never affects completeness (job configuration varies over history);
-        # the truncated results are still persisted below — analysis is gated on run.complete.
-        run.complete = timing.is_complete(expected_shards) and all(
+        # the truncated results are still persisted below — analysis is gated on build.complete.
+        build.complete = timing.is_complete(expected_shards) and all(
             stage.status in FINISHED_STAGE_STATUSES for stage in log_stages
         )
-        run.total_passed = sum(1 for c in cases if c.status in _PASSED)
-        run.total_failed = sum(1 for c in cases if c.status in _FAILED)
-        run.total_skipped = sum(1 for c in cases if c.status == "SKIPPED")
+        build.total_passed = sum(1 for c in cases if c.status in _PASSED)
+        build.total_failed = sum(1 for c in cases if c.status in _FAILED)
+        build.total_skipped = sum(1 for c in cases if c.status == "SKIPPED")
 
         for shard in timing.shards.values():
-            run.shards.append(
-                RunShard(
+            build.shards.append(
+                BuildShard(
                     track=shard.track,
                     status=shard.status,
                     started_at=shard.start,
@@ -295,13 +296,13 @@ def ingest_build(
                 )
             )
 
-        # Resolve every identity in bulk, then flush so run.id + identity ids exist for the Core
-        # bulk insert of results (25k+ rows/run — far cheaper than per-row ORM appends).
+        # Resolve every identity in bulk, then flush so build.id + identity ids exist for the Core
+        # bulk insert of results (25k+ rows/build — far cheaper than per-row ORM appends).
         identities = _resolve_identities(session, cases)
-        session.flush()  # run.id must exist before result rows reference it
+        session.flush()  # build.id must exist before result rows reference it
         result_rows = [
             {
-                "run_id": run.id,
+                "build_id": build.id,
                 "test_identity_id": identities[case.test_id].id,
                 "track": case.track,
                 "status": case.status,
@@ -322,13 +323,13 @@ def ingest_build(
 
         # Owner = the test's main developer, from SVN blame (issue #114). Gated: only when a blame
         # client is wired (SVN_BLAME_ENABLED) — off for the offline gate, local dev and the demo.
-        # Scoped to this run's failing tests (only failures carry a source path); identities keep
-        # their resolved owner across runs, so this fills newly-seen tests incrementally.
+        # Scoped to this build's failing tests (only failures carry a source path); identities keep
+        # their resolved owner across builds, so this fills newly-seen tests incrementally.
         if svn_blame_client is not None:
             resolve_for_cases(identities, cases, svn_blame_client)
 
         for change in change_sets.changes:
-            run.code_changes.append(
+            build.code_changes.append(
                 CodeChangeCandidate(
                     commit_id=change.commit_id,
                     revision=change.commit_id,
@@ -346,7 +347,7 @@ def ingest_build(
                 timing.window, lookback=data_change_lookback, tolerance=data_change_tolerance
             )
             for dc in feed.changes_in_window(lo, hi):
-                run.data_changes.append(
+                build.data_changes.append(
                     DataChangeCandidate(
                         lx_table_code=dc.entity,
                         pk_lst=dc.pk,
@@ -364,40 +365,40 @@ def ingest_build(
         t_persist = time.perf_counter() - t
 
         # KB: a normalized failure signature per failing result (recurrence key). Recorded for
-        # any run (the signatures are facts about the failures), idempotent on re-ingest.
+        # any build (the signatures are facts about the failures), idempotent on re-ingest.
         t = time.perf_counter()
-        record_signatures_for_run(session, run, stale_signature_ids=stale_signature_ids)
+        record_signatures_for_build(session, build, stale_signature_ids=stale_signature_ids)
         t_signatures = time.perf_counter() - t
 
-        if run.complete:
+        if build.complete:
             # Lifecycle only ever advances forward: a **historical** re-ingest — a build older
-            # than the newest complete run, reachable via the control panel's range ingest (the
+            # than the newest complete build, reachable via the control panel's range ingest (the
             # quarantine-recovery path, issue #82) — must not drive the state machine. Its diff
-            # describes old facts while apply_run mutates the *current* lifecycle/episode rows
+            # describes old facts while apply_build mutates the *current* lifecycle/episode rows
             # (phantom reopened episodes, cleared acknowledgements, live episodes "fixed" in the
-            # past). The run, its results and its KB signatures are persisted above regardless;
+            # past). The build, its results and its KB signatures are persisted above regardless;
             # only the analysis pass (and the classify/hypothesize/notify steps that consume its
             # opened episodes) is skipped.
-            historical = has_newer_complete_run(session, run)
+            historical = has_newer_complete_build(session, build)
             if historical:
-                # Stamp the display baseline so the run page still shows this run's diff.
-                baseline = select_baseline(session, run)
-                run.baseline_run_id = baseline.id if baseline is not None else None
+                # Stamp the display baseline so the build page still shows this build's diff.
+                baseline = select_baseline(session, build)
+                build.baseline_build_id = baseline.id if baseline is not None else None
                 logger.info(
-                    "build #%d is older than the newest complete run — historical re-ingest, "
-                    "lifecycle/classification skipped (run, results and signatures persisted)",
+                    "build #%d is older than the newest complete build — historical re-ingest, "
+                    "lifecycle/classification skipped (build, results and signatures persisted)",
                     build,
                 )
             else:
                 t = time.perf_counter()
-                analysis = apply_run(session, run)
+                analysis = apply_build(session, build)
                 t_lifecycle = time.perf_counter() - t
 
                 t = time.perf_counter()
-                classify_run(session, run, analysis.opened_episodes)
-                hypothesize_run(
+                classify_build(session, build, analysis.opened_episodes)
+                hypothesize_build(
                     session,
-                    run,
+                    build,
                     analysis.opened_episodes,
                     hypothesis_provider or NoopHypothesisProvider(),
                     top_k=kb_top_k,
@@ -419,14 +420,14 @@ def ingest_build(
             if not historical and email_sender is not None and email_recipients:
                 pending_alert = build_regression_report(
                     session,
-                    run,
+                    build,
                     email_recipients,
                     recovery_notice=email_recovery_notice,
                     app_base_url=app_base_url,
                 )
 
-    # The alert goes out only once the run is durably committed, and a send failure is swallowed
-    # (logged) by ``send_alert`` — mail can never fail the ingest. At-most-once per run: a commit
+    # The alert goes out only once the build is durably committed, and a send failure is swallowed
+    # (logged) by ``send_alert`` — mail can never fail the ingest. At-most-once per build: a commit
     # failure raises out of the ``with`` above before anything is sent (the poller's retry
     # recomputes and sends once), the poller never re-ingests below its high-water mark, and the
     # re-ingest paths (CLI back-fill, on-demand job) pass no sender by contract.
@@ -455,10 +456,11 @@ def data_change_window(
     lookback: timedelta = timedelta(hours=12),
     tolerance: timedelta = timedelta(minutes=5),
 ) -> tuple:
-    """The UTC window for candidate data changes: a lookback before the run through its end.
+    """The UTC window for candidate data changes: a lookback before the build through its end.
 
-    Data changes precede the nightly run (confirmed empirically on #1702 — the run's own window had
-    no tracked changes), so we look back from the run start. The ``tolerance`` margin (B1) widens
+    Data changes precede the nightly build (confirmed empirically on #1702 — the build's own
+    window had
+    no tracked changes), so we look back from the build start. The ``tolerance`` margin (B1) widens
     both ends to absorb residual clock skew between the Jenkins and Oracle ``ut_ref`` clocks.
     ``lookback`` is a provisional default, tuned on real data later.
     """

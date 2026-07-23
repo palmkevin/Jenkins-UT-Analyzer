@@ -1,7 +1,7 @@
 """Regression-only email.
 
-The contract: a message goes out **only** when a processed run introduces ≥1 new failing test;
-otherwise silence (unless the recovery-notice toggle is on and the run is back to green).
+The contract: a message goes out **only** when a processed build introduces ≥1 new failing test;
+otherwise silence (unless the recovery-notice toggle is on and the build is back to green).
 """
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ import smtplib
 
 from sqlalchemy import select
 
-from tests.builders import _EPOCH, make_run
+from tests.builders import _EPOCH, make_build
 from tests.fakes.email import RecordingEmailSender
-from uta.analyze.classify import classify_run
-from uta.analyze.lifecycle import apply_run
+from uta.analyze.classify import classify_build
+from uta.analyze.lifecycle import apply_build
 from uta.clients import build_email_sender
 from uta.config import Settings
 from uta.delivery.email import (
@@ -30,26 +30,26 @@ BASE = "http://uta.example:8000"
 
 
 def _process(session, build, statuses, **kw):
-    run = make_run(session, build, statuses, **kw)
-    apply_run(session, run)  # drives baseline + episodes so regressions are known
+    build = make_build(session, build, statuses, **kw)
+    apply_build(session, build)  # drives baseline + episodes so regressions are known
     session.flush()
-    return run
+    return build
 
 
 def test_no_email_when_no_new_failures(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "PASSED"})
+        build = _process(s, 2, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, run, RCPT) is None
+        assert build_regression_report(s, build, RCPT) is None
 
 
 def test_email_on_regression_leads_with_new_failures(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED", "b.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED", "b.test": "PASSED"})
+        build = _process(s, 2, {"a.test": "FAILED", "b.test": "PASSED"})
         s.commit()
-        msg = build_regression_report(s, run, RCPT)
+        msg = build_regression_report(s, build, RCPT)
     assert msg is not None
     assert "1 new failing" in msg.subject
     assert "a.test" in msg.body
@@ -61,15 +61,15 @@ def test_email_shows_suggested_contact_for_new_failure(session_factory):
     # The classifier suggests the sole commit author (#49); the new-failure line carries it.
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = make_run(s, 2, {"a.test": "FAILED"})
-        run.code_changes.append(
+        build = make_build(s, 2, {"a.test": "FAILED"})
+        build.code_changes.append(
             CodeChangeCandidate(commit_id="r888", author="R. Devlin", committed_at=_EPOCH)
         )
-        analysis = apply_run(s, run)
+        analysis = apply_build(s, build)
         s.flush()
-        classify_run(s, run, analysis.opened_episodes)
+        classify_build(s, build, analysis.opened_episodes)
         s.commit()
-        msg = build_regression_report(s, run, RCPT)
+        msg = build_regression_report(s, build, RCPT)
     assert msg is not None
     assert "cause: CODE_CHANGE" in msg.body
     assert "contact: R. Devlin" in msg.body
@@ -78,49 +78,49 @@ def test_email_shows_suggested_contact_for_new_failure(session_factory):
 def test_recovery_notice_only_when_toggled_and_green(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "FAILED"})
-        run = _process(s, 2, {"a.test": "FIXED"})  # back to green
+        build = _process(s, 2, {"a.test": "FIXED"})  # back to green
         s.commit()
-        assert build_regression_report(s, run, RCPT) is None  # off by default
-        msg = build_regression_report(s, run, RCPT, recovery_notice=True)
+        assert build_regression_report(s, build, RCPT) is None  # off by default
+        msg = build_regression_report(s, build, RCPT, recovery_notice=True)
     assert msg is not None
     assert "back to green" in msg.subject
 
 
 def test_no_recovery_notice_when_already_green(session_factory):
-    """A green run after a green baseline is *still* green, not *back to* green — no email."""
+    """A green build after a green baseline is *still* green, not *back to* green — no email."""
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "PASSED"})
+        build = _process(s, 2, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, run, RCPT, recovery_notice=True) is None
+        assert build_regression_report(s, build, RCPT, recovery_notice=True) is None
 
 
 def test_no_recovery_notice_on_first_ever_green_run(session_factory):
-    """An all-green first run has no baseline, so nothing transitioned — no email."""
+    """An all-green first build has no baseline, so nothing transitioned — no email."""
     with session_factory() as s:
-        run = _process(s, 1, {"a.test": "PASSED"})
+        build = _process(s, 1, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, run, RCPT, recovery_notice=True) is None
+        assert build_regression_report(s, build, RCPT, recovery_notice=True) is None
 
 
 def test_recovery_notice_when_baseline_failure_was_removed(session_factory):
-    """A baseline failure absent this run (test deleted) still turns the suite green — notice."""
+    """A baseline failure absent this build (test deleted) still turns the suite green — notice."""
     with session_factory() as s:
         _process(s, 1, {"a.test": "FAILED", "b.test": "PASSED"})
-        run = _process(s, 2, {"b.test": "PASSED"})  # a.test removed
+        build = _process(s, 2, {"b.test": "PASSED"})  # a.test removed
         s.commit()
-        msg = build_regression_report(s, run, RCPT, recovery_notice=True)
+        msg = build_regression_report(s, build, RCPT, recovery_notice=True)
     assert msg is not None
     assert "back to green" in msg.subject
 
 
 def test_dashboard_links_when_base_url_set(session_factory):
-    """Each new failure links its per-test record; the run summary is linked too (#108)."""
+    """Each new failure links its per-test record; the build summary is linked too (#108)."""
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED", "b.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED", "b.test": "FAILED"})
+        build = _process(s, 2, {"a.test": "FAILED", "b.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, run, RCPT, app_base_url=BASE)
+        msg = build_regression_report(s, build, RCPT, app_base_url=BASE)
         ids = {
             i.canonical_name: i.id
             for i in s.scalars(
@@ -130,45 +130,45 @@ def test_dashboard_links_when_base_url_set(session_factory):
     assert msg is not None
     assert f"{BASE}/tests/{ids['a.test']}" in msg.body
     assert f"{BASE}/tests/{ids['b.test']}" in msg.body
-    assert f"Dashboard: {BASE}/runs/2" in msg.body
+    assert f"Dashboard: {BASE}/builds/2" in msg.body
 
 
 def test_no_dashboard_links_when_base_url_unset(session_factory):
     """The default (no APP_BASE_URL) keeps the body exactly link-free — no 'Dashboard:' stubs."""
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED"})
+        build = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, run, RCPT)
+        msg = build_regression_report(s, build, RCPT)
     assert msg is not None
     assert "Dashboard:" not in msg.body
-    assert "http" not in msg.body  # make_run sets no Jenkins url either — zero URLs at all
+    assert "http" not in msg.body  # make_build sets no Jenkins url either — zero URLs at all
     assert "/tests/" not in msg.body
 
 
 def test_dashboard_links_join_cleanly_with_trailing_slash(session_factory):
-    """A trailing-slash base URL never produces '//tests/…' or '//runs/…'."""
+    """A trailing-slash base URL never produces '//tests/…' or '//builds/…'."""
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED"})
+        build = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, run, RCPT, app_base_url=BASE + "/")
+        msg = build_regression_report(s, build, RCPT, app_base_url=BASE + "/")
     assert msg is not None
-    assert f"{BASE}/runs/2" in msg.body
+    assert f"{BASE}/builds/2" in msg.body
     assert f"{BASE}/tests/" in msg.body
     assert "//tests/" not in msg.body.replace("://", "")
-    assert "//runs/" not in msg.body.replace("://", "")
+    assert "//builds/" not in msg.body.replace("://", "")
 
 
-def test_recovery_notice_includes_run_link_when_base_url_set(session_factory):
+def test_recovery_notice_includes_build_link_when_base_url_set(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "FAILED"})
-        run = _process(s, 2, {"a.test": "FIXED"})  # back to green
+        build = _process(s, 2, {"a.test": "FIXED"})  # back to green
         s.commit()
-        msg = build_regression_report(s, run, RCPT, recovery_notice=True, app_base_url=BASE)
-        bare = build_regression_report(s, run, RCPT, recovery_notice=True)
+        msg = build_regression_report(s, build, RCPT, recovery_notice=True, app_base_url=BASE)
+        bare = build_regression_report(s, build, RCPT, recovery_notice=True)
     assert msg is not None
-    assert f"Dashboard: {BASE}/runs/2" in msg.body
+    assert f"Dashboard: {BASE}/builds/2" in msg.body
     assert bare is not None
     assert "Dashboard:" not in bare.body
 
@@ -177,9 +177,9 @@ def test_send_alert_delivers_via_sender(session_factory):
     sender = RecordingEmailSender()
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
-        run = _process(s, 2, {"a.test": "FAILED"})
+        build = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, run, RCPT)
+        msg = build_regression_report(s, build, RCPT)
     assert msg is not None
     assert send_alert(sender, msg) is True
     assert sender.sent == [msg]

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from tests.builders import get_identity, make_run
+from tests.builders import get_identity, make_build
 from uta.analyze.flakiness import (
     compute_stats,
     history,
@@ -32,7 +32,7 @@ def _stats(session, name=T):
 def test_clean_regression_is_not_flaky(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["PASSED", "PASSED", "FAILED", "FAILED", "FAILED"], start=1):
-            make_run(s, b, {T: st})
+            make_build(s, b, {T: st})
         s.commit()
         st = _stats(s)
     assert st.transitions == 1  # pass→fail once, then stays failing
@@ -43,7 +43,7 @@ def test_clean_regression_is_not_flaky(session_factory):
 def test_oscillation_is_flaky(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"], start=1):
-            make_run(s, b, {T: st})
+            make_build(s, b, {T: st})
         s.commit()
         st = _stats(s)
     assert st.transitions == 4
@@ -56,7 +56,7 @@ def test_oscillation_is_flaky(session_factory):
 def test_solidly_failing_is_not_flaky(session_factory):
     with session_factory() as s:
         for b in range(1, 5):
-            make_run(s, b, {T: "FAILED"})
+            make_build(s, b, {T: "FAILED"})
         s.commit()
         st = _stats(s)
     assert st.fail_rate == 1.0
@@ -66,36 +66,36 @@ def test_solidly_failing_is_not_flaky(session_factory):
 
 
 def test_gaps_are_not_transitions(session_factory):
-    """A run where the test is absent is a hole, not a fail→pass flip."""
+    """A build where the test is absent is a hole, not a fail→pass flip."""
     with session_factory() as s:
-        make_run(s, 1, {T: "FAILED"})
-        make_run(s, 2, {"other.test": "PASSED"})  # T absent — a gap
-        make_run(s, 3, {T: "FAILED"})
+        make_build(s, 1, {T: "FAILED"})
+        make_build(s, 2, {"other.test": "PASSED"})  # T absent — a gap
+        make_build(s, 3, {T: "FAILED"})
         s.commit()
         st = _stats(s)
-    assert st.runs_in_window == 2  # only the two runs that produced a result
+    assert st.builds_in_window == 2  # only the two builds that produced a result
     assert st.transitions == 0  # fail … fail — the gap is not a flip
     assert st.flaky is False
 
 
 def test_incomplete_runs_excluded(session_factory):
     with session_factory() as s:
-        make_run(s, 1, {T: "FAILED"})
-        make_run(s, 2, {T: "PASSED"}, complete=False)  # incomplete — not a data point
-        make_run(s, 3, {T: "FAILED"})
+        make_build(s, 1, {T: "FAILED"})
+        make_build(s, 2, {T: "PASSED"}, complete=False)  # incomplete — not a data point
+        make_build(s, 3, {T: "FAILED"})
         s.commit()
         st = _stats(s)
-    assert st.runs_in_window == 2
+    assert st.builds_in_window == 2
     assert st.transitions == 0
 
 
 def test_shard_correlation(session_factory):
     """Failures concentrated in one track (other passes) are flagged shard-correlated."""
     with session_factory() as s:
-        make_run(s, 1, {T: "PASSED"})
-        make_run(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
-        make_run(s, 3, {T: "PASSED"})
-        make_run(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
+        make_build(s, 1, {T: "PASSED"})
+        make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
+        make_build(s, 3, {T: "PASSED"})
+        make_build(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
         s.commit()
         st = _stats(s)
     assert st.shard_correlated is True
@@ -103,12 +103,13 @@ def test_shard_correlation(session_factory):
 
 
 def test_alternating_track_failures_are_not_shard_correlated(session_factory):
-    """Failures flip-flopping between tracks across runs are ordinary flakiness, not shard-tied."""
+    """Failures flip-flopping between tracks across builds are ordinary flakiness, not
+    shard-tied."""
     with session_factory() as s:
-        make_run(s, 1, {T: "PASSED"})
-        make_run(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
-        make_run(s, 3, {T: "PASSED"})
-        make_run(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
+        make_build(s, 1, {T: "PASSED"})
+        make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
+        make_build(s, 3, {T: "PASSED"})
+        make_build(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
         s.commit()
         st = _stats(s)
     assert st.shard_correlated is False
@@ -116,10 +117,10 @@ def test_alternating_track_failures_are_not_shard_correlated(session_factory):
 
 
 def test_single_run_single_track_failure_is_shard_correlated(session_factory):
-    """One failing run confined to one track (the other passing) already sets the flag."""
+    """One failing build confined to one track (the other passing) already sets the flag."""
     with session_factory() as s:
-        make_run(s, 1, {T: "PASSED"})
-        make_run(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
+        make_build(s, 1, {T: "PASSED"})
+        make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
         s.commit()
         st = _stats(s)
     assert st.shard_correlated is True
@@ -128,7 +129,7 @@ def test_single_run_single_track_failure_is_shard_correlated(session_factory):
 def test_history_counts(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["FAILED", "PASSED", "FAILED"], start=1):
-            make_run(s, b, {T: st})
+            make_build(s, b, {T: st})
         s.commit()
         st = _stats(s)
     assert st.failed_total == 2
@@ -139,30 +140,30 @@ def test_history_counts(session_factory):
 def test_history_is_oldest_first_within_window(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED"], start=1):
-            make_run(s, b, {T: st})
+            make_build(s, b, {T: st})
         s.commit()
         ident = get_identity(s, T)
         points = history(s, ident.id, window_days=30, now=NOW)
     assert [p["failed"] for p in points] == [False, True, False]
-    assert [p["build"] for p in points] == [1, 2, 3]
+    assert [p["number"] for p in points] == [1, 2, 3]
 
 
 def test_history_excludes_gaps_and_incomplete_runs(session_factory):
     with session_factory() as s:
-        make_run(s, 1, {T: "FAILED"})
-        make_run(s, 2, {"other.test": "PASSED"})  # T absent — a gap, not a point
-        make_run(s, 3, {T: "PASSED"}, complete=False)  # incomplete — excluded
-        make_run(s, 4, {T: "PASSED"})
+        make_build(s, 1, {T: "FAILED"})
+        make_build(s, 2, {"other.test": "PASSED"})  # T absent — a gap, not a point
+        make_build(s, 3, {T: "PASSED"}, complete=False)  # incomplete — excluded
+        make_build(s, 4, {T: "PASSED"})
         s.commit()
         ident = get_identity(s, T)
         points = history(s, ident.id, window_days=30, now=NOW)
-    assert [p["build"] for p in points] == [1, 4]
+    assert [p["number"] for p in points] == [1, 4]
 
 
 def test_recompute_sets_flag_and_leaderboard(session_factory):
     with session_factory() as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
-            make_run(s, b, {T: st})
+            make_build(s, b, {T: st})
         ident = get_identity(s, T)
         s.add(TestLifecycle(test_identity_id=ident.id))
         s.commit()
@@ -182,7 +183,7 @@ def test_leaderboard_candidates_total_is_independent_of_limit(session_factory):
     names = [f"ut_pkg.mod.test_{i}" for i in range(3)]
     with session_factory() as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
-            make_run(s, b, {n: st for n in names})
+            make_build(s, b, {n: st for n in names})
         for n in names:
             s.add(TestLifecycle(test_identity_id=get_identity(s, n).id))
         s.commit()

@@ -1,7 +1,8 @@
 """Regression-only email.
 
-Every commit triggers a run, so a per-run digest would be constant noise. The tool emails **only
-when a processed run introduces ≥1 new failing test** (a regression vs the baseline). Runs with no
+Every commit triggers a build, so a per-build digest would be constant noise. The tool emails **only
+when a processed build introduces ≥1 new failing test** (a regression vs the baseline). Builds
+with no
 new failures send **nothing** — silence means "no worse than before". The email leads with the
 **new failures** (predicted cause + suggested contact each) and carries still-failing / newly-fixed
 counts as context.
@@ -13,7 +14,7 @@ opens a socket. The alert is two-phased around the ingest commit (issue #81):
 :func:`build_regression_report` composes the message *inside* the ingest transaction (it needs the
 session), and :func:`send_alert` delivers it *after* the transaction commits, swallowing any send
 failure — so an SMTP outage can never fail or roll back an ingest, and a commit failure means
-nothing was sent yet. The poller passes a real sender for live runs, while back-fill and the
+nothing was sent yet. The poller passes a real sender for live builds, while back-fill and the
 on-demand re-ingest job pass none (so historical regressions are never re-mailed).
 """
 
@@ -29,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
-from uta.models import Classification, FailureEpisode, Run, TestIdentity
+from uta.models import Build, Classification, FailureEpisode, TestIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def _dashboard_url(base_url: str, path: str) -> str | None:
     """Absolute dashboard deep link, or ``None`` when no base URL is configured (issue #108).
 
     Joins robustly whether or not the configured base carries a trailing slash, so
-    ``http://host:8000/`` + ``/runs/5`` never yields ``//runs/5``.
+    ``http://host:8000/`` + ``/builds/5`` never yields ``//builds/5``.
     """
     if not base_url.strip():
         return None
@@ -111,7 +112,7 @@ def _latest_classification(session: Session, episode_id: int) -> Classification 
     )
 
 
-def _new_failure_lines(session: Session, run: Run, regression_ids: list[int]) -> list[dict]:
+def _new_failure_lines(session: Session, build: Build, regression_ids: list[int]) -> list[dict]:
     names = {
         i.id: i
         for i in session.scalars(
@@ -143,53 +144,57 @@ def _new_failure_lines(session: Session, run: Run, regression_ids: list[int]) ->
 
 def build_regression_report(
     session: Session,
-    run: Run,
+    build: Build,
     recipients: tuple[str, ...],
     *,
     recovery_notice: bool = False,
     app_base_url: str = "",
 ) -> EmailMessage | None:
-    """The email for a processed run, or ``None`` if nothing should be sent.
+    """The email for a processed build, or ``None`` if nothing should be sent.
 
-    Returns a message only when the run introduced ≥1 new failing test, or — if ``recovery_notice``
-    is on — when the run is back to green (no new failures and no failing tests at all). "Back to
-    green" means an actual **red→green transition**: the baseline had ≥1 failing test that this run
-    resolved — fixed (``diff.newly_fixed``) or absent this run (``diff.removed``; a deleted failing
-    test still turns the suite green). A run that is merely *still* green (already-green baseline,
-    or a first-ever all-green run with no baseline) sends nothing — silence stays the steady state.
+    Returns a message only when the build introduced ≥1 new failing test, or — if
+    ``recovery_notice``
+    is on — when the build is back to green (no new failures and no failing tests at all). "Back to
+    green" means an actual **red→green transition**: the baseline had ≥1 failing test that this
+    build
+    resolved — fixed (``diff.newly_fixed``) or absent this build (``diff.removed``; a deleted
+    failing
+    test still turns the suite green). A build that is merely *still* green (already-green baseline,
+    or a first-ever all-green build with no baseline) sends nothing — silence stays the steady
+    state.
 
     When ``app_base_url`` is set (issue #108) the body carries dashboard deep links — each new
-    failure links to its per-test record (``/tests/{identity_id}``) and the message links the run
-    summary (``/runs/{build}``) beside the Jenkins URL. Unset (the default), the body is exactly
+    failure links to its per-test record (``/tests/{identity_id}``) and the message links the build
+    summary (``/builds/{build}``) beside the Jenkins URL. Unset (the default), the body is exactly
     link-free, as before.
     """
     baseline = (
-        session.get(Run, run.baseline_run_id)
-        if run.baseline_run_id is not None
-        else select_baseline(session, run)
+        session.get(Build, build.baseline_build_id)
+        if build.baseline_build_id is not None
+        else select_baseline(session, build)
     )
-    diff = compute_diff(session, run, baseline)
-    new_failures = _new_failure_lines(session, run, diff.regressions)
-    run_link = _dashboard_url(app_base_url, f"/runs/{run.build_number}")
+    diff = compute_diff(session, build, baseline)
+    new_failures = _new_failure_lines(session, build, diff.regressions)
+    build_link = _dashboard_url(app_base_url, f"/builds/{build.build_number}")
 
     if not new_failures:
         transitioned = bool(diff.newly_fixed or diff.removed)  # baseline had ≥1 failing test
-        if recovery_notice and run.total_failed == 0 and not diff.still_failing and transitioned:
+        if recovery_notice and build.total_failed == 0 and not diff.still_failing and transitioned:
             body = (
-                f"Build #{run.build_number} introduced no new failures and has no failing "
-                f"tests.\nNewly fixed this run: {len(diff.newly_fixed)}.\n{run.url}\n"
+                f"Build #{build.build_number} introduced no new failures and has no failing "
+                f"tests.\nNewly fixed this build: {len(diff.newly_fixed)}.\n{build.url}\n"
             )
-            if run_link:
-                body += f"Dashboard: {run_link}\n"
+            if build_link:
+                body += f"Dashboard: {build_link}\n"
             return EmailMessage(
-                subject=f"UT back to green — build #{run.build_number}",
+                subject=f"UT back to green — build #{build.build_number}",
                 body=body,
                 recipients=recipients,
             )
         return None
 
     lines = [
-        f"Build #{run.build_number} introduced {len(new_failures)} new failing test(s).",
+        f"Build #{build.build_number} introduced {len(new_failures)} new failing test(s).",
         "",
         "NEW FAILURES",
     ]
@@ -204,12 +209,12 @@ def build_regression_report(
         "",
         f"Still failing: {len(diff.still_failing)}   Newly fixed: {len(diff.newly_fixed)}"
         f"   Removed: {len(diff.removed)}",
-        run.url or "",
+        build.url or "",
     ]
-    if run_link:
-        lines.append(f"Dashboard: {run_link}")
+    if build_link:
+        lines.append(f"Dashboard: {build_link}")
     return EmailMessage(
-        subject=f"UT regressions — build #{run.build_number}: {len(new_failures)} new failing",
+        subject=f"UT regressions — build #{build.build_number}: {len(new_failures)} new failing",
         body="\n".join(lines) + "\n",
         recipients=recipients,
     )
@@ -250,7 +255,7 @@ def send_ops_alert(
 def send_alert(sender: EmailSender, message: EmailMessage) -> bool:
     """Send a composed alert, swallowing any failure. Returns whether it went out.
 
-    Called by the ingest pipeline **after** the run's transaction has committed: the alert is
+    Called by the ingest pipeline **after** the build's transaction has committed: the alert is
     best-effort delivery of already-persisted facts, so a send failure must never fail — let alone
     roll back — the ingest (the same discipline the LLM providers apply to enrichment). The failure
     is logged and the alert dropped; the regression stays visible on the dashboard.
@@ -259,7 +264,7 @@ def send_alert(sender: EmailSender, message: EmailMessage) -> bool:
         sender.send(message)
     except Exception:  # noqa: BLE001 — alerting is best-effort; never break ingest (issue #81)
         logger.warning(
-            "alert %r failed to send — the run is persisted, the alert is dropped",
+            "alert %r failed to send — the build is persisted, the alert is dropped",
             message.subject,
             exc_info=True,
         )

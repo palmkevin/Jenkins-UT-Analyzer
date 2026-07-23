@@ -15,7 +15,7 @@ def test_test_identity_is_track_independent(test_report_1702):
     by_track = {
         c.track: c for c in parsed.cases if c.name == "test_inpmode_alternativ_debitor_at_cust"
     }
-    # Same test runs in both tracks -> same identity, two results.
+    # Same test builds in both tracks -> same identity, two results.
     assert set(by_track) == {"permanent", "permanent_py39"}
     assert by_track["permanent"].test_id == by_track["permanent_py39"].test_id
     assert (

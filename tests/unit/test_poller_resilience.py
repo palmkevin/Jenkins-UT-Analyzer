@@ -23,7 +23,7 @@ from uta.control.heartbeat import read_heartbeat, record_heartbeat
 from uta.control.jobs import create_ingest_job, recover_orphaned_jobs, run_ingest_job
 from uta.control.quarantine import quarantined_build_numbers
 from uta.db import Base, make_engine, make_session_factory, session_scope
-from uta.models import BuildQuarantine, IngestJob, Run
+from uta.models import Build, BuildQuarantine, IngestJob
 from uta.models.enums import IngestJobStatus
 from uta.poller import BuildIngestError, builds_to_ingest, poll_once, poll_tick
 from uta.web.app import create_app
@@ -109,9 +109,9 @@ class _SleepRecorder:
         self.delays.append(seconds)
 
 
-def _run_count(session_factory) -> int:
+def _build_count(session_factory) -> int:
     with session_scope(session_factory) as s:
-        return s.scalar(select(func.count()).select_from(Run))
+        return s.scalar(select(func.count()).select_from(Build))
 
 
 def _quarantine_row(session_factory, build: int) -> BuildQuarantine | None:
@@ -152,7 +152,7 @@ def test_exhausted_transient_retries_record_an_attempt_and_end_the_tick(session_
     row = _quarantine_row(session_factory, 1)
     assert row.attempts == 1 and row.quarantined_at is None
     # The tick ended at the failing build: build #2 was not ingested out of order.
-    assert _run_count(session_factory) == 0
+    assert _build_count(session_factory) == 0
 
 
 def test_deterministic_failure_is_not_retried_in_tick(session_factory):
@@ -214,7 +214,7 @@ def test_persistent_failure_quarantines_advances_and_alerts(session_factory):
     assert "#1" in ops[0].subject
     # The high-water mark advanced past the quarantined build …
     with session_scope(session_factory) as s:
-        assert s.scalar(select(func.max(Run.build_number))) == 2
+        assert s.scalar(select(func.max(Build.build_number))) == 2
         assert quarantined_build_numbers(s) == {1}
     # … and the next tick does not re-select it.
     assert poll_once(client, session_factory, sleep=_SleepRecorder()) == []
@@ -305,7 +305,7 @@ def test_ondemand_reingest_clears_a_quarantined_build(session_factory):
         feed=None,
     )
     assert _quarantine_row(session_factory, 1) is None
-    assert _run_count(session_factory) == 1
+    assert _build_count(session_factory) == 1
 
 
 # ── poll_tick: heartbeat bookkeeping around failures ─────────────────────────
@@ -336,7 +336,7 @@ def _client_settings(**kw) -> Settings:
 
 
 def _shared_memory_factory():
-    """An in-memory SQLite store usable across threads (the TestClient runs requests in one)."""
+    """An in-memory SQLite store usable across threads (the TestClient builds requests in one)."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -458,7 +458,7 @@ def test_health_endpoint_returns_503_when_db_unreachable():
 
 
 def test_health_endpoint_returns_503_when_heartbeat_stale():
-    sf = _shared_memory_factory()  # request runs in the TestClient thread — needs a shared pool
+    sf = _shared_memory_factory()  # request builds in the TestClient thread — needs a shared pool
     record_heartbeat(sf, processed=[1], error=None)
     with session_scope(sf) as s:
         hb = read_heartbeat(s)
@@ -501,7 +501,7 @@ def test_web_startup_recovers_orphaned_jobs():
     sf = _shared_memory_factory()
     running = _seed_job(sf, IngestJobStatus.RUNNING)
 
-    # The lifespan (startup) hook runs when the TestClient is entered — a "restart".
+    # The lifespan (startup) hook builds when the TestClient is entered — a "restart".
     with TestClient(create_app(session_factory=sf)):
         pass
 

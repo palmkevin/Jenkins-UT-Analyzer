@@ -31,7 +31,7 @@
   {%- if url -%}<a class="pivot-link" href="{{ url }}" title="Show the triage queue filtered to {{ value }}">{{ value }}</a>{%- else -%}{{ fallback }}{%- endif -%}
 {%- endmacro %}
 
-{#- Per-test pass/fail sparkline (issue #53) — one bar per recent run, oldest-first, red = failed.
+{#- Per-test pass/fail sparkline (issue #53) — one bar per recent build, oldest-first, red = failed.
     Failed bars are full-height, passed bars shorter (bottom-aligned): a second, non-hue channel so
     the signal survives color-vision deficiency (issue #144). `spark` is the geometry dict built by
     uta.web.charts.sparkline; `None` when there's no history. -#}
@@ -42,7 +42,7 @@
        role="img" aria-label="recent pass/fail history (tall bar = failed, short bar = passed)">
     {%- for bar in spark.bars %}
     <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}"
-          class="{{ 'FAILED' if bar.failed else 'PASSED' }}"><title>#{{ bar.build }} {{ 'failed' if bar.failed else 'passed' }}</title></rect>
+          class="{{ 'FAILED' if bar.failed else 'PASSED' }}"><title>#{{ bar.number }} {{ 'failed' if bar.failed else 'passed' }}</title></rect>
     {%- endfor %}
   </svg>
   {%- else -%}

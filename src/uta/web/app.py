@@ -3,7 +3,7 @@
 Surfaces:
 - ``GET /``                         the daily triage queue, the primary landing view.
 - ``GET /tests/{identity_id}``      the per-test record with the full evidence + actions.
-- ``GET /runs/{build}``             the run-level summary: totals, shards, baseline + diff.
+- ``GET /builds/{build}``             the build-level summary: totals, shards, baseline + diff.
 - action POSTs (acknowledge / confirm / attribute / identity) → redirect back (PRG).
 
 Route handlers stay thin: read-side projections live in :mod:`uta.web.views`, write-side mutations
@@ -129,7 +129,7 @@ def format_reltime(value: object) -> str:
 
     ``<span title="2026-06-29 16:15:46 UTC">2 days ago</span>`` — server-side, no JS. Applied where
     *age* is what the reader cares about (triage first-failed/fixed-at, test-record lifecycle and
-    episode times); tabular run listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
+    episode times); tabular build listings stay absolute via ``|ts``. ``None`` renders as ``"—"``
     and non-datetimes fall through to ``str``, mirroring :func:`format_ts`.
     """
     if value is None:
@@ -155,8 +155,8 @@ def nav_section(path: str) -> str | None:
     """
     if path == "/" or path.startswith("/tests"):
         return "triage"
-    if path.startswith("/runs"):
-        return "runs"
+    if path.startswith("/builds"):
+        return "builds"
     if path.startswith("/flaky"):
         return "flaky"
     if path.startswith("/kb"):
@@ -250,7 +250,7 @@ def create_app(
         # (tests inject a session_factory, leaving startup_engine None, and never hit this).
         if startup_engine is not None:
             assert_pg_trgm(startup_engine)
-        # On-demand ingest jobs run in *this process's* daemon threads, so any QUEUED/RUNNING row
+        # On-demand ingest jobs build in *this process's* daemon threads, so any QUEUED/RUNNING row
         # found at startup was orphaned by a restart — flip it to ERROR instead of letting it lie
         # to the control panel forever (issue #51).
         jobs.recover_orphaned_jobs(session_factory)
@@ -270,7 +270,7 @@ def create_app(
             raise ValueError("AUTH_ENABLED=true requires SESSION_SECRET to be set")
         register_auth_routes(app, make_oauth(auth_settings), auth_settings)
         install_auth_middleware(app)
-        # Added last ⇒ outermost, so request.session exists by the time require_auth runs.
+        # Added last ⇒ outermost, so request.session exists by the time require_auth builds.
         app.add_middleware(
             SessionMiddleware,
             secret_key=auth_settings.session_secret,
@@ -355,7 +355,7 @@ def create_app(
                 sort=sort or None,
             )
             options = views.triage_filter_options(s)
-            last_run = views.latest_run(s)
+            last_build = views.latest_build(s)
         options["tracks"] = ["permanent", "permanent_py39"]
         options["causes"] = list(PredictedCause)
         options["triage_statuses"] = list(TriageStatus)
@@ -372,7 +372,7 @@ def create_app(
                 "sort": sort,
                 "expand": expand,
                 "options": options,
-                "last_run": last_run,
+                "last_build": last_build,
                 "chips": views.triage_filter_chips(filters, sort or None, expand),
                 "sort_links": views.triage_sort_links(filters, sort or None, expand),
                 "expand_urls": views.triage_expand_urls(filters, sort or None, expand),
@@ -403,26 +403,38 @@ def create_app(
             cfg=cfg,
         )
 
-    @app.get("/runs", response_class=HTMLResponse)
-    def runs_view(request: Request, page: int = 1):
+    @app.get("/builds", response_class=HTMLResponse)
+    def builds_view(request: Request, page: int = 1):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            runs = views.job_runs(
+            builds = views.job_builds(
                 s,
                 poll_interval_seconds=cfg.poll_interval_seconds,
                 limit=cfg.ui_row_limit,
                 page=page,
             )
-        return render(request, "runs.html", {"runs": runs}, cfg=cfg)
+        return render(request, "builds.html", {"builds": builds}, cfg=cfg)
 
-    @app.get("/runs/{build}", response_class=HTMLResponse)
-    def run_view(request: Request, build: int, page: int = 1, failures_only: bool = False):
+    # Legacy deep links: the pre-rename /runs URLs live on in already-sent alert emails and
+    # bookmarks, so they redirect permanently to /builds with the query string intact.
+    @app.get("/runs", include_in_schema=False)
+    def legacy_runs_view(request: Request):
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"/builds{query}", status_code=301)
+
+    @app.get("/runs/{number}", include_in_schema=False)
+    def legacy_run_view(request: Request, number: int):
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"/builds/{number}{query}", status_code=301)
+
+    @app.get("/builds/{number}", response_class=HTMLResponse)
+    def build_view(request: Request, number: int, page: int = 1, failures_only: bool = False):
         expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            run = views.run_summary(
+            build = views.build_summary(
                 s,
-                build,
+                number,
                 limit=cfg.ui_row_limit,
                 page=page,
                 failures_only=failures_only,
@@ -430,14 +442,14 @@ def create_app(
             )
         return render(
             request,
-            "run.html",
+            "build.html",
             {
-                "run": run,
                 "build": build,
+                "number": number,
                 # "Show all N" links for the capped diff buckets, built in the view layer so the
                 # rest of the query string (failures_only, page) survives (issue #151).
-                "diff_expand_urls": views.run_expand_urls(
-                    build, dict(request.query_params), expand
+                "diff_expand_urls": views.build_expand_urls(
+                    number, dict(request.query_params), expand
                 ),
             },
             cfg=cfg,

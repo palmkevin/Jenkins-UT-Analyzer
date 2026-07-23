@@ -87,7 +87,7 @@ def _with_retries[T](
     base_seconds: float,
     sleep: Callable[[float], None],
 ) -> T:
-    """Run ``fn``, retrying transient failures with exponential backoff (base, 2×, 4×, …)."""
+    """Build ``fn``, retrying transient failures with exponential backoff (base, 2×, 4×, …)."""
     for attempt in range(1, attempts + 1):
         try:
             return fn()
@@ -108,10 +108,10 @@ def _with_retries[T](
 
 
 def highest_ingested_build(session_factory: sessionmaker[Session]) -> int:
-    from uta.models import Run
+    from uta.models import Build
 
     with session_scope(session_factory) as session:
-        return session.scalar(select(func.max(Run.build_number))) or 0
+        return session.scalar(select(func.max(Build.build_number))) or 0
 
 
 def builds_to_ingest(
@@ -127,7 +127,8 @@ def builds_to_ingest(
     a cold start populates ``latest - backfill_depth + 1 … latest`` oldest-first (age N → age 1).
     Once the store is non-empty, selection is purely incremental above the high-water mark.
 
-    Quarantined builds are excluded: a quarantined build persisted no Run, so without the filter it
+    Quarantined builds are excluded: a quarantined build persisted no Build, so without the filter
+    it
     would be re-selected every tick forever — skipping it here is what lets ingest advance past it.
     """
     latest = client.last_completed_build()

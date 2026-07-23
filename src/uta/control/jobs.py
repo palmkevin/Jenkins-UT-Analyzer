@@ -134,7 +134,7 @@ def trigger_ingest(
     """Create a job and run it (in a background daemon thread by default). Returns the job id.
 
     The Jenkins client and Oracle feed are built from ``settings`` the same way the CLI back-fill
-    builds them, unless injected (tests). With ``run_in_thread=False`` the job runs synchronously —
+    runs them, unless injected (tests). With ``run_in_thread=False`` the job runs synchronously —
     used by tests so assertions see the terminal state without racing a thread.
     """
     with session_scope(session_factory) as session:
@@ -147,20 +147,20 @@ def trigger_ingest(
     if feed is None:
         feed = build_feed(settings)
 
-    def _run() -> None:
+    def _build() -> None:
         run_ingest_job(session_factory, job_id, settings=settings, client=client, feed=feed)
 
     if run_in_thread:
-        threading.Thread(target=_run, name=f"ingest-job-{job_id}", daemon=True).start()
+        threading.Thread(target=_build, name=f"ingest-job-{job_id}", daemon=True).start()
     else:
-        _run()
+        _build()
     return job_id
 
 
 def recover_orphaned_jobs(session_factory: sessionmaker[Session]) -> int:
     """Mark jobs orphaned by a restart as ``ERROR`` — call once at web-process startup (issue #51).
 
-    Jobs run in this process's daemon threads, so a restart kills them mid-flight while their rows
+    Jobs build in this process's daemon threads, so a restart kills them mid-flight while their rows
     stay ``QUEUED``/``RUNNING`` forever. Any such row found at startup can only be an orphan (no
     thread survives the process), so it is flipped to ``ERROR`` with an explanatory message rather
     than left lying to the control panel. Returns how many rows were recovered.

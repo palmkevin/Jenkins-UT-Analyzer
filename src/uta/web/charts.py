@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Timeline:
-    """Geometry for the run-health timeline: two polylines (failed, regressions) over N runs."""
+    """Geometry for the build-health timeline: two polylines (failed, regressions) over N builds."""
 
     width: int
     height: int
@@ -23,18 +23,18 @@ class Timeline:
     max_value: int
     first_build: int
     last_build: int
-    runs: int
+    builds: int
 
 
-def run_health_timeline(
+def build_health_timeline(
     rows: list[dict], *, width: int = 640, height: int = 140, pad_x: int = 8, pad_y: int = 12
 ) -> Timeline | None:
-    """Build timeline geometry from oldest-first ``{"build", "failed", "regressions"}`` rows."""
+    """Build timeline geometry from oldest-first ``{"number", "failed", "regressions"}`` rows."""
     if not rows:
         return None
     n = len(rows)
     max_value = max(max(r["failed"], r["regressions"]) for r in rows)
-    max_value = max(max_value, 1)  # avoid a divide-by-zero when every run is clean
+    max_value = max(max_value, 1)  # avoid a divide-by-zero when every build is clean
 
     def _x(i: int) -> float:
         return pad_x + (i * (width - 2 * pad_x) / (n - 1) if n > 1 else 0.0)
@@ -51,19 +51,19 @@ def run_health_timeline(
         failed_points=_points("failed"),
         regressions_points=_points("regressions"),
         max_value=max_value,
-        first_build=rows[0]["build"],
-        last_build=rows[-1]["build"],
-        runs=n,
+        first_build=rows[0]["number"],
+        last_build=rows[-1]["number"],
+        builds=n,
     )
 
 
 @dataclass(frozen=True)
 class Sparkline:
-    """Geometry for a per-test pass/fail sparkline: one bar per run, oldest-first."""
+    """Geometry for a per-test pass/fail sparkline: one bar per build, oldest-first."""
 
     width: int
     height: int
-    # [{"x": float, "y": float, "width": float, "height": float, "failed": bool, "build": int}]
+    # [{"x": float, "y": float, "width": float, "height": float, "failed": bool, "number": int}]
     bars: list[dict]
 
 
@@ -81,7 +81,7 @@ def sparkline(
     gap: float = 2.0,
     max_points: int = 20,
 ) -> Sparkline | None:
-    """Build sparkline geometry from oldest-first ``{"build", "failed"}`` points.
+    """Build sparkline geometry from oldest-first ``{"number", "failed"}`` points.
 
     Only the most recent ``max_points`` are rendered (oldest-first order preserved) so a long
     flakiness window still renders a legible, compactly-spaced chart rather than hairline bars.
@@ -101,7 +101,7 @@ def sparkline(
             "width": round(bar_width, 1),
             "height": float(height) if p["failed"] else passed_height,
             "failed": p["failed"],
-            "build": p["build"],
+            "number": p["number"],
         }
         for i, p in enumerate(recent)
     ]

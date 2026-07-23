@@ -22,8 +22,8 @@ _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 
 # Every table the Information model must create.
 _EXPECTED_TABLES = {
-    "runs",
-    "run_shards",
+    "builds",
+    "build_shards",
     "test_identities",
     "test_results",
     "test_lifecycles",
@@ -93,7 +93,7 @@ def test_upgrade_builds_full_schema_with_pg_trgm(pg_engine):
         )
         assert sim is not None and sim > 0
 
-    # The startup guard is satisfied once migrations have run.
+    # The startup guard is satisfied once migrations have build.
     assert_pg_trgm(pg_engine)
 
 

@@ -1,4 +1,4 @@
-"""Live LLM checks — LOCAL ONLY (need a real API key + network). Never run in CI.
+"""Live LLM checks — LOCAL ONLY (need a real API key + network). Never build in CI.
 
 Run with: ``pytest -m live tests/live/test_llm_live.py``. Each case skips unless its provider's key
 is configured. Confirms a real provider returns a non-empty single-line hypothesis from a tiny

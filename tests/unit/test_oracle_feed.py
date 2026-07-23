@@ -35,7 +35,7 @@ def test_changes_are_chronological():
 
 def test_empty_window_returns_nothing():
     feed = FakeTrackingFeed()
-    # The #1702 run window itself (19:01-20:41 local) had no tracked changes.
+    # The #1702 build window itself (19:01-20:41 local) had no tracked changes.
     start = datetime(2026, 6, 26, 17, 1, tzinfo=UTC)
     end = datetime(2026, 6, 26, 18, 42, tzinfo=UTC)
     assert feed.changes_in_window(start, end) == []

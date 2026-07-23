@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from tests.fakes import FakeJenkinsClient
 from uta.db import session_scope
-from uta.models import Run
+from uta.models import Build
 from uta.poller import build_scheduler, builds_to_ingest, highest_ingested_build, poll_once
 
 
@@ -59,7 +59,7 @@ def test_poll_once_is_idempotent(session_factory):
     assert poll_once(client, session_factory) == [1, 2]
     assert poll_once(client, session_factory) == []  # nothing new
     with session_scope(session_factory) as s:
-        assert s.scalar(select(func.count()).select_from(Run)) == 2
+        assert s.scalar(select(func.count()).select_from(Build)) == 2
 
 
 def test_no_completed_build_yields_nothing(session_factory):
@@ -90,7 +90,7 @@ def test_poll_once_skips_build_with_404_detail(session_factory):
     client = _Rotated404Fake(last_completed=3, missing=2)
     assert poll_once(client, session_factory) == [1, 3]
     with session_scope(session_factory) as s:
-        assert s.scalar(select(func.count()).select_from(Run)) == 2
+        assert s.scalar(select(func.count()).select_from(Build)) == 2
     # The vanished build left no high-water mark; a later build advanced it past the gap.
     assert highest_ingested_build(session_factory) == 3
     # A subsequent tick with nothing new above the mark is a no-op (no retry of #2).

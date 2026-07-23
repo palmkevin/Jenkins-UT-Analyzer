@@ -40,7 +40,7 @@ class TestIdentity(Base, TimestampMixin):
 
     # Ownership = the test's **main developer**, resolved from `svn blame` of the test's source
     # file (the modal line author). This is the "Owner" surfaced in the UI. Resolved at identity
-    # level (a property of the source file, not of any one run); NULL until blame resolves it.
+    # level (a property of the source file, not of any one build); NULL until blame resolves it.
     main_developer: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # ZEPHYR test-case *owner* initials (e.g. "kam"), parsed from the failing test's "ZEPHYR TEST
@@ -50,7 +50,7 @@ class TestIdentity(Base, TimestampMixin):
 
     # ZEPHYR test case(s) this unit test is referenced by, parsed from the failing test's
     # "ZEPHYR TEST CASE INFO" block — a comma-separated list of ids (e.g. "LX-T4447,LX-T4792").
-    # Resolved at identity level like zephyr_owner; only refreshed from runs that carry it.
+    # Resolved at identity level like zephyr_owner; only refreshed from builds that carry it.
     zephyr_test_cases: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     alias_of: Mapped[TestIdentity | None] = relationship(remote_side=[id])

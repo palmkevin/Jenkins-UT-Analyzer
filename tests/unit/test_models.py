@@ -15,6 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from uta.db import Base, make_session_factory, session_scope
 from uta.models import (
     Attribution,
+    Build,
+    BuildShard,
     Classification,
     CodeChangeCandidate,
     DataChangeCandidate,
@@ -23,8 +25,6 @@ from uta.models import (
     LifecycleState,
     PredictedCause,
     Provenance,
-    Run,
-    RunShard,
     TestIdentity,
     TestLifecycle,
     TestResult,
@@ -43,18 +43,19 @@ def _utc() -> datetime:
     return datetime(2026, 6, 27, 17, 0, tzinfo=UTC)
 
 
-def _run(build: int = 1) -> Run:
-    return Run(build_number=build, status="SUCCESS", started_at=_utc(), finished_at=_utc())
+def _build(build: int = 1) -> Build:
+    return Build(build_number=build, status="SUCCESS", started_at=_utc(), finished_at=_utc())
 
 
 def test_full_graph_persists_and_reloads(session_factory):
-    """A run + identity + result + lifecycle + episode + attribution + classification + signals."""
+    """A build + identity + result + lifecycle + episode + attribution + classification +
+    signals."""
     with session_scope(session_factory) as s:
-        run = _run()
+        build = _build()
         ident = TestIdentity(
             canonical_name="ut_acc.ac.TestC.test_x", class_name="ut_acc.ac.TestC", method="test_x"
         )
-        s.add_all([run, ident])
+        s.add_all([build, ident])
         s.flush()
 
         sig = FailureSignature(
@@ -66,21 +67,21 @@ def test_full_graph_persists_and_reloads(session_factory):
         s.add(sig)
         s.flush()
 
-        run.shards.append(RunShard(track="permanent", status="SUCCESS", started_at=_utc()))
-        run.results.append(
+        build.shards.append(BuildShard(track="permanent", status="SUCCESS", started_at=_utc()))
+        build.results.append(
             TestResult(identity=ident, track="permanent", status="FAILED", signature=sig)
         )
-        run.code_changes.append(
+        build.code_changes.append(
             CodeChangeCandidate(commit_id="r123", author="alice", committed_at=_utc())
         )
-        run.data_changes.append(
+        build.data_changes.append(
             DataChangeCandidate(lx_table_code="BFLOG", change_type="U", changed_at=_utc())
         )
 
         ep = FailureEpisode(
             identity=ident,
             episode_number=1,
-            first_failure_run_id=run.id,
+            first_failure_build_id=build.id,
             first_failure_at=_utc(),
         )
         s.add(ep)
@@ -93,10 +94,10 @@ def test_full_graph_persists_and_reloads(session_factory):
         lc.current_episode = ep
 
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1))
-        assert len(run.shards) == 1
-        assert len(run.code_changes) == 1 and len(run.data_changes) == 1
-        result = run.results[0]
+        build = s.scalar(select(Build).where(Build.build_number == 1))
+        assert len(build.shards) == 1
+        assert len(build.code_changes) == 1 and len(build.data_changes) == 1
+        result = build.results[0]
         assert result.identity.canonical_name == "ut_acc.ac.TestC.test_x"
         assert result.signature.signature_hash == "hash-abc"
         ident = result.identity
@@ -108,11 +109,14 @@ def test_full_graph_persists_and_reloads(session_factory):
 def test_defaults_match_design(session_factory):
     """Lifecycle/triage/provenance defaults and the deferred (null) confidence."""
     with session_scope(session_factory) as s:
-        run, ident = _run(), TestIdentity(canonical_name="a.B.t")
-        s.add_all([run, ident])
+        build, ident = _build(), TestIdentity(canonical_name="a.B.t")
+        s.add_all([build, ident])
         s.flush()
         ep = FailureEpisode(
-            identity=ident, episode_number=1, first_failure_run_id=run.id, first_failure_at=_utc()
+            identity=ident,
+            episode_number=1,
+            first_failure_build_id=build.id,
+            first_failure_at=_utc(),
         )
         s.add_all([ep, TestLifecycle(identity=ident)])
         s.flush()
@@ -133,19 +137,19 @@ def test_defaults_match_design(session_factory):
 
 
 def test_unique_run_test_track(session_factory):
-    """The (run, test, track) identity key is enforced."""
+    """The (build, test, track) identity key is enforced."""
     with session_scope(session_factory) as s:
-        run, ident = _run(), TestIdentity(canonical_name="a.B.t")
-        s.add_all([run, ident])
+        build, ident = _build(), TestIdentity(canonical_name="a.B.t")
+        s.add_all([build, ident])
         s.flush()
-        s.add(TestResult(run=run, identity=ident, track="permanent", status="FAILED"))
+        s.add(TestResult(build=build, identity=ident, track="permanent", status="FAILED"))
     with pytest.raises(IntegrityError):
         with session_scope(session_factory) as s:
-            run = s.scalar(select(Run))
+            build = s.scalar(select(Build))
             ident = s.scalar(select(TestIdentity))
             s.add(
                 TestResult(
-                    run_id=run.id, test_identity_id=ident.id, track="permanent", status="FAILED"
+                    build_id=build.id, test_identity_id=ident.id, track="permanent", status="FAILED"
                 )
             )
 
@@ -153,13 +157,13 @@ def test_unique_run_test_track(session_factory):
 def test_same_test_both_tracks_allowed(session_factory):
     """The same test in both tracks is two distinct results, not a clash."""
     with session_scope(session_factory) as s:
-        run, ident = _run(), TestIdentity(canonical_name="a.B.t")
-        s.add_all([run, ident])
+        build, ident = _build(), TestIdentity(canonical_name="a.B.t")
+        s.add_all([build, ident])
         s.flush()
         s.add_all(
             [
-                TestResult(run=run, identity=ident, track="permanent", status="FAILED"),
-                TestResult(run=run, identity=ident, track="permanent_py39", status="FAILED"),
+                TestResult(build=build, identity=ident, track="permanent", status="FAILED"),
+                TestResult(build=build, identity=ident, track="permanent_py39", status="FAILED"),
             ]
         )
     with session_scope(session_factory) as s:
@@ -168,26 +172,26 @@ def test_same_test_both_tracks_allowed(session_factory):
 
 def test_episode_number_unique_per_identity(session_factory):
     with session_scope(session_factory) as s:
-        run, ident = _run(), TestIdentity(canonical_name="a.B.t")
-        s.add_all([run, ident])
+        build, ident = _build(), TestIdentity(canonical_name="a.B.t")
+        s.add_all([build, ident])
         s.flush()
         s.add(
             FailureEpisode(
                 identity=ident,
                 episode_number=1,
-                first_failure_run_id=run.id,
+                first_failure_build_id=build.id,
                 first_failure_at=_utc(),
             )
         )
     with pytest.raises(IntegrityError):
         with session_scope(session_factory) as s:
-            run = s.scalar(select(Run))
+            build = s.scalar(select(Build))
             ident = s.scalar(select(TestIdentity))
             s.add(
                 FailureEpisode(
                     test_identity_id=ident.id,
                     episode_number=1,
-                    first_failure_run_id=run.id,
+                    first_failure_build_id=build.id,
                     first_failure_at=_utc(),
                 )
             )
@@ -224,16 +228,16 @@ def test_identity_alias_self_reference(session_factory):
 
 
 def test_failure_history_is_results_across_runs(session_factory):
-    """Failure history = test_results across runs, no separate table."""
+    """Failure history = test_results across builds, no separate table."""
     with session_scope(session_factory) as s:
         ident = TestIdentity(canonical_name="a.B.t")
         s.add(ident)
         s.flush()
         for build, status in [(1, "FAILED"), (2, "PASSED"), (3, "FAILED")]:
-            run = _run(build)
-            s.add(run)
+            build = _build(build)
+            s.add(build)
             s.flush()
-            s.add(TestResult(run=run, identity=ident, track="permanent", status=status))
+            s.add(TestResult(build=build, identity=ident, track="permanent", status=status))
     with session_scope(session_factory) as s:
         ident = s.scalar(select(TestIdentity))
         fails = s.scalar(
@@ -246,16 +250,16 @@ def test_failure_history_is_results_across_runs(session_factory):
 
 def test_run_cascade_deletes_children(session_factory):
     with session_scope(session_factory) as s:
-        run, ident = _run(), TestIdentity(canonical_name="a.B.t")
-        s.add_all([run, ident])
+        build, ident = _build(), TestIdentity(canonical_name="a.B.t")
+        s.add_all([build, ident])
         s.flush()
-        run.results.append(TestResult(identity=ident, track="permanent", status="FAILED"))
-        run.shards.append(RunShard(track="permanent", status="SUCCESS"))
+        build.results.append(TestResult(identity=ident, track="permanent", status="FAILED"))
+        build.shards.append(BuildShard(track="permanent", status="SUCCESS"))
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run))
-        s.delete(run)
+        build = s.scalar(select(Build))
+        s.delete(build)
     with session_scope(session_factory) as s:
         assert s.scalar(select(func.count()).select_from(TestResult)) == 0
-        assert s.scalar(select(func.count()).select_from(RunShard)) == 0
-        # The identity is independent of any single run — it survives.
+        assert s.scalar(select(func.count()).select_from(BuildShard)) == 0
+        # The identity is independent of any single build — it survives.
         assert s.scalar(select(func.count()).select_from(TestIdentity)) == 1

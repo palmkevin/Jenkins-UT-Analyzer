@@ -107,17 +107,18 @@ def test_non_whitelisted_key_is_rejected(client, factory):
 
 
 def test_override_reflected_in_a_view_on_next_load(client, factory):
-    """The acceptance check: change the row cap and the run view honours it on the next load."""
-    build = FIRST_BUILD + 11  # a complete run with 32 result rows
-    # The demo seeds ui_row_limit=20, so the run page arrives already paginated (32 rows → 2 pages).
-    assert "Page 1 of 2" in client.get(f"/runs/{build}").text
+    """The acceptance check: change the row cap and the build view honours it on the next load."""
+    build = FIRST_BUILD + 11  # a complete build with 32 result rows
+    # The demo seeds ui_row_limit=20, so the build page arrives already paginated (32 rows → 2
+    # pages).
+    assert "Page 1 of 2" in client.get(f"/builds/{build}").text
 
     client.post("/control/settings", data={"key": "ui_row_limit", "value": "1"})
-    assert "Page 1 of 32" in client.get(f"/runs/{build}").text  # cap now bites — view reflects it
+    assert "Page 1 of 32" in client.get(f"/builds/{build}").text  # cap now bites — view reflects it
 
     client.post("/control/settings/ui_row_limit/reset")
     # Reverted to the env default (50): everything fits on one page again — no pager.
-    assert "Page 1 of" not in client.get(f"/runs/{build}").text
+    assert "Page 1 of" not in client.get(f"/builds/{build}").text
 
 
 def test_trigger_ingest_route_dispatches_job(client, factory, monkeypatch):
@@ -146,7 +147,7 @@ def test_trigger_ingest_route_dispatches_job(client, factory, monkeypatch):
 # The *public demo app* (create_demo_app → demo_mode=True) refuses the control-panel mutations:
 # the store is shared by every anonymous visitor, and the ingest route would otherwise build a
 # real Jenkins client and send outbound requests from the public host. Everything above this
-# section runs the normal create_app on the same demo store and must keep working unchanged.
+# section builds the normal create_app on the same demo store and must keep working unchanged.
 
 
 @pytest.fixture(scope="module")
@@ -199,7 +200,7 @@ def test_demo_rejects_ingest_post_and_never_builds_a_jenkins_client(demo_client,
     )
     assert resp.status_code == 403
     assert "disabled in the public demo" in resp.text
-    # No job row was created either — the guard runs before any dispatch.
+    # No job row was created either — the guard builds before any dispatch.
     assert "#1–999" not in demo_client.get("/control").text
 
 

@@ -12,11 +12,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from tests.builders import get_identity, make_run
+from tests.builders import get_identity, make_build
 from uta.analyze.flakiness import recompute_flaky_flags
-from uta.analyze.lifecycle import apply_run
+from uta.analyze.lifecycle import apply_build
 from uta.db import Base, make_session_factory, session_scope
-from uta.kb.store import record_signatures_for_run
+from uta.kb.store import record_signatures_for_build
 from uta.web.app import create_app
 
 _STACK = (
@@ -43,19 +43,19 @@ def session_factory():
 def seeded(session_factory):
     """An oscillating test (for the leaderboard) and a recorded signature (for KB search).
 
-    Runs are anchored to *now* (not a fixed epoch) so they always fall inside the flaky
+    Builds are anchored to *now* (not a fixed epoch) so they always fall inside the flaky
     oscillation window — the leaderboard route computes that window from the real clock, so a
-    fixed past date would silently age out and empty the board on later run dates.
+    fixed past date would silently age out and empty the board on later build dates.
     """
     base = datetime.now(UTC) - timedelta(days=2)
     with session_scope(session_factory) as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
             errors = {"flap.test": ("test failure", _STACK.format(line=b, msg="1 != 2"))}
-            run = make_run(
+            build = make_build(
                 s, b, {"flap.test": st}, errors=errors, started_at=base + timedelta(hours=b)
             )
-            apply_run(s, run)
-            record_signatures_for_run(s, run)
+            apply_build(s, build)
+            record_signatures_for_build(s, build)
             recompute_flaky_flags(s)
     return session_factory
 
@@ -70,7 +70,7 @@ def test_flaky_leaderboard_lists_oscillating_test(client):
     assert resp.status_code == 200
     assert "Flaky leaderboard" in resp.text
     assert "flap.test" in resp.text
-    assert 'class="sparkline"' in resp.text  # per-test recent-run sparkline (issue #53)
+    assert 'class="sparkline"' in resp.text  # per-test recent-build sparkline (issue #53)
     # Non-hue pass/fail channel (issue #144): failed bars full-height, passed bars shorter.
     assert 'y="0.0"' in resp.text and 'height="22.0"' in resp.text  # failed bar
     assert 'y="9.9"' in resp.text and 'height="12.1"' in resp.text  # passed bar (0.55 × 22)
@@ -84,8 +84,8 @@ def test_flaky_leaderboard_total_is_true_count_not_capped(session_factory):
     names = [f"flap.test_{i}" for i in range(3)]
     with session_scope(session_factory) as s:
         for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
-            run = make_run(s, b, {n: st for n in names}, started_at=base + timedelta(hours=b))
-            apply_run(s, run)
+            build = make_build(s, b, {n: st for n in names}, started_at=base + timedelta(hours=b))
+            apply_build(s, build)
             recompute_flaky_flags(s)
 
     with session_scope(session_factory) as s:
@@ -113,4 +113,4 @@ def test_test_record_shows_flakiness_and_recurrence(client, seeded):
     assert "Flakiness" in resp.text
     assert "Knowledge base" in resp.text  # recurrence card heading
     assert "seen" in resp.text
-    assert 'class="sparkline"' in resp.text  # per-run pass/fail history (issue #53)
+    assert 'class="sparkline"' in resp.text  # per-build pass/fail history (issue #53)

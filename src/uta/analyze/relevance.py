@@ -1,7 +1,7 @@
-"""Per-test relevance ranking of a run's change candidates (issue #50).
+"""Per-test relevance ranking of a build's change candidates (issue #50).
 
-The persisted candidates (:mod:`uta.models.signals`) are **run-windowed** — every failure in the
-run shares the same flat list. This module scores each candidate against *one* failing test so the
+The persisted candidates (:mod:`uta.models.signals`) are **build-windowed** — every failure in the
+build shares the same flat list. This module scores each candidate against *one* failing test so the
 test record, the classifier tie-break and the LLM prompt can lead with the likely culprit:
 
 - **Code candidates** (SVN revisions): each changed path is matched against the failing test's own
@@ -230,10 +230,10 @@ def rank_candidates(
     error_stack_trace: str | None = None,
     class_name: str | None = None,
 ) -> RankedChanges:
-    """Score a run's candidates against one failing test and return them most-relevant first.
+    """Score a build's candidates against one failing test and return them most-relevant first.
 
     The failure context is optional field by field — with nothing to match against every score is
-    0 and the lists stay chronological (the run-windowed v1 presentation).
+    0 and the lists stay chronological (the build-windowed v1 presentation).
     """
     refs = _reference_paths(file_path, error_stack_trace, class_name)
     packages = _package_dirs(refs)

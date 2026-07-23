@@ -1,6 +1,6 @@
 """Failure-signature normalization (the load-bearing component).
 
-Two runs of the *same* bug almost never produce byte-identical error text: line numbers,
+Two builds of the *same* bug almost never produce byte-identical error text: line numbers,
 timestamps, object ids, temp paths, addresses and other dynamic values differ every time. If the
 knowledge base keyed on the raw message nothing would ever match itself and the learning loop would
 be dead. So before hashing we **normalize** the error into a stable shape by masking the noisy
@@ -90,7 +90,7 @@ def normalize(
     The normalized text is a compact, deterministic join of: the **exception type**, the **masked
     exception message**, and the **top-N frames of our own code** (path suffix + function, line
     masked). Everything dynamic (numbers, hex, timestamps, ips/ports, uuids, line numbers) is
-    masked so the same bug hashes identically across runs and tracks.
+    masked so the same bug hashes identically across builds and tracks.
     """
     stack = error_stack_trace or ""
     details = (error_details or "").strip()

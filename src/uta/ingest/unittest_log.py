@@ -12,7 +12,7 @@ redesign.
 It assumes **verbose** unittest output (``-v``): one ``method (dotted.path) ... <outcome>`` line per
 test. Failure/error tracebacks are read from the trailing ``====``-delimited blocks; a block is
 **authoritative** — it overrides the test's status-line outcome (stdout printed mid-test can garble
-the tail), and a test that appears only in a block (e.g. a non-verbose run) is still surfaced as
+the tail), and a test that appears only in a block (e.g. a non-verbose build) is still surfaced as
 FAILED. (Tests with docstrings
 render the docstring on the status line in verbose mode; these stages don't use them, so that form
 is intentionally not parsed — such a test still surfaces from its failure block if it fails.)
@@ -42,8 +42,8 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _STATUS_RE = re.compile(r"^(?P<name>\w+) \((?P<path>[\w.]+)\) \.\.\. (?P<rest>.+?)\s*$")
 # A failure/error block header: ``FAIL: test_method (dotted.path)``.
 _BLOCK_HEADER_RE = re.compile(r"^(?P<kind>FAIL|ERROR): (?P<name>\w+) \((?P<path>[\w.]+)\)\s*$")
-_SEP_RE = re.compile(r"^=+$")  # block separator (a run of '=')
-_RULE_RE = re.compile(r"^-+$")  # rule under a header / before the summary (a run of '-')
+_SEP_RE = re.compile(r"^=+$")  # block separator (a build of '=')
+_RULE_RE = re.compile(r"^-+$")  # rule under a header / before the summary (a build of '-')
 _RAN_RE = re.compile(r"^Ran \d+ tests? in ")  # trailing summary line
 _FRAME_RE = re.compile(r'File "([^"]+)", line (\d+)')
 
@@ -69,7 +69,7 @@ def _status_of(rest: str, *, test_id: str) -> str:
     """Map a verbose-line outcome tail to our status vocabulary (PASSED/FAILED/SKIPPED).
 
     An unrecognized tail means the nose2/unittest output format drifted from what this regex-based
-    parser expects — or the test printed to stdout mid-run, gluing arbitrary text onto its status
+    parser expects — or the test printed to stdout mid-build, gluing arbitrary text onto its status
     line. Defaulting that to PASSED would silently turn a real failure green — the worst failure
     mode for this tool — so it's logged loudly and mapped to SKIPPED (a neutral "hole", consistent
     with how the rest of the pipeline already treats SKIPPED/absent results) instead. The tail
@@ -192,7 +192,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
             zephyr_owner=zephyr_owner,
         )
 
-    # A parsed FAIL/ERROR block is authoritative: a test that prints to stdout mid-run garbles
+    # A parsed FAIL/ERROR block is authoritative: a test that prints to stdout mid-build garbles
     # its status line's tail (mapped to the SKIPPED "hole" above), but unittest only emits a
     # ``====`` traceback block for a test that actually failed/errored — so the block overrides
     # whatever the status line said, keeping the real failure from persisting as a hole.
@@ -200,7 +200,7 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
         _case(cls, name, "FAILED" if (cls, name) in blocks else outcomes[(cls, name)])
         for (cls, name) in order
     ]
-    # A failure block with no verbose status line (non-verbose run) still surfaces as FAILED.
+    # A failure block with no verbose status line (non-verbose build) still surfaces as FAILED.
     for cls, name in blocks:
         if (cls, name) not in outcomes:
             results.append(_case(cls, name, "FAILED"))

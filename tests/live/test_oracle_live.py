@@ -1,4 +1,4 @@
-"""Live Oracle ut_ref checks — LOCAL ONLY (needs network to Oracle). Never run in CI.
+"""Live Oracle ut_ref checks — LOCAL ONLY (needs network to Oracle). Never build in CI.
 
 Pins the empirically-proven timezone behaviour: a naive-local ``CREDATIM`` round-trips through the
 feed to the correct UTC instant (the #1702 day's latest tracked change is 15:46 local == 13:46 UTC).
@@ -32,7 +32,7 @@ def feed():
 
 
 def test_live_window_returns_candidates_converted_to_utc(feed):
-    # #1702 day, with lookback (changes precede the nightly run).
+    # #1702 day, with lookback (changes precede the nightly build).
     start = datetime(2026, 6, 26, 5, 8, tzinfo=UTC)
     end = datetime(2026, 6, 26, 18, 42, tzinfo=UTC)
     changes = feed.changes_in_window(start, end)

@@ -1,4 +1,4 @@
-"""CLI entrypoints — schema migration and back-fill. Run: ``uta --help``."""
+"""CLI entrypoints — schema migration and back-fill. Build: ``uta --help``."""
 
 from __future__ import annotations
 
@@ -227,7 +227,7 @@ def reattribute_owners(refresh: bool = False, limit: int | None = None) -> None:
 def prune_cmd(result_days: int | None = None, job_days: int | None = None) -> None:
     """Prune old passing results and finished ingest jobs per the retention policy (issue #52).
 
-    The same idempotent pass the poller runs on every tick — this command is the on-demand /
+    The same idempotent pass the poller builds on every tick — this command is the on-demand /
     first-time variant (e.g. right after enabling retention on a store with years of history).
     Days default to ``RESULT_RETENTION_DAYS`` / ``INGEST_JOB_RETENTION_DAYS``; 0 disables that
     window.
@@ -259,7 +259,7 @@ def prune_cmd(result_days: int | None = None, job_days: int | None = None) -> No
 def seed_demo() -> None:
     """Populate the configured ``DATABASE_URL`` with the synthetic demo dataset (no externals).
 
-    Brings the schema to head, then seeds a full synthetic run history via the real ingest
+    Brings the schema to head, then seeds a full synthetic build history via the real ingest
     pipeline. Use this for a persistent (e.g. Postgres) demo instance; the ephemeral in-memory web
     app seeds itself on startup (``uta demo`` / ``uvicorn uta.demo.app:app``).
     """

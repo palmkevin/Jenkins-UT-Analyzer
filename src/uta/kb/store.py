@@ -1,14 +1,17 @@
 """Persist failure signatures at ingest and link results to them.
 
-For every **failing** result in a run we compute its normalized signature (``kb.signature``), upsert
+For every **failing** result in a build we compute its normalized signature (``kb.signature``),
+upsert
 a :class:`~uta.models.kb.FailureSignature` keyed by hash, and set ``result.signature_id``. Across
-runs these links ARE the recurrence history; the signature's ``occurrence_count`` / first/last-seen
-are then **recomputed from the linked results** so a re-ingest (which clears and re-adds a run's
-results) never double-counts. Failing tests per run are few (dozens, not the full ~25k), so the
-per-run signature work is cheap.
+builds these links ARE the recurrence history; the signature's ``occurrence_count`` /
+first/last-seen
+are then **recomputed from the linked results** so a re-ingest (which clears and re-adds a build's
+results) never double-counts. Failing tests per build are few (dozens, not the full ~25k), so the
+per-build signature work is cheap.
 
-The run's failing results are read via a query (result id, identity id, error text, canonical name)
-rather than the ``run.results`` ORM collection, so this works after the pipeline bulk-inserts the
+The build's failing results are read via a query (result id, identity id, error text, canonical
+name)
+rather than the ``build.results`` ORM collection, so this works after the pipeline bulk-inserts the
 results with Core (which doesn't populate the collection). Signatures are preloaded/created in
 batches, ``signature_id`` is written back with a batched UPDATE, and the affected signatures'
 aggregates are recomputed in ONE grouped query.
@@ -21,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.signature import compute_hash, normalize
-from uta.models import FailureSignature, Run, TestIdentity, TestResult
+from uta.models import Build, FailureSignature, TestIdentity, TestResult
 
 _HASH_CHUNK = 1000
 
@@ -30,34 +33,35 @@ def _recompute_aggregates_bulk(session: Session, signature_ids: set[int]) -> Non
     """Refresh occurrence_count + first/last-seen for all affected signatures in ONE grouped query.
 
     Signatures with no remaining linked results (a re-ingest whose failure content changed orphans
-    them) are reset to a zero/empty aggregate. First/last-seen run ids are the runs holding the
-    min/max ``started_at`` — NOT min/max run id, which diverges after a historical re-ingest (an
-    older build recovered later gets a higher run id), so a plain per-column min/max can't be used.
+    them) are reset to a zero/empty aggregate. First/last-seen build ids are the builds holding the
+    min/max ``started_at`` — NOT min/max build id, which diverges after a historical re-ingest (an
+    older build recovered later gets a higher build id), so a plain per-column min/max can't be
+    used.
     """
     if not signature_ids:
         return
-    # Rank each signature's linked results by run start in both directions (run id breaks
+    # Rank each signature's linked results by build start in both directions (build id breaks
     # started_at ties): the rank-1 rows carry the first/last-seen facts, count() the occurrences.
     ranked = (
         select(
             TestResult.signature_id.label("signature_id"),
-            Run.id.label("run_id"),
-            Run.started_at.label("started_at"),
+            Build.id.label("build_id"),
+            Build.started_at.label("started_at"),
             func.count().over(partition_by=TestResult.signature_id).label("count"),
             func.row_number()
             .over(
                 partition_by=TestResult.signature_id,
-                order_by=(Run.started_at.asc(), Run.id.asc()),
+                order_by=(Build.started_at.asc(), Build.id.asc()),
             )
             .label("first_rank"),
             func.row_number()
             .over(
                 partition_by=TestResult.signature_id,
-                order_by=(Run.started_at.desc(), Run.id.desc()),
+                order_by=(Build.started_at.desc(), Build.id.desc()),
             )
             .label("last_rank"),
         )
-        .join(Run, Run.id == TestResult.run_id)
+        .join(Build, Build.id == TestResult.build_id)
         .where(TestResult.signature_id.in_(signature_ids))
         .subquery()
     )
@@ -67,36 +71,38 @@ def _recompute_aggregates_bulk(session: Session, signature_ids: set[int]) -> Non
     ):
         agg = aggregates.setdefault(row.signature_id, [row.count, None, None, None, None])
         if row.first_rank == 1:
-            agg[1], agg[3] = row.started_at, row.run_id
+            agg[1], agg[3] = row.started_at, row.build_id
         if row.last_rank == 1:
-            agg[2], agg[4] = row.started_at, row.run_id
+            agg[2], agg[4] = row.started_at, row.build_id
     for sig_id in signature_ids:
         signature = session.get(FailureSignature, sig_id)
         if signature is None:
             continue
-        count, first_at, last_at, first_run, last_run = aggregates.get(
+        count, first_at, last_at, first_build, last_build = aggregates.get(
             sig_id, (0, None, None, None, None)
         )
         signature.occurrence_count = count or 0
         signature.first_seen_at = first_at
         signature.last_seen_at = last_at
-        signature.first_seen_run_id = first_run
-        signature.last_seen_run_id = last_run
+        signature.first_seen_build_id = first_build
+        signature.last_seen_build_id = last_build
 
 
-def record_signatures_for_run(
-    session: Session, run: Run, stale_signature_ids: set[int] | None = None
+def record_signatures_for_build(
+    session: Session, build: Build, stale_signature_ids: set[int] | None = None
 ) -> int:
-    """Compute, upsert and link a signature for every failing result in ``run``.
+    """Compute, upsert and link a signature for every failing result in ``build``.
 
-    Returns the number of failing results signed. Must run after the run's results are flushed (they
-    need ids). Idempotent on re-ingest: the run's results were replaced, so we just re-link and
+    Returns the number of failing results signed. Must run after the build's results are flushed
+    (they
+    need ids). Idempotent on re-ingest: the build's results were replaced, so we just re-link and
     recompute the affected signatures' aggregates. ``stale_signature_ids`` are the signatures the
-    run's **old** results linked to (captured by the pipeline before its idempotent delete) — a
+    build's **old** results linked to (captured by the pipeline before its idempotent delete) — a
     signature whose failure vanished from the re-ingested content gains no new link, so it must be
     recomputed too or its aggregates stay permanently stale.
     """
-    # Read the run's failing results (id + identity + error text + name) rather than run.results,
+    # Read the build's failing results (id + identity + error text + name) rather than
+    # build.results,
     # which a Core bulk insert leaves unpopulated.
     failing = session.execute(
         select(
@@ -107,7 +113,7 @@ def record_signatures_for_run(
             TestIdentity.canonical_name,
         )
         .join(TestIdentity, TestIdentity.id == TestResult.test_identity_id)
-        .where(TestResult.run_id == run.id, TestResult.status.in_(FAILED_STATUSES))
+        .where(TestResult.build_id == build.id, TestResult.status.in_(FAILED_STATUSES))
     ).all()
 
     # Compute each failing result's signature; collect the hashes so we can preload them in bulk.

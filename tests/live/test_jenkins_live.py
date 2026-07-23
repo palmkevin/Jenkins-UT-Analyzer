@@ -1,4 +1,4 @@
-"""Live Jenkins checks — LOCAL ONLY (needs network to Jenkins). Never run in CI.
+"""Live Jenkins checks — LOCAL ONLY (needs network to Jenkins). Never build in CI.
 
 Run with: ``pytest -m live tests/live/test_jenkins_live.py``
 """
@@ -32,8 +32,8 @@ def test_live_report_has_both_tracks(client):
 
 
 def test_live_wfapi_shards_complete(client):
-    run = parse_wfapi(client.wfapi(BUILD))
-    assert run.is_complete(expected_shards=2)
+    build = parse_wfapi(client.wfapi(BUILD))
+    assert build.is_complete(expected_shards=2)
 
 
 def test_live_unittest_console_log_stages_parse(client):
