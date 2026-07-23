@@ -1,7 +1,7 @@
 # Jenkins UT Analyzer
 
-Ingests the nightly **devUTs** unit-test runs from Jenkins, tracks each test's failure **lifecycle**
-across runs, correlates regressions with **code** (SVN) and **reference-data** (Oracle `ut_ref`)
+Ingests the nightly **devUTs** unit-test builds from Jenkins, tracks each test's failure **lifecycle**
+across builds, correlates regressions with **code** (SVN) and **reference-data** (Oracle `ut_ref`)
 changes, and surfaces it all in a triage dashboard — with flakiness detection, a failure **knowledge
 base**, regression-only **email** alerts, and an optional **LLM root-cause hypothesis**.
 
@@ -48,7 +48,7 @@ re-processing history never re-alerts or re-hypothesises.
 
 None of the three external systems (Jenkins, Oracle `ut_ref`, real Postgres) — nor FishEye/Jira,
 SMTP or an LLM — is reachable when the app runs "in the wild" (a public host, CI, a laptop with no
-VPN). **Demo mode** fills that gap with a fully **synthetic** run history, seeded in-process into an
+VPN). **Demo mode** fills that gap with a fully **synthetic** build history, seeded in-process into an
 ephemeral SQLite store, so the whole ingest → analysis → dashboard stack renders a populated,
 coherent dashboard with zero configuration and zero secrets.
 
@@ -119,7 +119,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `JENKINS_JOB_PATH` | `job/Development/job/lsdevbuild-build-release-permanent` | Path to the nightly job. |
 | `JENKINS_USER` | *(empty)* | Optional — anonymous read works on the target job. |
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
-| `EXPECTED_SHARDS` | `2` | Shards a run must report to count as **complete** (the 2 tracks). |
+| `EXPECTED_SHARDS` | `2` | Shards a build must report to count as **complete** (the 2 tracks). |
 
 ### Oracle `ut_ref` (reference-data change feed, read-only)
 | Variable | Default | Purpose |
@@ -146,7 +146,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `SMTP_RECIPIENTS` | *(empty)* | Comma-separated recipients; empty disables email. |
 | `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Relay credentials; when set, `SmtpEmailSender` negotiates STARTTLS and logs in. Empty ⇒ plain unauthenticated send. |
 | `SMTP_STARTTLS` | *(empty)* | Force STARTTLS on/off. Empty defaults it from the credentials (on when `SMTP_USER` is set). |
-| `EMAIL_RECOVERY_NOTICE` | `false` | Also send a "back-to-green" notice when a run recovers. |
+| `EMAIL_RECOVERY_NOTICE` | `false` | Also send a "back-to-green" notice when a build recovers. |
 
 ### LLM hypothesis (optional)
 | Variable | Default | Purpose |
@@ -186,7 +186,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 |---|---|---|
 | `APP_DEFAULT_ACTOR` | `test-user` | Default acting user (phase-1 self-declared identity via the `uta_actor` cookie). |
 | `APP_BASE_URL` | *(empty)* | Externally reachable base URL of the dashboard (e.g. `http://host:8000`). **Enables deep links in alert emails when set**; empty keeps them link-free. |
-| `FLAKY_TRANSITION_THRESHOLD` | `0.3` | Oscillation score (`transitions ÷ runs`) at/above which a test is flagged **flaky**. |
+| `FLAKY_TRANSITION_THRESHOLD` | `0.3` | Oscillation score (`transitions ÷ builds`) at/above which a test is flagged **flaky**. |
 | `FLAKY_WINDOW_DAYS` | `30` | Window for the flaky score and failure-history counts. |
 | `PGTRGM_SIMILARITY_CUTOFF` | `0.3` | Minimum trigram similarity for KB "similar past cases". |
 | `KB_TOP_K` | `5` | How many similar past cases to surface per failure. |
@@ -195,7 +195,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 ### Ingest / correlation windows
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATA_CHANGE_LOOKBACK_HOURS` | `12` | How far **before** a run's start to look for `ut_ref` changes (they precede the nightly run). |
+| `DATA_CHANGE_LOOKBACK_HOURS` | `12` | How far **before** a build's start to look for `ut_ref` changes (they precede the nightly build). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
 | `POLL_INTERVAL_SECONDS` | `300` | Cadence of the `uta poll` scheduler. |
 
@@ -212,7 +212,9 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 - `/` — triage queue (New / Still-failing / Recently-fixed).
 - `/tests/{id}` — per-test record: lifecycle, episodes, latest error, candidate changes,
   flakiness & history, KB matches, and the predicted cause + LLM hypothesis.
-- `/runs/{build}` — run summary: totals, per-shard timing, baseline diff, results.
+- `/builds/{number}` — build summary: totals, per-shard timing, baseline diff, results. (Old
+  `/runs`/`/runs/{number}` links still work — they 301-redirect, so deep links in already-sent
+  alert emails keep working.)
 - `/flaky` — flaky leaderboard. `/kb?q=` — knowledge-base search.
 
 ## Testing
