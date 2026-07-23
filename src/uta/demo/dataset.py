@@ -1,6 +1,6 @@
 """Deterministic synthetic Jenkins payloads + a synthetic ``ut_ref`` feed for demo/tests.
 
-The goal is a *small but complete* run history that lights up every dashboard surface without any
+The goal is a *small but complete* build history that lights up every dashboard surface without any
 external system: new & acknowledged failures, a recently-fixed test, a flaky oscillator, a removed
 test, a newly-added test, a track-divergent failure (py39-only, so the triage queue shows a single
 track badge next to the both-track rows and the ?track= filter has something to include/exclude —
@@ -13,23 +13,24 @@ untriaged in the seed so both signature-wide controls stay exercisable live. The
 **relevance ranking** (issue #50) is exercised in both directions: ``test_invoice_rounding``'s
 top-ranked candidate is the commit touching its own module (path overlap), while
 ``test_timezone_convert``'s is the
-``LORDER`` data change its error text names (entity mention) — two failures of the same run
+``LORDER`` data change its error text names (entity mention) — two failures of the same build
 history whose likely culprits visibly differ — and ``test_pdf_render`` shows the no-match case.
 ``test_discount_tiers`` adds the score-magnitude tie-break (issue #73): both candidate kinds match
 it, but the tier-3 module match outscores the tier-2 component mention, so it classifies as
 CODE_CHANGE (with a visible confidence) instead of UNKNOWN; the seed Confirms that suggestion and
 the timezone test's seeded attribution is a correction, so the control panel's AI-accuracy metric
-shows both verdict kinds. Because the *real* classifier runs during seeding, that tie-break episode
+shows both verdict kinds. Because the *real* classifier builds during seeding, that tie-break
+episode
 also carries the fullest evidence payload (both top matches, the tie-break, the confidence inputs),
 so its record page showcases the collapsed "Why this prediction" block (issue #159).
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``
 / ``wfapi`` / ``stage_describe`` / ``stage_log`` / ``last_completed_build``), producing payloads
-byte-shaped like the golden fixtures so the *real* parsers and pipeline run unchanged.
+byte-shaped like the golden fixtures so the *real* parsers and pipeline build unchanged.
 :class:`SyntheticTrackingFeed` implements :class:`uta.refdb.oracle.TrackingFeed`.
 
-Everything is derived from an ``anchor`` datetime (the newest run's finish time). Passing a fixed
+Everything is derived from an ``anchor`` datetime (the newest build's finish time). Passing a fixed
 anchor makes the whole dataset reproducible; the running demo passes "now" so "recently fixed" and
 age-in-days read naturally against the current date.
 """
@@ -48,7 +49,8 @@ from uta.refdb.oracle import DataChange, _row_to_change
 
 # ── The story, as status strings ────────────────────────────────────────────────────────────────
 # One character per build (oldest -> newest). P=passed, F=failed, S=skipped, x=absent (not present
-# in that run — either not yet added, or removed). Every test runs in *both* tracks with the same
+# in that build — either not yet added, or removed). Every test builds in *both* tracks with the
+# same
 # status, except a ``fail_only_track`` spec, whose failures apply to that one track (it passes in
 # the other) — the singular form of the triage queue's per-failing-track badges (issue #84).
 # 14 builds.
@@ -177,7 +179,7 @@ _SPECS: tuple[TestSpec, ...] = (
         message="cannot render page 3",
         line=210,
     ),
-    # Removed: fails for a stretch, then disappears from the run -> REMOVED with an open episode.
+    # Removed: fails for a stretch, then disappears from the build -> REMOVED with an open episode.
     TestSpec(
         "ut_interface.if_hl7.TestClass",
         "test_ack_generation",
@@ -285,8 +287,8 @@ def build_numbers() -> list[int]:
     return [FIRST_BUILD + i for i in range(_N_BUILDS)]
 
 
-def _run_start(index: int, anchor: datetime) -> datetime:
-    """Start time of build ``index`` (0=oldest). The newest run *ends* at ``anchor``."""
+def _build_start(index: int, anchor: datetime) -> datetime:
+    """Start time of build ``index`` (0=oldest). The newest build *ends* at ``anchor``."""
     newest = _N_BUILDS - 1
     return anchor - _RUN_DURATION - (newest - index) * _BUILD_INTERVAL
 
@@ -356,7 +358,7 @@ class SyntheticJenkins:
     """A fixtures-free Jenkins client producing the demo build history.
 
     Duck-types the pipeline's ``JenkinsClient`` protocol. All builds are **complete** (both track
-    shards report), so every run advances the lifecycle.
+    shards report), so every build advances the lifecycle.
     """
 
     anchor: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -382,7 +384,7 @@ class SyntheticJenkins:
     # ── JenkinsClient protocol ───────────────────────────────────────────────
     def build_meta(self, build: int) -> dict:
         index = self._index(build)
-        start = _run_start(index, self.anchor)
+        start = _build_start(index, self.anchor)
         result = "UNSTABLE" if self._has_failure(index) else "SUCCESS"
         return {
             "number": build,
@@ -418,7 +420,7 @@ class SyntheticJenkins:
         if build not in _CODE_CHANGE_BUILDS:
             return {"changeSets": []}
         index = self._index(build)
-        start = _run_start(index, self.anchor)
+        start = _build_start(index, self.anchor)
         author = _COMMIT_AUTHORS[index % len(_COMMIT_AUTHORS)]
         revision = 48000 + build
         items = [
@@ -437,7 +439,7 @@ class SyntheticJenkins:
 
     def wfapi(self, build: int) -> dict:
         index = self._index(build)
-        start = _run_start(index, self.anchor)
+        start = _build_start(index, self.anchor)
         stages = []
         for offset, track in enumerate(TRACKS):
             shard_start = start + timedelta(minutes=offset)
@@ -476,7 +478,7 @@ class SyntheticJenkins:
 class SyntheticTrackingFeed:
     """A synthetic :class:`uta.refdb.oracle.TrackingFeed` (the ``ut_ref`` data-change candidates).
 
-    Rows are placed a couple of hours before each :data:`_DATA_CHANGE_BUILDS` run start, stored as
+    Rows are placed a couple of hours before each :data:`_DATA_CHANGE_BUILDS` build start, stored as
     naive Europe/Luxembourg wall-clock (exactly like ``CREDATIM``), and filtered with the same
     window-to-local conversion the real feed uses — so the clock discipline is exercised end to end.
     """
@@ -488,8 +490,8 @@ class SyntheticTrackingFeed:
         self._rows: list[dict] = []
         for build in sorted(_DATA_CHANGE_BUILDS):
             index = build - FIRST_BUILD
-            run_start = _run_start(index, anchor)
-            changed_at_local = to_ut_ref_local(run_start - timedelta(hours=2))
+            build_start = _build_start(index, anchor)
+            changed_at_local = to_ut_ref_local(build_start - timedelta(hours=2))
             user = _DATA_USERS[index % len(_DATA_USERS)]
             for n, (entity, comp, ctype) in enumerate(
                 (("LORDER", "LORDER_CSVC", "U"), ("ACINVORD", "AC_CSVC2", "C"))

@@ -1,6 +1,7 @@
 """HTTP-level tests of the dashboard routes (FastAPI TestClient, injected SQLite session factory).
 
-Covers the triage-queue / per-test-record / run-summary pages, the Phase-1 identity cookie, and the
+Covers the triage-queue / per-test-record / build-summary pages, the Phase-1 identity cookie, and
+the
 Post/Redirect/Get actions actually mutating state through the app (not just the service functions).
 """
 
@@ -13,10 +14,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from tests.builders import get_identity, make_run
-from uta.analyze.lifecycle import apply_run
+from tests.builders import get_identity, make_build
+from uta.analyze.lifecycle import apply_build
 from uta.db import Base, make_session_factory, session_scope
-from uta.models import Classification, CodeChangeCandidate, Run, TestLifecycle
+from uta.models import Build, Classification, CodeChangeCandidate, TestLifecycle
 from uta.models.enums import PredictedCause
 from uta.web.app import create_app
 
@@ -37,8 +38,8 @@ def session_factory():
 def seeded(session_factory):
     """One failing test ("alpha") with an open episode, plus a passing one ("beta")."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_build(s, r1, baseline=None)
     return session_factory
 
 
@@ -171,7 +172,7 @@ def test_record_renders_classification_evidence_collapsed(client, seeded):
                         "code_candidates": 2,
                         "data_candidates": 1,
                         "infra_error": False,
-                        "baseline_run_id": 41,
+                        "baseline_build_id": 41,
                         "relevance": {
                             "code_matched": 1,
                             "data_matched": 0,
@@ -204,7 +205,7 @@ def test_record_renders_classification_evidence_collapsed(client, seeded):
     assert "Tie-break" in page
     assert "relevance score 3 vs 2" in page
     assert "code_candidates" not in page  # no raw JSON dump
-    assert "baseline_run_id" not in page  # internal noise stays whitelisted out
+    assert "baseline_build_id" not in page  # internal noise stays whitelisted out
     # Collapsed by default: the block's own <details> tag carries no open attribute.
     summary_idx = page.index("Why this prediction")
     open_tag = page[page.rindex("<details", 0, summary_idx) : summary_idx]
@@ -234,27 +235,30 @@ def test_record_shows_no_evidence_shell_when_absent(client, seeded):
 def test_svn_revision_links_to_fisheye(client, seeded):
     ident_id = _identity_id(seeded, "alpha")
     with session_scope(seeded) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1))
+        build = s.scalar(select(Build).where(Build.build_number == 1))
         s.add(
             CodeChangeCandidate(
-                run_id=run.id, commit_id="135180", revision="135180", committed_at=run.started_at
+                build_id=build.id,
+                commit_id="135180",
+                revision="135180",
+                committed_at=build.started_at,
             )
         )
     page = client.get(f"/tests/{ident_id}").text
     assert "https://fisheye.labsolution.lu/changelog/LS_TRUNK?cs=135180" in page
 
 
-def test_run_summary_page_shows_diff_and_results(client):
-    resp = client.get("/runs/1")
+def test_build_summary_page_shows_diff_and_results(client):
+    resp = client.get("/builds/1")
     assert resp.status_code == 200
-    assert "Run #1" in resp.text
+    assert "Build #1" in resp.text
     assert "Diff vs baseline" in resp.text
     assert "alpha" in resp.text
 
 
 def test_runs_counts_carry_non_color_status_glyphs(client):
     """Colorblind accessibility (issue #144): pass/fail counts pair a glyph with the hue."""
-    page = client.get("/runs").text
+    page = client.get("/builds").text
     glyph = '<span class="status-glyph" aria-hidden="true">'
     assert f'<td class="text-end PASSED">{glyph}✓</span>' in page
     assert f'<td class="text-end FAILED">{glyph}✕</span>' in page
@@ -262,20 +266,20 @@ def test_runs_counts_carry_non_color_status_glyphs(client):
 
 
 def test_runs_zero_counts_render_undecorated(session_factory):
-    """A clean run shows plain zeros in the conditional columns — no failure glyph anywhere."""
+    """A clean build shows plain zeros in the conditional columns — no failure glyph anywhere."""
     with session_scope(session_factory) as s:
-        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+        apply_build(s, make_build(s, 1, {"t": "PASSED"}), baseline=None)
     clean = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
-    page = clean.get("/runs").text
+    page = clean.get("/builds").text
     assert 'aria-hidden="true">✕</span>' not in page  # no failures/regressions → no failure glyph
     assert '<td class="text-end">0</td>' in page  # zero failed is a plain, uncolored number
 
 
 def test_timestamps_render_with_explicit_utc_label(client):
     """Timezone clarity (issue #144): |ts renders ' UTC' text with the ISO offset on hover."""
-    page = client.get("/runs/1").text
+    page = client.get("/builds/1").text
     assert " UTC</span>" in page
-    assert 'title="2026-06-01T01:00:00+00:00"' in page  # run 1 starts at _EPOCH + 1h
+    assert 'title="2026-06-01T01:00:00+00:00"' in page  # build 1 starts at _EPOCH + 1h
 
 
 def test_unknown_test_record_is_graceful(client):
@@ -298,7 +302,7 @@ _TRACE_TMPL = (
 def errors_client(session_factory):
     """One new + one acknowledged failing test, both with real error text."""
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "gamma": "FAILED"},
@@ -307,7 +311,7 @@ def errors_client(session_factory):
                 "gamma": ("test failure", _TRACE_TMPL.format(exc="KeyError: 'MSH'")),
             },
         )
-        apply_run(s, r1, baseline=None)
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     ident_id = _identity_id(session_factory, "gamma")
     resp = client.post(f"/tests/{ident_id}/acknowledge", headers={"referer": "/"})
@@ -319,8 +323,8 @@ def test_still_failing_bucket_and_record_show_owner_pivot(session_factory):
     """Owner surfaces as a pivot link in the Still-failing bucket and on the per-test record
     page, not just the New bucket (issue #168)."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"gamma": "FAILED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"gamma": "FAILED"})
+        apply_build(s, r1, baseline=None)
         get_identity(s, "gamma").main_developer = "KP"
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     ident_id = _identity_id(session_factory, "gamma")
@@ -354,8 +358,8 @@ def test_test_record_trace_has_clamp_hook_and_copy_button(session_factory):
     deep = "\n".join(f"    frame_{i}()" for i in range(20))
     stack = _TRACE_TMPL.format(exc=deep + "\nValueError: bottom of a deep stack")
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED"}, errors={"alpha": ("test failure", stack)})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED"}, errors={"alpha": ("test failure", stack)})
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     page = client.get(f"/tests/{_identity_id(session_factory, 'alpha')}").text
     assert 'data-clamp="15"' in page
@@ -373,8 +377,8 @@ def many_failures_client(session_factory, monkeypatch):
     """A store with 150 new failing tests, and the UI capped at 100 rows per section."""
     monkeypatch.setenv("UI_ROW_LIMIT", "100")
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {f"t{i:04d}": "FAILED" for i in range(150)})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {f"t{i:04d}": "FAILED" for i in range(150)})
+        apply_build(s, r1, baseline=None)
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
 
@@ -400,8 +404,8 @@ def many_owned_failures_client(session_factory, monkeypatch):
     monkeypatch.setenv("UI_ROW_LIMIT", "100")
     with session_scope(session_factory) as s:
         names = [f"t{i:04d}" for i in range(150)] + ["zzz_unrelated"]
-        r1 = make_run(s, 1, {n: "FAILED" for n in names})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {n: "FAILED" for n in names})
+        apply_build(s, r1, baseline=None)
         for name in names:
             get_identity(s, name).main_developer = "ZZ" if name == "zzz_unrelated" else "KP"
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
@@ -434,61 +438,61 @@ def test_triage_filter_form_chips_and_sort_headers_preserve_expand(many_owned_fa
     assert 'href="/">Clear</a>' in page
 
 
-# ── run-diff capping (issue #151) ──────────────────────────────────────────────
+# ── build-diff capping (issue #151) ──────────────────────────────────────────────
 
 
 @pytest.fixture
 def many_regressions_client(session_factory):
-    """A run with 25 regressions vs its baseline — over the 20-row diff-bucket cap."""
+    """A build with 25 regressions vs its baseline — over the 20-row diff-bucket cap."""
     names = [f"t{i:02d}" for i in range(25)]
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {n: "PASSED" for n in names})
-        apply_run(s, r1, baseline=None)
-        r2 = make_run(s, 2, {n: "FAILED" for n in names})
-        apply_run(s, r2, baseline=r1)
+        r1 = make_build(s, 1, {n: "PASSED" for n in names})
+        apply_build(s, r1, baseline=None)
+        r2 = make_build(s, 2, {n: "FAILED" for n in names})
+        apply_build(s, r2, baseline=r1)
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
 
 def test_run_diff_headers_show_counts_and_cap_long_buckets(many_regressions_client):
-    page = many_regressions_client.get("/runs/2").text
+    page = many_regressions_client.get("/builds/2").text
     # Every bucket header carries its count, populated or not.
     assert "Regressions — new failures (25)" in page
     assert "Newly fixed (0)" in page
     assert "Still failing (0)" in page
     assert "Removed (0)" in page
     # The over-cap bucket is truncated behind a "Show all N" link to ?expand=<bucket>#diff.
-    assert 'href="/runs/2?expand=regressions#diff">Show all 25</a>' in page
+    assert 'href="/builds/2?expand=regressions#diff">Show all 25</a>' in page
 
     # Following the link renders the 5 capped-away tests (the count still reads 25) and the
     # residual hint disappears.
-    expanded = many_regressions_client.get("/runs/2?expand=regressions").text
+    expanded = many_regressions_client.get("/builds/2?expand=regressions").text
     assert expanded.count('href="/tests/') - page.count('href="/tests/') == 5
     assert "Regressions — new failures (25)" in expanded
     assert "Show all 25" not in expanded
 
 
 def test_run_diff_expand_link_preserves_query_string(many_regressions_client):
-    # The run page's other URL state (failures_only, results pagination) must survive the
+    # The build page's other URL state (failures_only, results pagination) must survive the
     # "Show all" round trip — same contract as the triage expand links.
-    page = many_regressions_client.get("/runs/2?failures_only=1").text
-    assert 'href="/runs/2?failures_only=1&amp;expand=regressions#diff">Show all 25</a>' in page
+    page = many_regressions_client.get("/builds/2?failures_only=1").text
+    assert 'href="/builds/2?failures_only=1&amp;expand=regressions#diff">Show all 25</a>' in page
 
 
-# ── run-results pagination (issue #52) ─────────────────────────────────────────
+# ── build-results pagination (issue #52) ─────────────────────────────────────────
 
 
 def test_run_results_paginate_server_side(many_failures_client):
     # 150 tests × 2 tracks = 300 result rows at a 100-row page size → 3 pages. Each rendered
     # result row opens with its status cell (<td class="FAILED">) — the diff section above the
     # table links tests too, so count row cells, not links.
-    page1 = many_failures_client.get("/runs/1").text
+    page1 = many_failures_client.get("/builds/1").text
     assert "Results (300)" in page1
     assert page1.count('<td class="FAILED">') == 100
     assert "Page 1 of 3 (300 rows)" in page1
     assert 'href="?page=2#results"' in page1  # Next
     assert "Load all" not in page1  # the all-or-nothing expand link is gone
 
-    page2 = many_failures_client.get("/runs/1?page=2").text
+    page2 = many_failures_client.get("/builds/1?page=2").text
     assert "Page 2 of 3 (300 rows)" in page2
     assert page2.count('<td class="FAILED">') == 100
     assert 'href="?page=1#results"' in page2  # Previous
@@ -496,7 +500,7 @@ def test_run_results_paginate_server_side(many_failures_client):
 
 
 def test_run_results_page_out_of_range_is_graceful(many_failures_client):
-    resp = many_failures_client.get("/runs/1?page=999")
+    resp = many_failures_client.get("/builds/1?page=999")
     assert resp.status_code == 200
     assert "Page 3 of 3 (300 rows)" in resp.text
 
@@ -505,15 +509,15 @@ def test_runs_list_paginates_server_side(session_factory, monkeypatch):
     monkeypatch.setenv("UI_ROW_LIMIT", "2")
     with session_scope(session_factory) as s:
         for build in (1, 2, 3):
-            apply_run(s, make_run(s, build, {"t": "PASSED"}), baseline=None)
+            apply_build(s, make_build(s, build, {"t": "PASSED"}), baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
-    page1 = client.get("/runs").text
+    page1 = client.get("/builds").text
     assert "Page 1 of 2 (3 rows)" in page1
-    assert 'href="/runs/3"' in page1 and 'href="/runs/2"' in page1  # newest first
-    assert 'href="/runs/1"' not in page1
-    page2 = client.get("/runs?page=2").text
-    assert 'href="/runs/1"' in page2
+    assert 'href="/builds/3"' in page1 and 'href="/builds/2"' in page1  # newest first
+    assert 'href="/builds/1"' not in page1
+    page2 = client.get("/builds?page=2").text
+    assert 'href="/builds/1"' in page2
 
 
 # ── triage filters/sort + bulk actions (issue #63) ─────────────────────────────
@@ -523,8 +527,8 @@ def test_runs_list_paginates_server_side(session_factory, monkeypatch):
 def multi_owner_client(session_factory):
     """Two new failing tests with distinct owners/suites, for filter-bar assertions."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_build(s, r1, baseline=None)
         get_identity(s, "alpha").main_developer = "AB"
         get_identity(s, "alpha").suite = "ut_pricing"
         get_identity(s, "beta").main_developer = "CD"
@@ -550,13 +554,13 @@ def test_triage_track_filter_keeps_both_track_failure_and_renders_badges(session
     # Issue #84: "t_both" fails in both tracks (the normal case) — it must show under *either*
     # track filter, with one badge per failing track; "t_py39only" fails in permanent_py39 only.
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"t_both": "FAILED", "t_py39only": "FAILED"},
             fail_tracks={"t_py39only": ("permanent_py39",)},
         )
-        apply_run(s, r1, baseline=None)
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
     perm = client.get("/?track=permanent").text
@@ -613,17 +617,17 @@ def test_bulk_acknowledge_multiple_new_tests(multi_owner_client, session_factory
 
 
 def test_acknowledge_by_signature_route_acks_matching_tests(session_factory):
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED"},
             errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
         from uta.web import actions
 
         sig_id = actions._episode_signature_id(
@@ -648,10 +652,10 @@ def test_signature_ack_button_shows_blast_radius_and_hides_when_solo(session_fac
     """Issue #152: the New-bucket bulk-ack button carries its blast radius up front — "Ack all w/
     signature (2)" on the shared-error pair — and is not rendered at all for a row whose signature
     matches only itself (a count of 1 adds nothing over the plain Acknowledge button)."""
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
@@ -661,8 +665,8 @@ def test_signature_ack_button_shows_blast_radius_and_hides_when_solo(session_fac
                 "gamma": ("different", "Traceback"),
             },
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
 
     page = TestClient(create_app(session_factory=session_factory)).get("/").text
     assert page.count("Ack all w/ signature (2)") == 2  # one per row of the shared pair
@@ -671,11 +675,11 @@ def test_signature_ack_button_shows_blast_radius_and_hides_when_solo(session_fac
 
 
 def test_attribute_by_signature_route_attributes_matching_tests(session_factory):
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
     from uta.web import actions
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
@@ -685,8 +689,8 @@ def test_attribute_by_signature_route_attributes_matching_tests(session_factory)
                 "gamma": ("different", "Traceback"),
             },
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
         sig_id = actions._episode_signature_id(
             s, get_identity(s, "alpha").lifecycle.current_episode
         )
@@ -721,10 +725,10 @@ def test_attribute_by_signature_route_attributes_matching_tests(session_factory)
 
 
 def test_signature_wide_attribute_button_renders_only_for_shared_signatures(session_factory):
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED", "gamma": "FAILED"},
@@ -734,8 +738,8 @@ def test_signature_wide_attribute_button_renders_only_for_shared_signatures(sess
                 "gamma": ("different", "Traceback"),
             },
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
     # alpha's signature also afflicts beta → the second submit button offers the bulk apply.
@@ -750,8 +754,8 @@ def test_signature_wide_attribute_button_renders_only_for_shared_signatures(sess
 
 def test_bulk_attribute_sets_triage_status_for_selected(session_factory):
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_build(s, r1, baseline=None)
         ep_ids = [
             get_identity(s, "alpha").lifecycle.current_episode_id,
             get_identity(s, "beta").lifecycle.current_episode_id,
@@ -817,8 +821,8 @@ def test_triage_sort_persists_through_filter_form(multi_owner_client):
 def both_buckets_page(session_factory):
     """Triage page with both bulk tables rendered: alpha acknowledged (still failing), beta new."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     alpha_id = _identity_id(session_factory, "alpha")
     resp = client.post(f"/tests/{alpha_id}/acknowledge", headers={"referer": "/"})
@@ -909,7 +913,7 @@ def test_theme_toggle_present_and_defaults_from_system_preference(client):
 
 
 def test_nav_marks_each_section_active(client):
-    for href in ("/runs", "/flaky", "/kb", "/control"):
+    for href in ("/builds", "/flaky", "/kb", "/control"):
         page = client.get(href).text
         assert f'class="nav-link active" aria-current="page" href="{href}"' in page
         # Triage (and only the current section) is not marked.
@@ -921,7 +925,7 @@ def test_nav_triage_active_on_queue_and_test_record(client, seeded):
     ident_id = _identity_id(seeded, "alpha")
     page = client.get(f"/tests/{ident_id}").text
     assert 'class="nav-link active" aria-current="page" href="/">Triage' in page
-    assert 'aria-current="page" href="/runs"' not in page
+    assert 'aria-current="page" href="/builds"' not in page
 
 
 def test_nav_search_page_highlights_nothing(client):
@@ -935,14 +939,14 @@ def test_nav_section_boundaries():
 
     assert nav_section("/") == "triage"
     assert nav_section("/tests/42") == "triage"
-    assert nav_section("/runs") == "runs"
-    assert nav_section("/runs/1702") == "runs"
+    assert nav_section("/builds") == "builds"
+    assert nav_section("/builds/1702") == "builds"
     assert nav_section("/search") is None
 
 
 def test_triage_badge_shows_new_count_on_every_page(client):
     # One unacknowledged new failing test ("alpha") → a red 1 on the Triage nav link everywhere.
-    for path in ("/", "/runs", "/flaky", "/kb", "/control"):
+    for path in ("/", "/builds", "/flaky", "/kb", "/control"):
         page = client.get(path).text
         assert "text-bg-danger" in page
         assert ">1</span>" in page
@@ -967,8 +971,8 @@ def test_triage_and_test_record_times_render_relative_with_absolute_title(sessio
 
     started = datetime.now(UTC) - timedelta(hours=3, minutes=1)
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED"}, started_at=started)
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED"}, started_at=started)
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     queue = client.get("/").text
     assert "3 h ago</span>" in queue
@@ -978,7 +982,7 @@ def test_triage_and_test_record_times_render_relative_with_absolute_title(sessio
     assert f'<span title="{started.strftime("%Y-%m-%d %H:%M")}' in record
 
 
-# ── run-results failures-only filter (issue #63) ────────────────────────────
+# ── build-results failures-only filter (issue #63) ────────────────────────────
 
 
 def test_run_failures_only_filters_results_and_pagination(session_factory, monkeypatch):
@@ -987,14 +991,14 @@ def test_run_failures_only_filters_results_and_pagination(session_factory, monke
         statuses = {f"f{i:04d}": "FAILED" for i in range(120)} | {
             f"p{i:04d}": "PASSED" for i in range(30)
         }
-        r1 = make_run(s, 1, statuses)
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, statuses)
+        apply_build(s, r1, baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
-    all_page = client.get("/runs/1").text
+    all_page = client.get("/builds/1").text
     assert "Results (300)" in all_page  # 150 tests x 2 tracks
 
-    failing_page = client.get("/runs/1?failures_only=1").text
+    failing_page = client.get("/builds/1?failures_only=1").text
     # The heading names the active filter (issue #157): filtered count of full result-row total.
     assert "Results — failures only (240 of 300)" in failing_page
     assert failing_page.count('<td class="FAILED">') == 100
@@ -1009,10 +1013,10 @@ def test_run_failures_only_filters_results_and_pagination(session_factory, monke
 def pivots_client(session_factory):
     """One classified failing test with an owner ("alpha"/AB) plus a passer ("beta")."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
+        apply_build(s, r1, baseline=None)
         ident = get_identity(s, "alpha")
-        # Owner = the test's main developer (#114); the triage and run-results tables both read it
+        # Owner = the test's main developer (#114); the triage and build-results tables both read it
         # from the identity, so a single assignment drives every surface.
         ident.main_developer = "AB"
         s.add(
@@ -1053,26 +1057,26 @@ def test_still_failing_cause_pivots_until_a_reason_is_written(pivots_client, ses
 
 
 def test_run_results_owner_pivots_and_failed_count_links(pivots_client):
-    page = pivots_client.get("/runs/1").text
+    page = pivots_client.get("/builds/1").text
     assert '<a class="pivot-link" href="/?owner=AB"' in page  # results owner column
     # The header's failed total (1 failing test x 2 tracks) deep-links to the filtered results.
-    assert '<a class="pivot-link" href="/runs/1?failures_only=1#results">2 failed</a>' in page
+    assert '<a class="pivot-link" href="/builds/1?failures_only=1#results">2 failed</a>' in page
 
 
 def test_run_failed_count_stays_plain_at_zero(session_factory):
     with session_scope(session_factory) as s:
-        apply_run(s, make_run(s, 1, {"t": "PASSED"}), baseline=None)
+        apply_build(s, make_build(s, 1, {"t": "PASSED"}), baseline=None)
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
-    page = client.get("/runs/1").text
+    page = client.get("/builds/1").text
     assert "0 failed" in page
-    assert 'href="/runs/1?failures_only=1#results"' not in page
+    assert 'href="/builds/1?failures_only=1#results"' not in page
 
 
 def test_run_results_heading_names_the_active_filter(pivots_client):
-    all_page = pivots_client.get("/runs/1").text
+    all_page = pivots_client.get("/builds/1").text
     assert "Results (4)" in all_page  # 2 tests x 2 tracks, unfiltered heading unchanged
     assert "failures only" not in all_page
-    filtered = pivots_client.get("/runs/1?failures_only=1").text
+    filtered = pivots_client.get("/builds/1?failures_only=1").text
     assert "Results — failures only (2 of 4)" in filtered
     # The checkbox applies itself on change (issue #77's instant-filter pattern); the Apply
     # button stays as the no-JS fallback.
@@ -1087,14 +1091,14 @@ def test_flaky_leaderboard_owner_pivots(session_factory):
     with session_scope(session_factory) as s:
         prev = None
         for i, char in enumerate("PFPFPF"):  # oscillating -> lands on the leaderboard
-            run = make_run(
+            build = make_build(
                 s,
                 i + 1,
                 {"flappy": "FAILED" if char == "F" else "PASSED"},
                 started_at=now - timedelta(days=6 - i),
             )
-            apply_run(s, run, baseline=prev)
-            prev = run
+            apply_build(s, build, baseline=prev)
+            prev = build
         get_identity(s, "flappy").main_developer = "KP"
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     page = client.get("/flaky").text

@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from tests.builders import get_identity, make_run
+from tests.builders import get_identity, make_build
 from uta.kb.retrieval import exact_recurrence, similar_cases
 from uta.kb.signature import normalize
-from uta.kb.store import record_signatures_for_run
+from uta.kb.store import record_signatures_for_build
 from uta.models import Attribution, FailureSignature
 from uta.models.enums import Provenance
 
@@ -24,53 +24,53 @@ _STACK = (
 T = "ut_ar.arinv_csvc.test_x"
 
 
-def _fail_run(session, build, name=T, line=92, msg="1 != 2"):
-    run = make_run(
+def _fail_build(session, build, name=T, line=92, msg="1 != 2"):
+    build = make_build(
         session,
         build,
         {name: "FAILED"},
         errors={name: ("test failure", _STACK.format(line=line, msg=msg))},
     )
-    record_signatures_for_run(session, run)
-    return run
+    record_signatures_for_build(session, build)
+    return build
 
 
 def test_signature_created_and_linked(session_factory):
     with session_factory() as s:
-        run = _fail_run(s, 1)
+        build = _fail_build(s, 1)
         s.commit()
         sigs = s.scalars(select(FailureSignature)).all()
         assert len(sigs) == 1
         assert sigs[0].occurrence_count == 2  # one per track
-        for r in run.results:
+        for r in build.results:
             assert r.signature_id == sigs[0].id
 
 
 def test_recurrence_same_bug_across_runs(session_factory):
     with session_factory() as s:
-        _fail_run(s, 1, line=92, msg="1 != 2")
-        _fail_run(s, 2, line=99, msg="5 != 9")  # same bug, different run noise
+        _fail_build(s, 1, line=92, msg="1 != 2")
+        _fail_build(s, 2, line=99, msg="5 != 9")  # same bug, different build noise
         s.commit()
         sigs = s.scalars(select(FailureSignature)).all()
         assert len(sigs) == 1  # collapsed under one signature
-        assert sigs[0].occurrence_count == 4  # 2 runs × 2 tracks
-        assert sigs[0].first_seen_run_id != sigs[0].last_seen_run_id
+        assert sigs[0].occurrence_count == 4  # 2 builds × 2 tracks
+        assert sigs[0].first_seen_build_id != sigs[0].last_seen_build_id
 
 
 def test_reingest_does_not_double_count(session_factory):
-    """Re-ingest clears+rebuilds a run's results; occurrence is recomputed, never inflated."""
-    from uta.models import Run, TestResult
+    """Re-ingest clears+rebuilds a build's results; occurrence is recomputed, never inflated."""
+    from uta.models import Build, TestResult
 
     with session_factory() as s:
-        _fail_run(s, 1)
+        _fail_build(s, 1)
         s.commit()
     with session_factory() as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1))
-        run.results.clear()  # the pipeline's idempotent re-ingest path
+        build = s.scalar(select(Build).where(Build.build_number == 1))
+        build.results.clear()  # the pipeline's idempotent re-ingest path
         s.flush()
         ident = get_identity(s, T)
         for track in ("permanent", "permanent_py39"):
-            run.results.append(
+            build.results.append(
                 TestResult(
                     identity=ident,
                     track=track,
@@ -80,7 +80,7 @@ def test_reingest_does_not_double_count(session_factory):
                 )
             )
         s.flush()
-        record_signatures_for_run(s, run)
+        record_signatures_for_build(s, build)
         s.commit()
         sig = s.scalar(select(FailureSignature))
         assert sig.occurrence_count == 2  # not 4 — recomputed from the live links
@@ -90,7 +90,7 @@ def test_reingest_with_changed_error_text_resets_the_orphaned_signature(session_
     """Changed failure text hashes to a NEW signature; the old one — linked only via the deleted
     rows — is recomputed through ``stale_signature_ids`` (the pipeline's pre-delete capture) and
     gets the documented zero/empty reset instead of staying permanently stale."""
-    from uta.models import Run, TestResult
+    from uta.models import Build, TestResult
 
     value_stack = (
         "Traceback (most recent call last):\n"
@@ -99,24 +99,24 @@ def test_reingest_with_changed_error_text_resets_the_orphaned_signature(session_
         "ValueError: bad literal\n"
     )
     with session_factory() as s:
-        _fail_run(s, 1)
+        _fail_build(s, 1)
         s.commit()
     with session_factory() as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1))
+        build = s.scalar(select(Build).where(Build.build_number == 1))
         # The pipeline's idempotent re-ingest path: capture the old links, then clear + rebuild
         # with a different failure (ValueError instead of AssertionError → different hash).
         stale = set(
             s.scalars(
                 select(TestResult.signature_id.distinct()).where(
-                    TestResult.run_id == run.id, TestResult.signature_id.is_not(None)
+                    TestResult.build_id == build.id, TestResult.signature_id.is_not(None)
                 )
             )
         )
-        run.results.clear()
+        build.results.clear()
         s.flush()
         ident = get_identity(s, T)
         for track in ("permanent", "permanent_py39"):
-            run.results.append(
+            build.results.append(
                 TestResult(
                     identity=ident,
                     track=track,
@@ -126,43 +126,44 @@ def test_reingest_with_changed_error_text_resets_the_orphaned_signature(session_
                 )
             )
         s.flush()
-        record_signatures_for_run(s, run, stale_signature_ids=stale)
+        record_signatures_for_build(s, build, stale_signature_ids=stale)
         s.commit()
         by_exc = {sig.exception_type: sig for sig in s.scalars(select(FailureSignature)).all()}
         assert set(by_exc) == {"AssertionError", "ValueError"}
         old, new = by_exc["AssertionError"], by_exc["ValueError"]
         assert old.occurrence_count == 0  # orphaned → the documented zero/empty reset
         assert old.first_seen_at is None and old.last_seen_at is None
-        assert old.first_seen_run_id is None and old.last_seen_run_id is None
+        assert old.first_seen_build_id is None and old.last_seen_build_id is None
         assert new.occurrence_count == 2
-        assert new.last_seen_run_id == run.id
+        assert new.last_seen_build_id == build.id
 
 
-def test_first_last_seen_run_ids_follow_started_at_not_run_id(session_factory):
-    """A historical re-ingest gives an OLDER build a HIGHER run id (quarantine recovery); the
-    first/last-seen run ids must belong to the runs with min/max ``started_at``, never min/max
-    run id."""
-    from uta.models import Run
+def test_first_last_seen_build_ids_follow_started_at_not_build_id(session_factory):
+    """A historical re-ingest gives an OLDER build a HIGHER build id (quarantine recovery); the
+    first/last-seen build ids must belong to the builds with min/max ``started_at``, never min/max
+    build id."""
+    from uta.models import Build
 
     with session_factory() as s:
-        newer = _fail_run(s, 105)  # ingested first → lower run id, later started_at
-        older = _fail_run(s, 104)  # recovered later → higher run id, earlier started_at
+        newer = _fail_build(s, 105)  # ingested first → lower build id, later started_at
+        older = _fail_build(s, 104)  # recovered later → higher build id, earlier started_at
         s.commit()
         assert older.id > newer.id and older.started_at < newer.started_at  # the premise
         sig = s.scalar(select(FailureSignature))
         # Compare against DB-round-tripped values (SQLite drops tzinfo on the way through).
-        started = dict(s.execute(select(Run.id, Run.started_at)).all())
-        assert sig.first_seen_run_id == older.id
+        started = dict(s.execute(select(Build.id, Build.started_at)).all())
+        assert sig.first_seen_build_id == older.id
         assert sig.first_seen_at == started[older.id]
-        assert sig.last_seen_run_id == newer.id
+        assert sig.last_seen_build_id == newer.id
         assert sig.last_seen_at == started[newer.id]
 
 
 def test_exact_recurrence_lookup(session_factory):
     with session_factory() as s:
-        _fail_run(s, 1)
+        _fail_build(s, 1)
         s.commit()
-        # Same bug, fresh run noise (different line + assertion values) → same normalized signature.
+        # Same bug, fresh build noise (different line + assertion values) → same normalized
+        # signature.
         sig = normalize("test failure", _STACK.format(line=305, msg="7 != 8"))
         found = exact_recurrence(s, T, sig)
         assert found is not None
@@ -172,8 +173,8 @@ def test_exact_recurrence_lookup(session_factory):
 
 def test_similar_cases_offline_difflib(session_factory):
     with session_factory() as s:
-        _fail_run(s, 1, name="ut_ar.arinv_csvc.test_x", msg="aaa")
-        _fail_run(s, 2, name="ut_ar.arinv_csvc.test_y", msg="bbb")  # near-identical text
+        _fail_build(s, 1, name="ut_ar.arinv_csvc.test_x", msg="aaa")
+        _fail_build(s, 2, name="ut_ar.arinv_csvc.test_y", msg="bbb")  # near-identical text
         s.commit()
         sig = s.scalar(
             select(FailureSignature).where(
@@ -186,8 +187,8 @@ def test_similar_cases_offline_difflib(session_factory):
 
 def test_provenance_weighting_orders_confirmed_first(session_factory):
     with session_factory() as s:
-        _fail_run(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
-        _fail_run(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
+        _fail_build(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
+        _fail_build(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
         s.commit()
         a = get_identity(s, "ut_ar.arinv_csvc.test_a")
         b = get_identity(s, "ut_ar.arinv_csvc.test_b")
@@ -221,9 +222,9 @@ def test_human_entered_cause_outranks_unconfirmed_ai_reason(session_factory):
     human provenance label — not weight 0 from reading ``reason_provenance`` alone.
     """
     with session_factory() as s:
-        _fail_run(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
-        _fail_run(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
-        _fail_run(s, 3, name="ut_ar.arinv_csvc.test_c", msg="zzz")
+        _fail_build(s, 1, name="ut_ar.arinv_csvc.test_a", msg="zzz")
+        _fail_build(s, 2, name="ut_ar.arinv_csvc.test_b", msg="zzz")
+        _fail_build(s, 3, name="ut_ar.arinv_csvc.test_c", msg="zzz")
         s.commit()
         sig = {
             t: s.scalar(

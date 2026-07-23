@@ -2,8 +2,8 @@
 {% import "_macros.html" as ui %}
 {% block title %}Triage queue — UT Analyzer{% endblock %}
 
-{% macro run_link(ref) -%}
-  {%- if ref -%}<a href="/runs/{{ ref.build }}">#{{ ref.build }}</a>{%- else -%}—{%- endif -%}
+{% macro build_link(ref) -%}
+  {%- if ref -%}<a href="/builds/{{ ref.number }}">#{{ ref.number }}</a>{%- else -%}—{%- endif -%}
 {%- endmacro %}
 
 {#- Record links carry the queue's filtered/sorted URL as ?return= (issue #143), so the record's
@@ -36,10 +36,10 @@
   <span class="count">{{ queue.counts.recently_fixed }}</span> recently fixed
 </p>
 <p class="meta">
-  Last ingested run:
-  {% if last_run %}
-    <a href="/runs/{{ last_run.build }}">#{{ last_run.build }}</a>
-    (started {{ last_run.started_at|ts }})
+  Last ingested build:
+  {% if last_build %}
+    <a href="/builds/{{ last_build.number }}">#{{ last_build.number }}</a>
+    (started {{ last_build.started_at|ts }})
   {% else %}
     none yet
   {% endif %}
@@ -133,7 +133,7 @@
       {#- Owner / predicted-cause facts pivot into the queue filtered on just that value
           (issue #157) — URLs pre-built in the view layer (views.pivot_url). -#}
       <td>{{ ui.pivot(row.owner, row.owner_url, fallback="") }}</td>
-      <td>{{ run_link(row.first_failure) }} · {{ row.first_failure_at|reltime }}</td>
+      <td>{{ build_link(row.first_failure) }} · {{ row.first_failure_at|reltime }}</td>
       <td>{{ ui.pivot(row.predicted_cause, row.cause_url) }}</td>
       <td class="d-flex gap-1">
         <form method="post" action="/tests/{{ row.identity_id }}/acknowledge">
@@ -186,7 +186,7 @@
       </td>
       {#- Owner pivots into the queue filtered on just that owner, same as the New bucket (issue #157). -#}
       <td>{{ ui.pivot(row.owner, row.owner_url, fallback="") }}</td>
-      <td>{{ row.age_runs if row.age_runs is not none else "?" }} runs / {{ row.age_days if row.age_days is not none else "?" }}d</td>
+      <td>{{ row.age_builds if row.age_builds is not none else "?" }} builds / {{ row.age_days if row.age_days is not none else "?" }}d</td>
       <td>{{ row.triage_status or "—" }}</td>
       <td>{{ row.causing_person or "—" }}</td>
       {#- The human reason wins; a bare predicted cause pivots like the New bucket's (issue #157). -#}
@@ -231,7 +231,7 @@
     {% for row in queue.recently_fixed %}
     <tr>
       <td>{{ test_link(row) }}</td>
-      <td>{{ run_link(row.fixed_in) }}</td>
+      <td>{{ build_link(row.fixed_in) }}</td>
       <td>{{ row.fixed_at|reltime }}</td>
       <td>{{ row.reason_text or "—" }}</td>
     </tr>

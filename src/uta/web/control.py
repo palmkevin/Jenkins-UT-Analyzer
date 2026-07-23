@@ -16,7 +16,7 @@ from uta.control.heartbeat import read_heartbeat
 from uta.control.jobs import recent_jobs
 from uta.control.quarantine import list_quarantine
 from uta.control.tunables import TUNABLES, effective_settings, load_overrides
-from uta.models import Run
+from uta.models import Build
 
 
 def _tunable_rows(base: Settings, overrides: dict[str, str]) -> list[dict]:
@@ -107,7 +107,7 @@ def control_panel(session: Session, base_settings: Settings) -> dict:
     """The full control-panel context: tunables, poller health, quarantine, jobs, AI accuracy."""
     overrides = load_overrides(session)
     hb = read_heartbeat(session)
-    high_water_mark = session.scalar(select(func.max(Run.build_number)))
+    high_water_mark = session.scalar(select(func.max(Build.build_number)))
     return {
         "groups": _grouped(_tunable_rows(base_settings, overrides)),
         "override_count": len(overrides),

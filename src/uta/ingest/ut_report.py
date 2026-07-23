@@ -1,8 +1,8 @@
 """Parser for the devUTs (nose2) JUnit ``TestResultAction`` JSON.
 
 Source: ``GET /<build>/testReport/api/json``. Two ``nose2-junit`` suites, one per **track**
-(``permanent`` / ``permanent_py39``); the same test runs in both. A result is therefore keyed by
-``(run, test, track)``. Test identity is the bare ``className.name`` — track is an attribute.
+(``permanent`` / ``permanent_py39``); the same test builds in both. A result is therefore keyed by
+``(build, test, track)``. Test identity is the bare ``className.name`` — track is an attribute.
 
 This parser is golden-tested against ``tests/fixtures/jenkins/testReport_1702.json`` (anonymized).
 It never touches the network; feed it a parsed JSON dict.
@@ -27,7 +27,7 @@ _ZEPHYR_ID_RE = re.compile(r"LX-T\d+")
 _ZEPHYR_RE = re.compile(r"(LX-T\d+)\s*\(([^)]+)\)")
 
 # Statuses Jenkins reports. REGRESSION/FIXED are vs Jenkins' own previous build; we keep them as
-# observed but compute our own complete-run baseline elsewhere.
+# observed but compute our own complete-build baseline elsewhere.
 FAILED_STATUSES = frozenset({"FAILED", "REGRESSION"})
 
 

@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import func, select
 
-from tests.builders import make_run
+from tests.builders import make_build
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
 from tests.fakes.email import RecordingEmailSender
 from uta.analyze.baseline import select_baseline
@@ -20,12 +20,12 @@ from uta.db import session_scope
 from uta.ingest.pipeline import _dedupe_cases, data_change_window, ingest_build
 from uta.ingest.ut_report import FAILED_STATUSES, TestCaseResult
 from uta.models import (
+    Build,
     Classification,
     CodeChangeCandidate,
     DataChangeCandidate,
     FailureEpisode,
     FailureSignature,
-    Run,
     TestIdentity,
     TestLifecycle,
     TestResult,
@@ -36,9 +36,9 @@ from uta.models.enums import LifecycleState, PredictedCause
 def test_ingest_persists_run_and_results(session_factory):
     ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run is not None
-        assert run.complete is True
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build is not None
+        assert build.complete is True
         # Fixture has 14 cases across both tracks.
         n = s.scalar(select(func.count()).select_from(TestResult))
         assert n == 14
@@ -62,14 +62,14 @@ def test_ingest_aborted_shard_run_is_incomplete_and_never_a_baseline(session_fac
     """Both shards present but one ABORTED ⇒ not complete, no analysis, never the baseline."""
     ingest_build(_AbortedShardFakeJenkins(), session_factory, 1702, expected_shards=2)
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.complete is False
-        assert {sh.track: sh.status for sh in run.shards}["permanent_py39"] == "ABORTED"
-        # The partial run is persisted but gated out of the analysis…
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is False
+        assert {sh.track: sh.status for sh in build.shards}["permanent_py39"] == "ABORTED"
+        # The partial build is persisted but gated out of the analysis…
         assert s.scalar(select(func.count()).select_from(TestResult)) == 14
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
-        # …and a later run never diffs against it.
-        later = make_run(s, 1703, {}, started_at=run.started_at + timedelta(hours=24))
+        # …and a later build never diffs against it.
+        later = make_build(s, 1703, {}, started_at=build.started_at + timedelta(hours=24))
         assert select_baseline(s, later) is None
 
 
@@ -116,9 +116,9 @@ def test_ingest_unittest_logs_adds_console_log_results(session_factory):
     )
     with session_scope(session_factory) as s:
         # Every selected stage finished (the py39 one is UNSTABLE — a test outcome, not
-        # truncation), so the run stays complete.
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.complete is True
+        # truncation), so the build stays complete.
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is True
         # 14 devUTs + 4 (perm) + 4 (py39) console-log cases.
         assert s.scalar(select(func.count()).select_from(TestResult)) == 22
         smb = s.scalars(
@@ -163,7 +163,7 @@ class _LogStageStatusFakeJenkins(FakeJenkinsClient):
 
 @pytest.mark.parametrize("status", ["ABORTED", "NOT_EXECUTED"])
 def test_ingest_unfinished_log_stage_marks_run_incomplete(session_factory, status):
-    """A selected console-log stage cut short ⇒ incomplete run: results persisted, no analysis,
+    """A selected console-log stage cut short ⇒ incomplete build: results persisted, no analysis,
     never a baseline — the devUTs shard guard (issue #83), mirrored for the second source."""
     ingest_build(
         _LogStageStatusFakeJenkins(status),
@@ -173,23 +173,24 @@ def test_ingest_unfinished_log_stage_marks_run_incomplete(session_factory, statu
         unittest_suites={"SMB Transform"},
     )
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.complete is False
-        # The partial run's results (JUnit + both console-log stages) are persisted but gated out
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is False
+        # The partial build's results (JUnit + both console-log stages) are persisted but gated out
         # of the analysis…
         assert s.scalar(select(func.count()).select_from(TestResult)) == 22
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
-        # …and a later run never diffs against it.
-        later = make_run(s, 1703, {}, started_at=run.started_at + timedelta(hours=24))
+        # …and a later build never diffs against it.
+        later = make_build(s, 1703, {}, started_at=build.started_at + timedelta(hours=24))
         assert select_baseline(s, later) is None
 
 
 def test_ingest_unfinished_log_stage_ignored_when_logs_off(session_factory):
-    """Without the unittest-log opt-in the stage isn't selected — its status can't gate the run."""
+    """Without the unittest-log opt-in the stage isn't selected — its status can't gate the
+    build."""
     ingest_build(_LogStageStatusFakeJenkins("ABORTED"), session_factory, 1702)
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.complete is True
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is True
 
 
 class _MissingLogStageFakeJenkins(FakeJenkinsClient):
@@ -204,7 +205,7 @@ class _MissingLogStageFakeJenkins(FakeJenkinsClient):
 
 
 def test_ingest_absent_log_stage_does_not_affect_completeness(session_factory):
-    """A suite stage absent from the wfapi payload ⇒ complete run (job config varies over
+    """A suite stage absent from the wfapi payload ⇒ complete build (job config varies over
     history); only stages *present but unfinished* gate completeness."""
     ingest_build(
         _MissingLogStageFakeJenkins(),
@@ -214,8 +215,8 @@ def test_ingest_absent_log_stage_does_not_affect_completeness(session_factory):
         unittest_suites={"SMB Transform"},
     )
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.complete is True
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is True
         # Only the permanent-track stage contributed console-log cases: 14 devUTs + 4.
         assert s.scalar(select(func.count()).select_from(TestResult)) == 18
 
@@ -277,7 +278,7 @@ def test_reingest_is_idempotent(session_factory):
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     with session_scope(session_factory) as s:
-        assert s.scalar(select(func.count()).select_from(Run)) == 1
+        assert s.scalar(select(func.count()).select_from(Build)) == 1
         assert s.scalar(select(func.count()).select_from(TestResult)) == 14  # not doubled
         # Lifecycle/episodes/classifications are not doubled either.
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 7
@@ -287,8 +288,8 @@ def test_reingest_is_idempotent(session_factory):
 def test_ingest_drives_analysis_and_code_candidates(session_factory):
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run.baseline_run_id is None  # first run — nothing to diff against
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.baseline_build_id is None  # first build — nothing to diff against
         # 7 distinct failing identities -> 7 open episodes, all FAILING, all classified.
         assert s.scalar(select(func.count()).select_from(TestLifecycle)) == 7
         states = set(s.scalars(select(TestLifecycle.state)).all())
@@ -348,7 +349,7 @@ def test_ingest_emails_on_regression_only_via_sender(session_factory):
         email_sender=sender,
         email_recipients=("team@example.com",),
     )
-    # First run with failures vs an empty baseline ⇒ new failures ⇒ one email.
+    # First build with failures vs an empty baseline ⇒ new failures ⇒ one email.
     assert len(sender.sent) == 1
     assert "new failing" in sender.sent[0].subject
 
@@ -378,8 +379,8 @@ class _RaisingEmailSender:
 def test_email_failure_does_not_fail_or_roll_back_ingest(session_factory):
     """An SMTP outage must never destroy an ingest (issue #81).
 
-    The alert is sent only after the run's transaction commits, and a send failure is swallowed —
-    so the run and its results are persisted regardless, and ``ingest_build`` returns normally
+    The alert is sent only after the build's transaction commits, and a send failure is swallowed —
+    so the build and its results are persisted regardless, and ``ingest_build`` returns normally
     (no quarantine attempt is ever recorded for a mail outage).
     """
     sender = _RaisingEmailSender()
@@ -392,8 +393,8 @@ def test_email_failure_does_not_fail_or_roll_back_ingest(session_factory):
     )
     assert sender.attempts == 1  # the send was attempted (post-commit) and its failure swallowed
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 1702))
-        assert run is not None and run.complete is True
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build is not None and build.complete is True
         assert s.scalar(select(func.count()).select_from(TestResult)) == 14
 
 
@@ -515,7 +516,7 @@ class _OverlappingFakeJenkins(FakeJenkinsClient):
     """A JUnit report that re-reports a test the SMB Transform console-log stage also emits (py39).
 
     Mirrors the real #1707 overlap: nose2 collects some of the same modules the console-log stages
-    run, so both sources report the test in one build. The injected case carries a distinctive
+    build, so both sources report the test in one build. The injected case carries a distinctive
     duration so the test can assert the JUnit copy (not the duration-0.0 console copy) survives.
     """
 
@@ -646,10 +647,11 @@ class _ScriptedJenkins:
     """A fixtures-free multi-build fake: each build maps test name -> JUnit status (PASSED/FAILED).
 
     Duck-types the pipeline's ``JenkinsClient`` protocol (the golden-fixtures fake serves a single
-    build, so cross-build scenarios script their own history here). Every run is **complete** (both
+    build, so cross-build scenarios script their own history here). Every build is **complete**
+    (both
     track shards report), and build #N starts N hours after a fixed epoch, so build-number order ==
     start-time order, as on the real job. The ``builds`` dict is held by reference — a test may
-    mutate a build's statuses to simulate a re-run with different content.
+    mutate a build's statuses to simulate a re-build with different content.
     """
 
     _EPOCH_MS = 1_780_000_000_000  # fixed, arbitrary epoch millis (UTC)
@@ -740,17 +742,17 @@ def _lifecycle_snapshot(session) -> tuple[dict, dict]:
             lc.acknowledged,
             lc.acknowledged_by,
             lc.current_episode_id,
-            lc.last_failing_run_id,
+            lc.last_failing_build_id,
         )
         for lc in session.scalars(select(TestLifecycle)).all()
     }
     episodes = {
         (ep.identity.canonical_name, ep.episode_number): (
             ep.is_open,
-            ep.first_failure_run_id,
-            ep.last_failing_run_id,
-            ep.fixed_in_run_id,
-            ep.age_runs,
+            ep.first_failure_build_id,
+            ep.last_failing_build_id,
+            ep.fixed_in_build_id,
+            ep.age_builds,
         )
         for ep in session.scalars(select(FailureEpisode)).all()
     }
@@ -758,7 +760,7 @@ def _lifecycle_snapshot(session) -> tuple[dict, dict]:
 
 
 def test_historical_reingest_skips_lifecycle(session_factory):
-    """Re-ingesting an older build (the quarantine-recovery path, issue #82) keeps the run's data
+    """Re-ingesting an older build (the quarantine-recovery path, issue #82) keeps the build's data
     but must not drive the lifecycle: the old diff would open phantom episodes and close live ones.
 
     Timeline: #103 was quarantined and skipped; #102 and #104-#106 ingested. ``t_fix`` failed in
@@ -809,24 +811,24 @@ def test_historical_reingest_skips_lifecycle(session_factory):
         assert _lifecycle_snapshot(s) == before
         assert s.scalar(select(func.count()).select_from(Classification)) == classifications_before
 
-        # The run itself is fully persisted: results (3 tests x 2 tracks), KB signatures on the
-        # failures, and the display baseline stamped so the run page shows its diff.
-        run = s.scalar(select(Run).where(Run.build_number == 103))
-        assert run is not None and run.complete is True
-        results = s.scalars(select(TestResult).where(TestResult.run_id == run.id)).all()
+        # The build itself is fully persisted: results (3 tests x 2 tracks), KB signatures on the
+        # failures, and the display baseline stamped so the build page shows its diff.
+        build = s.scalar(select(Build).where(Build.build_number == 103))
+        assert build is not None and build.complete is True
+        results = s.scalars(select(TestResult).where(TestResult.build_id == build.id)).all()
         assert len(results) == 6
         failing = [r for r in results if r.status in FAILED_STATUSES]
         assert failing and all(r.signature_id is not None for r in failing)
-        baseline = s.scalar(select(Run).where(Run.build_number == 102))
-        assert run.baseline_run_id == baseline.id
+        baseline = s.scalar(select(Build).where(Build.build_number == 102))
+        assert build.baseline_build_id == baseline.id
 
 
 def test_reingest_newest_build_still_analyzed(session_factory):
     """Re-ingesting the **newest** build stays the documented idempotent analysis path.
 
     Same content twice ⇒ identical lifecycle/episode state; corrected content (the fake's build
-    now passes) ⇒ the analysis still runs and closes the episode — proving the historical-skip
-    guard is strictly "older than the newest complete run", never the newest build itself.
+    now passes) ⇒ the analysis still builds and closes the episode — proving the historical-skip
+    guard is strictly "older than the newest complete build", never the newest build itself.
     """
     fake = _ScriptedJenkins({104: {"t": "FAILED"}, 105: {"t": "FAILED"}})
     ingest_build(fake, session_factory, 104)
@@ -840,22 +842,22 @@ def test_reingest_newest_build_still_analyzed(session_factory):
         assert _lifecycle_snapshot(s) == before
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 1
 
-    fake.builds[105] = {"t": "PASSED"}  # the re-run build now passes
+    fake.builds[105] = {"t": "PASSED"}  # the re-build build now passes
     ingest_build(fake, session_factory, 105)
     with session_scope(session_factory) as s:
-        run = s.scalar(select(Run).where(Run.build_number == 105))
+        build = s.scalar(select(Build).where(Build.build_number == 105))
         ep = s.scalar(select(FailureEpisode))
-        assert ep.is_open is False and ep.fixed_in_run_id == run.id
+        assert ep.is_open is False and ep.fixed_in_build_id == build.id
         assert s.scalar(select(TestLifecycle)).state == LifecycleState.FIXED
 
 
 def test_reingest_with_changed_content_resets_orphaned_signature_aggregates(session_factory):
     """A re-ingest whose failure vanished must recompute the now-orphaned signature (issue #116).
 
-    #104 and #105 both fail ``t`` — one signature, occurrence 4 (2 runs × 2 tracks). The re-run
+    #104 and #105 both fail ``t`` — one signature, occurrence 4 (2 builds × 2 tracks). The re-build
     #105 now passes: the signature loses #105's links but gains none, so it is only reachable via
     the pre-delete link capture — occurrence must drop to 2 and last-seen must point back at #104,
-    the newest run actually containing the failure (the KB page and the LLM evidence read these).
+    the newest build actually containing the failure (the KB page and the LLM evidence read these).
     """
     fake = _ScriptedJenkins({104: {"t": "FAILED"}, 105: {"t": "FAILED"}})
     ingest_build(fake, session_factory, 104)
@@ -863,18 +865,18 @@ def test_reingest_with_changed_content_resets_orphaned_signature_aggregates(sess
 
     with session_scope(session_factory) as s:
         sig = s.scalar(select(FailureSignature))
-        run105 = s.scalar(select(Run).where(Run.build_number == 105))
+        run105 = s.scalar(select(Build).where(Build.build_number == 105))
         assert sig.occurrence_count == 4
-        assert sig.last_seen_run_id == run105.id
+        assert sig.last_seen_build_id == run105.id
 
-    fake.builds[105] = {"t": "PASSED"}  # the re-run build now passes
+    fake.builds[105] = {"t": "PASSED"}  # the re-build build now passes
     ingest_build(fake, session_factory, 105)
     with session_scope(session_factory) as s:
         sig = s.scalar(select(FailureSignature))
-        run104 = s.scalar(select(Run).where(Run.build_number == 104))
+        run104 = s.scalar(select(Build).where(Build.build_number == 104))
         assert sig.occurrence_count == 2  # only #104's two tracks remain
-        assert sig.first_seen_run_id == run104.id
-        assert sig.last_seen_run_id == run104.id
+        assert sig.first_seen_build_id == run104.id
+        assert sig.last_seen_build_id == run104.id
         assert sig.last_seen_at == run104.started_at
 
 
@@ -891,7 +893,7 @@ def test_reingest_orphaning_all_links_resets_signature_to_zero(session_factory):
         sig = s.scalar(select(FailureSignature))
         assert sig.occurrence_count == 0
         assert sig.first_seen_at is None and sig.last_seen_at is None
-        assert sig.first_seen_run_id is None and sig.last_seen_run_id is None
+        assert sig.first_seen_build_id is None and sig.last_seen_build_id is None
 
 
 class _FailingReportFake(FakeJenkinsClient):

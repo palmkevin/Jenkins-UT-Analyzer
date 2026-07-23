@@ -118,7 +118,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "int",
         1,
         10,
-        "Shards a run must report to be considered complete.",
+        "Shards a build must report to be considered complete.",
     ),
     Tunable(
         "data_change_lookback_hours",
@@ -127,7 +127,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "int",
         0,
         168,
-        "How far before a run's start to look for correlated data changes.",
+        "How far before a build's start to look for correlated data changes.",
     ),
     Tunable(
         "data_change_tolerance_minutes",

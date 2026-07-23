@@ -1,7 +1,7 @@
 """'Never lose your place' navigation (issue #143).
 
-Covers the drill-down back-links (test record → the referring filtered triage queue, run detail →
-the job-runs list), the same-origin sanitization of the user-controllable ``?return=`` / Referer
+Covers the drill-down back-links (test record → the referring filtered triage queue, build detail →
+the job-builds list), the same-origin sanitization of the user-controllable ``?return=`` / Referer
 inputs, and the ``#episode-N`` fragment that episode-scoped PRG actions append so the browser
 lands back on the card that was just edited.
 """
@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from tests.builders import get_identity, make_run
-from uta.analyze.lifecycle import apply_run
+from tests.builders import get_identity, make_build
+from uta.analyze.lifecycle import apply_build
 from uta.db import Base, make_session_factory, session_scope
 from uta.models import TestLifecycle
 from uta.web.app import _same_origin_path, create_app
@@ -38,9 +38,9 @@ def seeded(session_factory):
     with session_scope(session_factory) as s:
         baseline = None
         for build, status in enumerate(["FAILED", "PASSED", "FAILED"], start=1):
-            run = make_run(s, build, {"alpha": status, "beta": "PASSED"})
-            apply_run(s, run, baseline=baseline)
-            baseline = run
+            build = make_build(s, build, {"alpha": status, "beta": "PASSED"})
+            apply_build(s, build, baseline=baseline)
+            baseline = build
     return session_factory
 
 
@@ -68,7 +68,7 @@ def _current_episode_id(session_factory, ident_id) -> int:
     [
         ("/", "/"),
         ("/?owner=AB&sort=name", "/?owner=AB&sort=name"),
-        ("/runs?page=2", "/runs?page=2"),
+        ("/builds?page=2", "/builds?page=2"),
         (None, None),
         ("", None),
         ("https://evil.example/x", None),  # absolute external URL
@@ -121,11 +121,11 @@ def test_missing_record_page_still_has_breadcrumb(client):
     assert '<a href="/">&larr; Triage queue</a>' in resp.text
 
 
-def test_run_page_breadcrumb_links_to_job_runs(client):
-    for path in ("/runs/1", "/runs/999"):  # ingested run and the not-ingested branch alike
+def test_build_page_breadcrumb_links_to_job_builds(client):
+    for path in ("/builds/1", "/builds/999"):  # ingested build and the not-ingested branch alike
         resp = client.get(path)
         assert resp.status_code == 200
-        assert '<a href="/runs">&larr; Job runs</a>' in resp.text
+        assert '<a href="/builds">&larr; Job builds</a>' in resp.text
 
 
 def test_filtered_triage_queue_links_carry_return_param(client):

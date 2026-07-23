@@ -3,7 +3,8 @@ name: docs-overview-maintainer
 description: >-
   Keeps the repo's hand-maintained docs in sync with the product: docs/OVERVIEW.html (the
   concept/architecture overview), src/uta/web/templates/help.html (the in-app end-user Help page),
-  AND the README.md Configuration reference + .env.example (the settings reference).
+  the README.md Configuration reference + .env.example (the settings reference), AND CONTEXT.md
+  (the ubiquitous-language catalogue — the terminology authority per docs/adr/0001).
   Invoke it after any change that could alter the app's parts, their communications, or its
   workflows — new/removed external system or integration (Jenkins, Oracle ut_ref, LLM, SMTP,
   FishEye/Jira, a new data source), a container/service change, a change to the ingest→analysis→
@@ -11,7 +12,8 @@ description: >-
   an end user sees or does in the dashboard (a new/renamed status or enum value, a new badge, a
   new triage bucket or dashboard page, or a change to how the LLM hypothesis / Confirm / correct
   feedback loop works); or after any change to the settings surface — a src/uta/config.py field or
-  .env.example key added, removed, renamed, or re-gated, or a changed default/effect. It decides
+  .env.example key added, removed, renamed, or re-gated, or a changed default/effect; or after any
+  change to the domain language — a domain concept added, renamed, or re-defined. It decides
   which surface(s), if any, are material, and edits them to match — otherwise reports "no update
   needed". Read-then-decide; it does not touch application code (including config.py) or CLAUDE.md.
 tools: Read, Edit, Write, Grep, Glob, Bash
@@ -32,6 +34,12 @@ generated from it, so they rot silently. You make the smallest edit that restore
 - **The [README.md](../../README.md) Configuration section + [.env.example](../../.env.example)** —
   the **settings reference**, for **operators/deployers**: one per-subsystem table row in the README
   and one documented line in `.env.example` per configurable env var.
+- **[CONTEXT.md](../../CONTEXT.md)** — the **ubiquitous-language catalogue** (per
+  [docs/adr/0001](../../docs/adr/0001-context-md-owns-terminology.md)), for **everyone**: the single
+  authority for what each domain term means, with `_Avoid_` synonym lists. A glossary and nothing
+  else — no implementation detail, no workflow prose. Update it when a domain concept is added,
+  renamed, or re-defined in the code (an entity, an enum's meaning, a canonical term); never pad it
+  with general programming concepts.
 
 They overlap in subject matter but differ in audience and altitude: OVERVIEW.html explains the
 *system* (containers, external integrations, data flow); help.html explains *using the dashboard*

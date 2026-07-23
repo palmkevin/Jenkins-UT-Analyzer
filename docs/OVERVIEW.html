@@ -106,16 +106,16 @@
   <h2>Why this tool exists</h2>
   <div class="card">
     <p>Integration tests run in a Jenkins job triggered by <b>every commit to the SVN trunk</b>. Before each
-    run, a working <code>ut</code> database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
+    build, a working <code>ut</code> database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
     Roughly <b>25 000 tests</b> run, split across parallel shards (the <code>permanent</code> and
     <code>permanent_py39</code> tracks) and merged into one report.</p>
-    <p>Historically <b>one person monitored this full-time</b>: after each run they compared failures to the
-    previous run, isolated the <i>new</i> failures, and attributed each to a probable cause —
+    <p>Historically <b>one person monitored this full-time</b>: after each build they compared failures to the
+    previous build, isolated the <i>new</i> failures, and attributed each to a probable cause —
     a <b>code change</b>, a <b>data change</b> in <code>ut_ref</code>, <b>infrastructure</b>, or <b>other</b> —
-    then contacted the responsible developer and watched the next run to confirm a fix. That triage was slow,
+    then contacted the responsible developer and watched the next build to confirm a fix. That triage was slow,
     person-dependent, and not reproducible.</p>
     <p class="lead"><b>The Analyzer automates the evidence-gathering and presents a clear, persistent picture
-    per test and per run — and learns from the human’s confirmed explanations over time.</b> It is deliberately
+    per test and per build — and learns from the human’s confirmed explanations over time.</b> It is deliberately
     <b>assistive</b>: it gathers, correlates, predicts and presents; the human confirms the cause and reason.</p>
   </div>
 </section>
@@ -144,7 +144,7 @@
         on <code>TestIdentity.main_developer</code>. Gated by <code>SVN_BLAME_ENABLED</code> (default
         off): with it off, no client is built and <code>main_developer</code> stays <code>NULL</code>,
         so local dev, the offline gate and the public demo never touch SVN. Wired into <code>uta
-        poll</code>/<code>backfill</code>/<code>bootstrap</code> (incremental, per run's failing
+        poll</code>/<code>backfill</code>/<code>bootstrap</code> (incremental, per build's failing
         tests) and the <code>uta reattribute-owners</code> backfill command; the control panel's
         on-demand ingest intentionally skips it, like email and the LLM.</p>
       </div>
@@ -152,7 +152,7 @@
         <h4>Oracle <code>ut_ref</code> <span class="pill">read-only</span></h4>
         <p>Reference DB. Its <code>V_TRACKING</code> view lists <b>data changes</b> (entity, author
         <code>USRCODE</code>, timestamp). There is no changelog for data — attribution rests on
-        <b>timestamp correlation</b> against the run’s time window. Reached read-only via <code>oracledb</code>
+        <b>timestamp correlation</b> against the build’s time window. Reached read-only via <code>oracledb</code>
         thin mode.</p>
       </div>
       <div class="part" style="border-color:var(--llm)">
@@ -164,7 +164,7 @@
       </div>
       <div class="part" style="border-color:var(--mail)">
         <h4>SMTP <span class="pill">outbound</span></h4>
-        <p>Two distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a run
+        <p>Two distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a build
         worsens</b> (≥1 new failing test vs the baseline) — silence means “no worse than before.” A
         separate <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) fires when the poller
         quarantines/skips a build, or (once, latched) when <code>/health</code> finds the poller stale —
@@ -187,7 +187,7 @@
       <h3>The app &amp; its store</h3>
       <div class="part" style="border-color:var(--pg)">
         <h4>PostgreSQL <span class="pill">the app’s own store</span></h4>
-        <p>All run history, test lifecycle, failure episodes, flakiness, and the knowledge base live here.
+        <p>All build history, test lifecycle, failure episodes, flakiness, and the knowledge base live here.
         Similarity search uses stock <b><code>pg_trgm</code></b> / full-text — <b>no vector database</b>.
         Reached only via <code>DATABASE_URL</code> (“container now, external later”). Also holds a small
         <b>operational</b> state — not part of the failure model: <code>setting_overrides</code> (runtime
@@ -218,14 +218,14 @@
         one-click <b>“Ack all w/ signature (N)”</b> — shown per New-bucket row only when other
         unacknowledged failures share its signature — and its attribution twin
         on the per-test record page (apply cause/reason/Jira ticket/triage status to every open failing test
-        sharing the signature) — run summaries (results
+        sharing the signature) — build summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
         optional <b>failures-only</b> filter), a
-        <b><code>/runs</code> job-runs list</b> (also paginated — every ingested run newest-first — status,
-        start time, duration, test totals, and regression / newly-fixed counts vs the same baseline the run
-        summary uses, with a header banner showing the poller's last and next tick, plus a <b>run-health
-        timeline</b> chart of failed/regression counts over time), per-test records, a <b>flaky
-        leaderboard</b> (each row with a recent-runs sparkline), a global <b>“jump to test” search</b>
+        <b><code>/builds</code> “Job builds” list</b> (also paginated — every ingested build newest-first —
+        status, start time, duration, test totals, and regression / newly-fixed counts vs the same baseline the
+        build summary uses, with a header banner showing the poller's last and next tick, plus a
+        <b>build-health timeline</b> chart of failed/regression counts over time), per-test records, a <b>flaky
+        leaderboard</b> (each row with a recent-builds sparkline), a global <b>“jump to test” search</b>
         (navbar box, substring match on canonical name — a unique match redirects straight to the record),
         and knowledge-base search. Where the human confirms causes and enters reasons. Also
         serves the <b><code>/control</code> panel</b>: live-tune the whitelisted thresholds (flaky/KB/triage/
@@ -364,7 +364,7 @@
       <!-- Postgres -->
       <rect class="box" x="360" y="250" width="180" height="96" fill="#0f2036" stroke="#4a90d9"/>
       <text class="lbl" x="380" y="278">PostgreSQL</text>
-      <text class="sub" x="380" y="298">runs · results · episodes</text>
+      <text class="sub" x="380" y="298">builds · results · episodes</text>
       <text class="sub" x="380" y="314">lifecycle · flakiness</text>
       <text class="sub" x="380" y="330">knowledge base (pg_trgm)</text>
 
@@ -473,8 +473,8 @@
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
   thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
   so a re-ingest never re-mails a historical regression. If the re-ingested build is older than the
-  current newest complete run, the lifecycle/classification pass itself is skipped too (see
-  <a href="#analysis">Analysis</a>) — only the run/results/KB signatures are persisted.</p>
+  current newest complete build, the lifecycle/classification pass itself is skipped too (see
+  <a href="#analysis">Analysis</a>) — only the build/results/KB signatures are persisted.</p>
   <ol class="flow">
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
       <code>lastCompletedBuild</code>, minus any <b>quarantined</b> builds. The cursor is the DB itself —
@@ -483,18 +483,18 @@
       and (if enabled) the unittest console-log stages’ logs.</small></li>
     <li><b>Parse.</b> <small>JUnit report → per-<code>(test, track)</code> results; console-log stages parsed
       into the <i>same</i> shape behind one interface; SVN change sets → code-change candidates; timing → the
-      run window + per-shard start/finish.</small></li>
+      build window + per-shard start/finish.</small></li>
     <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes inside a
-      <i>lookback</i> window before the run (changes precede the nightly run) plus a tolerance margin for clock
-      skew.</small></li>
-    <li><b>Persist.</b> <small>Bulk-insert the run, results, shards and candidates into Postgres — idempotent on
-      <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>, also
-      resolves each newly-seen failing test's <b>owner</b> (main developer) via <code>svn blame</code> of its
-      source file, filling <code>TestIdentity.main_developer</code> incrementally.</small></li>
+      <i>lookback</i> window before the build (changes precede the nightly build) plus a tolerance margin for
+      clock skew.</small></li>
+    <li><b>Persist.</b> <small>Bulk-insert the build, results, shards and candidates into Postgres — idempotent
+      on <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>,
+      also resolves each newly-seen failing test's <b>owner</b> (main developer) via <code>svn blame</code> of
+      its source file, filling <code>TestIdentity.main_developer</code> incrementally.</small></li>
     <li><b>Record signatures.</b> <small>A normalized failure <b>signature</b> per failing result (the KB
-      recurrence key) — for any run, complete or not.</small></li>
+      recurrence key) — for any build, complete or not.</small></li>
     <li><b>Prune.</b> <small>Once per tick (not per build), after the builds above are processed: delete
-      passing/skipped results — never failing ones — from runs older than
+      passing/skipped results — never failing ones — from builds older than
       <code>RESULT_RETENTION_DAYS</code> (default 90; 0 disables), and finished ingest jobs older than
       <code>INGEST_JOB_RETENTION_DAYS</code> (default 30; 0 disables). Also runnable on demand via
       <code>uta prune</code>. See the <a href="#reference">Reference</a> invariant below.</small></li>
@@ -511,13 +511,13 @@
 </section>
 
 <section id="analysis">
-  <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete runs only</span></h2>
-  <p class="lead">A run is analysed only when it is <b>complete</b>: all expected shards reported <i>and</i>
-  each shard's stage actually finished running its tests (an aborted/cancelled UT stage keeps the run
-  incomplete, even though its shard is present). Incomplete runs are stored and shown but skipped as a
-  baseline, so partial runs never produce phantom regressions. The lifecycle/classification/hypothesis pass
-  also only ever runs for the <b>newest</b> complete run — re-ingesting an older, already-superseded build
-  (e.g. the control panel's quarantine-recovery re-ingest) still persists its run, results and KB
+  <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete builds only</span></h2>
+  <p class="lead">A build is analysed only when it is <b>complete</b>: all expected shards reported <i>and</i>
+  each shard's stage actually finished running its tests (an aborted/cancelled UT stage keeps the build
+  incomplete, even though its shard is present). Incomplete builds are stored and shown but skipped as a
+  baseline, so partial builds never produce phantom regressions. The lifecycle/classification/hypothesis pass
+  also only ever runs for the <b>newest</b> complete build — re-ingesting an older, already-superseded build
+  (e.g. the control panel's quarantine-recovery re-ingest) still persists its build, results and KB
   signatures, but never replays into current lifecycle state, so history can’t reopen a since-fixed
   episode or clear an acknowledgement.</p>
   <div class="grid g2">
@@ -530,9 +530,9 @@
     </div>
     <div class="card">
       <h3>Baseline diff</h3>
-      <p>The run is diffed against the <b>most recent complete run</b>: new failures (regressions), newly fixed,
-      still failing, and flaky — each linking to the per-test record. The summary states which run was used as
-      baseline.</p>
+      <p>The build is diffed against the <b>most recent complete build</b>: new failures (regressions), newly
+      fixed, still failing, and flaky — each linking to the per-test record. The summary states which build was
+      used as baseline.</p>
     </div>
     <div class="card">
       <h3>Classification</h3>
@@ -559,7 +559,7 @@
     </div>
     <div class="card">
       <h3>Flakiness</h3>
-      <p>Scored by <b>oscillation</b>, not “no change”: transitions ÷ runs over a 30-day window. Gaps
+      <p>Scored by <b>oscillation</b>, not “no change”: transitions ÷ builds over a 30-day window. Gaps
       (incomplete/absent) are missing data, never counted as flips. Feeds the <b>flaky leaderboard</b>
       and the per-test record, both rendering the same windowed pass/fail history as a small SVG
       sparkline.</p>
@@ -588,12 +588,12 @@
       same error snippet under the test name, plus age, triage status, causing person, and a one-line
       cause. Row checkboxes support a <b>bulk “apply to selected”</b> (triage status / causing person /
       reason) across the caseload. <code>REMOVED</code> mid-failure is flagged distinctly.</p></div>
-    <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N runs /
+    <div class="card"><h3>★ Recently fixed</h3><p>Transitioned to <code>FIXED</code> within the last N builds /
       7 days — visible and confirmable before it scrolls away.</p></div>
   </div>
   <p>Each row links into the <b>per-test record</b>: full evidence (candidate code/data changes
   <b>ranked by relevance to that test</b>, each with its match reason — path overlap or entity
-  mention, most relevant first — rather than one flat run-wide list; see Classification above), the
+  mention, most relevant first — rather than one flat build-wide list; see Classification above), the
   predicted cause's <b>confidence</b> badge with a per-episode, collapsed <b>“Why this prediction”</b>
   breakdown (infra-error flag, candidate counts, top code/data match with author and score, the
   tie-break, the confidence-formula inputs), the test's <b>Owner</b> (main developer, resolved via
@@ -624,7 +624,7 @@
       IPs, temp paths, line numbers masked; exception type + top stack frames kept). Stored with a hash for
       exact lookup. This single function defines what “the same failure” means.</td></tr>
     <tr><th>Recurrence</th><td>A new failure matching a past signature surfaces <i>“this looks like the failure
-      on &lt;run/date&gt;; previous reason was …; caused by …”</i>.</td></tr>
+      on &lt;build/date&gt;; previous reason was …; caused by …”</i>.</td></tr>
     <tr><th>Similarity</th><td>Exact hash match + fuzzy <code>pg_trgm</code> trigram / full-text — top-k nearest
       historical failures, all in stock Postgres.</td></tr>
     <tr><th>Provenance tiers</th><td>Every conclusion is weighted by how it was reached:
@@ -646,14 +646,14 @@
 <section id="email">
   <h2><span class="n">5</span>Alerting <span class="muted" style="font-size:14px">— email</span></h2>
   <div class="card">
-    <p>Because every commit triggers a run, a per-run digest would be constant noise. The tool emails <b>only
-    when a processed run introduces ≥1 new failing test</b> (a regression vs the baseline). Runs with no new
+    <p>Because every commit triggers a build, a per-build digest would be constant noise. The tool emails <b>only
+    when a processed build introduces ≥1 new failing test</b> (a regression vs the baseline). Builds with no new
     failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
     (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. When
     <code>APP_BASE_URL</code> is set, each new failure is followed by a deep link to its per-test record and the
-    message ends with a link to the run's dashboard summary alongside the Jenkins URL; unset (the default), the
+    message ends with a link to the build's dashboard summary alongside the Jenkins URL; unset (the default), the
     email stays exactly as before, link-free. A recovery notice (“back to green”) is a separate, optional toggle
-    and gets the same dashboard run link when configured. Everything else stays in the dashboard.</p>
+    and gets the same dashboard build link when configured. Everything else stays in the dashboard.</p>
     <p>A second, distinct <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) rides the same
     SMTP seam but is about the pipeline itself, not test results: the poller sends one when a build is
     <b>quarantined or skipped</b> (retention 404), and the <code>web</code> app's <code>/health</code> check
@@ -671,11 +671,11 @@
 
   <h3>Information model — what is persisted</h3>
   <table class="kv">
-    <tr><th>Runs</th><td>Build #, links, SVN revision(s), overall + per-shard start/finish, totals, and the
+    <tr><th>Builds</th><td>Build #, links, SVN revision(s), overall + per-shard start/finish, totals, and the
       completeness / baseline flag.</td></tr>
-    <tr><th>Test results per run</th><td>Identity, status, duration, track/shard, failure message, stack trace.
+    <tr><th>Test results per build</th><td>Identity, status, duration, track/shard, failure message, stack trace.
       These rows <b>are</b> the failure-history feed (counts, last-failed, fail-rate windows) — no separate
-      table. <b>Passing/skipped rows are pruned</b> once their run ages past the retention window (see
+      table. <b>Passing/skipped rows are pruned</b> once their build ages past the retention window (see
       <i>Retention</i> below); failing rows are kept forever.</td></tr>
     <tr><th>Test identity &amp; aliases</th><td>Canonical fully-qualified name + optional <code>alias_of</code> pointer
       so renames/moves keep their history (suggested vs human-confirmed). Also carries the dashboard
@@ -686,8 +686,9 @@
     <tr><th>Test lifecycle</th><td>Lifecycle state (<code>FAILING</code> / <code>FIXED</code> / <code>REMOVED</code>),
       the <code>FLAKY</code> flag, <code>reopen_count</code>, and the <b>acknowledgement</b> attribute (flag +
       acknowledger + timestamp) as a field separate from state.</td></tr>
-    <tr><th>Failure episodes</th><td>One row per fail→fix cycle (first-failure run, fixed-in run — set only when it
-      passed again, never on removal — cause/reason, age), so regressions accumulate instead of overwriting.</td></tr>
+    <tr><th>Failure episodes</th><td>One row per fail→fix cycle (first-failure build, fixed-in build — set only
+      when it passed again, never on removal — cause/reason, age), so regressions accumulate instead of
+      overwriting.</td></tr>
     <tr><th>Signals</th><td>Candidate code changes (SVN update step) and data changes (<code>ut_ref</code>
       <code>V_TRACKING</code>), infra indicators — each linked to the failure that generated it. (Test
       <b>ownership</b> is a separate, identity-level attribute — see <i>Test identity &amp; aliases</i>
@@ -716,23 +717,23 @@
   <table class="kv">
     <tr><th>Test identity is test-level</th><td>One lifecycle per <code>suite/class/method</code>. The <b>track</b>
       (<code>permanent</code> / <code>permanent_py39</code>) is an <b>attribute</b>, not a separate identity — a
-      result is keyed by <code>(run, test, track)</code> and the track comes from the JUnit suite’s
+      result is keyed by <code>(build, test, track)</code> and the track comes from the JUnit suite’s
       <code>enclosingBlockNames</code>.</td></tr>
     <tr><th>Ingest scope</th><td>The primary source is <b>devUTs (nose2) JUnit</b> via
       <code>/&lt;n&gt;/testReport/api/json</code> (the authoritative ~25k-test surface). The unittest
       <b>console-log</b> stages are ingested behind the same interface, gated by <code>INGEST_UNITTEST_STAGES</code>
       with a <code>UNITTEST_SUITES</code> allowlist.</td></tr>
     <tr><th>Data-change feed</th><td>The Oracle <code>V_TRACKING</code> view as-is (author already resolved as
-      <code>USRCODE</code>). Correlation needs a <b>lookback window</b> — changes precede the run — not just the
-      run’s own start/finish window.</td></tr>
+      <code>USRCODE</code>). Correlation needs a <b>lookback window</b> — changes precede the build — not just the
+      build’s own start/finish window.</td></tr>
     <tr><th>Medical data</th><td>LIMS error text, stack traces, and especially <code>MODDATA</code> may contain
       patient data. Golden fixtures are anonymized/redacted before commit and <b>raw <code>MODDATA</code> is never
       committed</b> — structure preserved, values redacted.</td></tr>
     <tr><th>Retention</th><td>Nothing else in the store is ever deleted. Only <b>unsigned</b>
-      (<code>signature_id IS NULL</code>) passing/skipped test results from old runs, and finished ingest
-      jobs, are pruned — <b>failing results, runs, episodes, lifecycles, attributions and KB
-      signatures/aggregates are kept forever</b>, so KB occurrence counts are never corrupted. Runs' stored
-      pass/fail/skip totals stay exact forever; only the diff of a run older than the window loses its
+      (<code>signature_id IS NULL</code>) passing/skipped test results from old builds, and finished ingest
+      jobs, are pruned — <b>failing results, builds, episodes, lifecycles, attributions and KB
+      signatures/aggregates are kept forever</b>, so KB occurrence counts are never corrupted. Builds' stored
+      pass/fail/skip totals stay exact forever; only the diff of a build older than the window loses its
       “newly fixed” entries (accepted). Both windows (<code>RESULT_RETENTION_DAYS</code>,
       <code>INGEST_JOB_RETENTION_DAYS</code>) are runtime-tunable from the control panel; <code>0</code>
       disables either.</td></tr>
@@ -770,9 +771,9 @@
       <td>Path to a PEM CA bundle to verify Jenkins' cert against. Takes precedence over
       <code>JENKINS_VERIFY_TLS</code> when set (verification stays on, against this bundle).</td></tr>
     <tr><td><code>EXPECTED_SHARDS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
-      <td>Shards (tracks) a run must report — each having actually <b>finished</b> its stage
+      <td>Shards (tracks) a build must report — each having actually <b>finished</b> its stage
       (an ABORTED/cancelled shard doesn't count) — to be considered <b>complete</b>; incomplete
-      runs are stored but skipped as an analysis baseline.</td></tr>
+      builds are stored but skipped as an analysis baseline.</td></tr>
     <tr><td><code>INGEST_UNITTEST_STAGES</code></td><td><code>true</code></td>
       <td>Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS,
       Uniface) — parsed from each stage's <code>wfapi/log</code> behind the same interface as the
@@ -842,12 +843,12 @@
     <tr><td><code>SMTP_USER</code> / <code>SMTP_PASSWORD</code></td><td>empty <span class="pill">secret</span></td>
       <td>Optional SMTP auth, if the relay requires it.</td></tr>
     <tr><td><code>EMAIL_RECOVERY_NOTICE</code></td><td><code>false</code></td>
-      <td>Also send a "back to green" notice when a run has zero new failures after a prior
+      <td>Also send a "back to green" notice when a build has zero new failures after a prior
       regression; off by default (silence already means "no worse than before").</td></tr>
     <tr><td><code>APP_BASE_URL</code></td><td>empty</td>
       <td>Externally reachable base URL of the dashboard. When set, regression (and recovery)
       emails carry dashboard deep links — a per-test record link beside each new failure, and a
-      run summary link beside the Jenkins URL. Empty (the default) keeps emails link-free, exactly
+      build summary link beside the Jenkins URL. Empty (the default) keeps emails link-free, exactly
       as before.</td></tr>
   </table>
 
@@ -889,7 +890,7 @@
       <td>Default self-declared actor name shown/used in Phase 1 (<code>AUTH_ENABLED=false</code>).</td></tr>
     <tr><td><code>FLAKY_TRANSITION_THRESHOLD</code> <span class="pill">control panel</span></td>
       <td><code>0.3</code></td>
-      <td>Oscillation score (transitions ÷ runs) above which a test is flagged flaky.</td></tr>
+      <td>Oscillation score (transitions ÷ builds) above which a test is flagged flaky.</td></tr>
     <tr><td><code>FLAKY_WINDOW_DAYS</code> <span class="pill">control panel</span></td><td><code>30</code></td>
       <td>Window the flaky score and failure-history counts look back over.</td></tr>
     <tr><td><code>PGTRGM_SIMILARITY_CUTOFF</code> <span class="pill">control panel</span></td>
@@ -906,8 +907,8 @@
       <td>On a fresh (empty) store, the number of completed builds a cold-start poll (or
       <code>uta bootstrap</code>) ingests oldest-first before incremental polling takes over.</td></tr>
     <tr><td><code>RESULT_RETENTION_DAYS</code> <span class="pill">control panel</span></td><td><code>90</code></td>
-      <td>Raw passing/skipped results are pruned once their run is older than this (failing results,
-      runs, episodes, lifecycles, attributions and KB signatures are kept forever). <code>0</code>
+      <td>Raw passing/skipped results are pruned once their build is older than this (failing results,
+      builds, episodes, lifecycles, attributions and KB signatures are kept forever). <code>0</code>
       keeps everything; keep it above <code>FLAKY_WINDOW_DAYS</code>.</td></tr>
     <tr><td><code>INGEST_JOB_RETENTION_DAYS</code> <span class="pill">control panel</span></td><td><code>30</code></td>
       <td>Finished (done/error) on-demand ingest jobs are pruned after this many days. <code>0</code>
@@ -951,8 +952,8 @@
     <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
     <tr><td><code>DATA_CHANGE_LOOKBACK_HOURS</code> <span class="pill">control panel</span></td>
       <td><code>12</code></td>
-      <td>How far before a run's start to look for correlated Oracle <code>V_TRACKING</code> data
-      changes (they precede the nightly run).</td></tr>
+      <td>How far before a build's start to look for correlated Oracle <code>V_TRACKING</code> data
+      changes (they precede the nightly build).</td></tr>
     <tr><td><code>DATA_CHANGE_TOLERANCE_MINUTES</code> <span class="pill">control panel</span></td>
       <td><code>5</code></td>
       <td>Margin widening both ends of that window to absorb Jenkins↔Oracle clock skew.</td></tr>

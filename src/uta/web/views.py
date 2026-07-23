@@ -1,4 +1,4 @@
-"""Read-side view builders for the dashboard (triage queue, per-test record, run summary).
+"""Read-side view builders for the dashboard (triage queue, per-test record, build summary).
 
 Every function takes a live session and returns **plain detached dicts** so Jinja templates never
 touch a closed session (the Slice-0 pattern). Nothing here mutates state — the buckets are a pure
@@ -29,10 +29,10 @@ from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
 from uta.kb.signature import display_message
 from uta.models import (
+    Build,
     Classification,
     FailureEpisode,
     FailureSignature,
-    Run,
     TestIdentity,
     TestLifecycle,
     TestResult,
@@ -46,7 +46,7 @@ from uta.web.actions import _error_key, open_episodes_for_signature
 # directly (tests, CLI). A limit of 0 disables the cap.
 DEFAULT_ROW_LIMIT = 100
 
-# Max tests a run-page diff bucket lists inline before capping behind a "Show all N" link
+# Max tests a build-page diff bucket lists inline before capping behind a "Show all N" link
 # (issue #151). Deliberately tighter than DEFAULT_ROW_LIMIT — each bucket renders as a single
 # comma-separated link stream, not a table, so a bad night's hundreds of regressions would
 # otherwise swamp the page.
@@ -112,35 +112,42 @@ def _page_window(total: int, *, limit: int, page: int) -> tuple[int, int, int | 
     return page, pages, (page - 1) * limit
 
 
-def _run_ref(session: Session, run_id: int | None) -> dict | None:
-    """A minimal {id, build, url} reference to a run (episodes hold only the FK)."""
-    if run_id is None:
+def _build_ref(session: Session, build_id: int | None) -> dict | None:
+    """A minimal {id, build, url} reference to a build (episodes hold only the FK)."""
+    if build_id is None:
         return None
-    run = session.get(Run, run_id)
-    if run is None:
+    build = session.get(Build, build_id)
+    if build is None:
         return None
-    return {"id": run.id, "build": run.build_number, "url": run.url}
+    return {"id": build.id, "number": build.build_number, "url": build.url}
 
 
-def _run_refs(session: Session, run_ids: Collection[int]) -> dict[int, dict]:
-    """Batch variant of :func:`_run_ref` — one query for many ids (triage N+1 fix, issue #52)."""
-    ids = {i for i in run_ids if i is not None}
+def _build_refs(session: Session, build_ids: Collection[int]) -> dict[int, dict]:
+    """Batch variant of :func:`_build_ref` — one query for many ids (triage N+1 fix, issue #52)."""
+    ids = {i for i in build_ids if i is not None}
     if not ids:
         return {}
-    rows = session.execute(select(Run.id, Run.build_number, Run.url).where(Run.id.in_(ids))).all()
-    return {run_id: {"id": run_id, "build": build, "url": url} for run_id, build, url in rows}
+    rows = session.execute(
+        select(Build.id, Build.build_number, Build.url).where(Build.id.in_(ids))
+    ).all()
+    return {
+        build_id: {"id": build_id, "number": build, "url": url} for build_id, build, url in rows
+    }
 
 
-def latest_run(session: Session) -> dict | None:
-    """The most recent run we hold, as ``{build, url, started_at}`` (or ``None`` on an empty store).
+def latest_build(session: Session) -> dict | None:
+    """The most recent build we hold, as ``{build, url, started_at}`` (or ``None`` on an empty
+    store).
 
-    Newest-first by ``started_at`` then ``id`` — the same ordering :func:`job_runs` uses, so the
-    Triage header and the Runs list never disagree about which build is latest.
+    Newest-first by ``started_at`` then ``id`` — the same ordering :func:`job_builds` uses, so the
+    Triage header and the Builds list never disagree about which build is latest.
     """
-    run = session.scalar(select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(1))
-    if run is None:
+    build = session.scalar(
+        select(Build).order_by(Build.started_at.desc(), Build.id.desc()).limit(1)
+    )
+    if build is None:
         return None
-    return {"build": run.build_number, "url": run.url, "started_at": run.started_at}
+    return {"number": build.build_number, "url": build.url, "started_at": build.started_at}
 
 
 def _failure_infos(
@@ -153,7 +160,7 @@ def _failure_infos(
     this signature" bulk action, and to render the per-row error snippet (issue #145) — one query
     for every episode's characterising failure instead of one per row.
 
-    ``tracks`` carries **every** failing track of the ``(identity, run)`` pair — a test normally
+    ``tracks`` carries **every** failing track of the ``(identity, build)`` pair — a test normally
     runs in both tracks, so failing in both is the common case, and collapsing to one row's track
     made the exact track filter hide genuinely failing tests (issue #84). ``signature_id`` is the
     first failing row's (track order): the normalizer strips the track prefix, so both tracks'
@@ -163,7 +170,8 @@ def _failure_infos(
     signature normalizer likewise treats both tracks' error text as the same failure.
     """
     pairs = {
-        (ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id) for ep in episodes
+        (ep.test_identity_id, ep.last_failing_build_id or ep.first_failure_build_id)
+        for ep in episodes
     }
     pairs.discard((None, None))
     if not pairs:
@@ -171,7 +179,7 @@ def _failure_infos(
     rows = session.execute(
         select(
             TestResult.test_identity_id,
-            TestResult.run_id,
+            TestResult.build_id,
             TestResult.track,
             TestResult.signature_id,
             TestResult.error_type,
@@ -179,15 +187,15 @@ def _failure_infos(
             TestResult.error_stack_trace,
         )
         .where(
-            tuple_(TestResult.test_identity_id, TestResult.run_id).in_(pairs),
+            tuple_(TestResult.test_identity_id, TestResult.build_id).in_(pairs),
             TestResult.status.in_(FAILED_STATUSES),
         )
         .order_by(TestResult.track, TestResult.id)
     ).all()
     by_pair: dict[tuple[int, int], dict] = {}
-    for identity_id, run_id, track, signature_id, error_type, details, stack in rows:
+    for identity_id, build_id, track, signature_id, error_type, details, stack in rows:
         info = by_pair.setdefault(
-            (identity_id, run_id),
+            (identity_id, build_id),
             {
                 "tracks": [],
                 "signature_id": None,
@@ -209,7 +217,9 @@ def _failure_infos(
             info["error_details"] = details
             info["error_stack_trace"] = stack
     return {
-        ep.id: by_pair.get((ep.test_identity_id, ep.last_failing_run_id or ep.first_failure_run_id))
+        ep.id: by_pair.get(
+            (ep.test_identity_id, ep.last_failing_build_id or ep.first_failure_build_id)
+        )
         for ep in episodes
     }
 
@@ -260,7 +270,7 @@ def _latest_classifications(
 
     Rows are read oldest-first and written into the map, so the last write per episode is the
     newest row — the same "newest wins" rule as :func:`_latest_classification`. Classifications
-    per episode are few (one per analysing run), so reading them all beats N per-episode queries.
+    per episode are few (one per analysing build), so reading them all beats N per-episode queries.
     """
     ids = {i for i in episode_ids if i is not None}
     if not ids:
@@ -293,13 +303,13 @@ def _row(
     lc: TestLifecycle,
     *,
     classifications: dict[int, Classification],
-    run_refs: dict[int, dict],
+    build_refs: dict[int, dict],
     failure_infos: dict[int, dict | None],
 ) -> dict:
     """Shared row projection for the triage buckets — identity + current episode + prediction.
 
     A pure projection over **prefetched** data: the lifecycle arrives with its identity, current
-    episode and attribution eager-loaded, and the classification/run/failure lookups are batch
+    episode and attribution eager-loaded, and the classification/build/failure lookups are batch
     maps — so building a row issues no queries (the page is O(1) queries in the number of rows,
     issue #52).
     """
@@ -307,8 +317,8 @@ def _row(
     ep = lc.current_episode
     classification = classifications.get(ep.id) if ep is not None else None
     attribution = ep.attribution if ep is not None else None
-    first_failure = run_refs.get(ep.first_failure_run_id) if ep is not None else None
-    fixed_in = run_refs.get(ep.fixed_in_run_id) if ep is not None else None
+    first_failure = build_refs.get(ep.first_failure_build_id) if ep is not None else None
+    fixed_in = build_refs.get(ep.fixed_in_build_id) if ep is not None else None
     failure_info = failure_infos.get(ep.id) if ep is not None else None
     return {
         "identity_id": ident.id,
@@ -329,7 +339,7 @@ def _row(
         "first_failure_at": ep.first_failure_at if ep is not None else None,
         "fixed_in": fixed_in,
         "fixed_at": ep.fixed_at if ep is not None else None,
-        "age_runs": ep.age_runs if ep is not None else None,
+        "age_builds": ep.age_builds if ep is not None else None,
         "age_days": _days_between(ep.first_failure_at, _now()) if ep is not None else None,
         "triage_status": ep.triage_status if ep is not None else None,
         "predicted_cause": classification.predicted_cause if classification else None,
@@ -502,28 +512,29 @@ def triage_expand_urls(
     return urls
 
 
-# The run page's four capped diff buckets — the section keys its ``?expand=`` accepts (issue #151).
-_RUN_DIFF_SECTIONS = ("regressions", "newly_fixed", "still_failing", "removed")
+# The build page's four capped diff buckets — the section keys its ``?expand=`` accepts (issue
+# #151).
+_BUILD_DIFF_SECTIONS = ("regressions", "newly_fixed", "still_failing", "removed")
 
 
-def run_expand_urls(
-    build: int, params: dict[str, str], expand: Collection[str] = ()
+def build_expand_urls(
+    number: int, params: dict[str, str], expand: Collection[str] = ()
 ) -> dict[str, str]:
-    """Per-bucket "Show all N" URLs for the run page's capped diff lists (issue #151).
+    """Per-bucket "Show all N" URLs for the build page's capped diff lists (issue #151).
 
-    Each URL re-requests the run page with that bucket added to the already-expanded set while
+    Each URL re-requests the build page with that bucket added to the already-expanded set while
     the rest of the query string (``failures_only``, results pagination) survives — the same
     state-stays-in-the-URL contract as the triage queue's expand links (issue #132) — and jumps
     back to the ``#diff`` anchor.
     """
     base = {k: v for k, v in params.items() if k != "expand" and v}
     urls = {}
-    for section in _RUN_DIFF_SECTIONS:
+    for section in _BUILD_DIFF_SECTIONS:
         expanded = list(expand)
         if section not in expanded:
             expanded.append(section)
         query = urlencode({**base, "expand": ",".join(expanded)}, safe=",")
-        urls[section] = f"/runs/{build}?{query}#diff"
+        urls[section] = f"/builds/{number}?{query}#diff"
     return urls
 
 
@@ -604,7 +615,7 @@ def triage_queue(
 
     Query count is **O(1) in the number of rows** (issue #52): one eager-loaded lifecycle scan
     (identity + current episode + attribution), one batched latest-classification lookup, one
-    batched run-ref lookup, one batched failure-info (track/signature) lookup, and one batched
+    batched build-ref lookup, one batched failure-info (track/signature) lookup, and one batched
     signature-text lookup for the New rows' ack blast radius (issue #152).
     """
     filters = filters or {}
@@ -635,9 +646,9 @@ def triage_queue(
     # Pass 2 — batch-fetch everything the rows reference, then project (no per-row queries).
     episodes = [lc.current_episode for _, lc in selected if lc.current_episode is not None]
     classifications = _latest_classifications(session, [ep.id for ep in episodes])
-    run_refs = _run_refs(
+    build_refs = _build_refs(
         session,
-        [ep.first_failure_run_id for ep in episodes] + [ep.fixed_in_run_id for ep in episodes],
+        [ep.first_failure_build_id for ep in episodes] + [ep.fixed_in_build_id for ep in episodes],
     )
     failure_infos = _failure_infos(session, episodes)
     # Blast radius for the New rows' "Ack all w/ signature (N)" button (issue #152) — grouped over
@@ -657,7 +668,7 @@ def triage_queue(
     recently_fixed: list[dict] = []
     for bucket, lc in selected:
         row = _row(
-            lc, classifications=classifications, run_refs=run_refs, failure_infos=failure_infos
+            lc, classifications=classifications, build_refs=build_refs, failure_infos=failure_infos
         )
         if not _matches_filters(row, filters):
             continue
@@ -703,19 +714,19 @@ def triage_queue(
 def _episode_failure_detail(session: Session, ep: FailureEpisode) -> dict | None:
     """The error detail for a single episode — the latest failing result *within* that episode.
 
-    Scoped to the episode's last-failing run (falling back to its first-failure run when the
-    episode has no recorded last-failing run yet), so each episode card shows the failure that
+    Scoped to the episode's last-failing build (falling back to its first-failure build when the
+    episode has no recorded last-failing build yet), so each episode card shows the failure that
     characterises it. Mirrors the fields :func:`_latest_failing_result` surfaced for the (now
     removed) single "Latest failure" section.
     """
-    run_id = ep.last_failing_run_id or ep.first_failure_run_id
-    if run_id is None:
+    build_id = ep.last_failing_build_id or ep.first_failure_build_id
+    if build_id is None:
         return None
     result = session.scalar(
         select(TestResult)
         .where(
             TestResult.test_identity_id == ep.test_identity_id,
-            TestResult.run_id == run_id,
+            TestResult.build_id == build_id,
             TestResult.status.in_(FAILED_STATUSES),
         )
         .order_by(TestResult.id.desc())
@@ -731,7 +742,7 @@ def _episode_failure_detail(session: Session, ep: FailureEpisode) -> dict | None
         "error_stack_trace": result.error_stack_trace,
         "file_path": result.file_path,
         "line": result.line,
-        "run": _run_ref(session, result.run_id),
+        "build": _build_ref(session, result.build_id),
     }
 
 
@@ -760,7 +771,7 @@ def _evidence_items(evidence) -> list[tuple[str, str]]:
 
     Whitelists the user-meaningful keys of the shape :func:`uta.analyze.classify.classify_episode`
     persists (candidate counts, relevance matches, the tie-break, the confidence inputs) and drops
-    internal noise (``baseline_run_id`` is a store PK, not a build number). Degenerate payloads —
+    internal noise (``baseline_build_id`` is a store PK, not a build number). Degenerate payloads —
     a bare string or list instead of the expected dict — are still surfaced as a single row rather
     than silently hidden.
     """
@@ -824,13 +835,13 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "id": ep.id,
         "episode_number": ep.episode_number,
         "is_open": ep.is_open,
-        "first_failure": _run_ref(session, ep.first_failure_run_id),
+        "first_failure": _build_ref(session, ep.first_failure_build_id),
         "first_failure_at": ep.first_failure_at,
-        "last_failing": _run_ref(session, ep.last_failing_run_id),
+        "last_failing": _build_ref(session, ep.last_failing_build_id),
         "last_failing_at": ep.last_failing_at,
-        "fixed_in": _run_ref(session, ep.fixed_in_run_id),
+        "fixed_in": _build_ref(session, ep.fixed_in_build_id),
         "fixed_at": ep.fixed_at,
-        "age_runs": ep.age_runs,
+        "age_builds": ep.age_builds,
         "age_days": _days_between(ep.first_failure_at, ep.fixed_at or _now()),
         "triage_status": ep.triage_status,
         "jira_ticket": ep.jira_ticket,
@@ -856,37 +867,37 @@ def _latest_failing_result(session: Session, identity_id: int) -> TestResult | N
     """The most recent failing result for a test — its error text/stack/location and links."""
     return session.scalar(
         select(TestResult)
-        .join(Run, Run.id == TestResult.run_id)
+        .join(Build, Build.id == TestResult.build_id)
         .where(
             TestResult.test_identity_id == identity_id,
             TestResult.status.in_(FAILED_STATUSES),
         )
-        .order_by(Run.started_at.desc(), TestResult.id.desc())
+        .order_by(Build.started_at.desc(), TestResult.id.desc())
         .limit(1)
     )
 
 
-def _candidates_for_run(
-    session: Session, run_id: int | None, ident: TestIdentity, latest: TestResult | None
+def _candidates_for_build(
+    session: Session, build_id: int | None, ident: TestIdentity, latest: TestResult | None
 ) -> dict:
-    """Candidate code/data changes in the run's window, **ranked by relevance to this test**.
+    """Candidate code/data changes in the build's window, **ranked by relevance to this test**.
 
-    Ranking (issue #50) scores each candidate against the test's failure in the candidate run
+    Ranking (issue #50) scores each candidate against the test's failure in the candidate build
     (falling back to the latest failing result): changed SVN paths vs the test's module and
     stack-frame paths, changed ``ut_ref`` entities vs the error text. Each row carries its match
     ``reasons`` so the record can show *why* a candidate ranks first; unmatched candidates stay
     chronological below the matched ones.
     """
-    if run_id is None:
+    if build_id is None:
         return {"code": [], "data": []}
-    run = session.get(Run, run_id)
-    if run is None:
+    build = session.get(Build, build_id)
+    if build is None:
         return {"code": [], "data": []}
     failure = (
         session.scalar(
             select(TestResult)
             .where(
-                TestResult.run_id == run.id,
+                TestResult.build_id == build.id,
                 TestResult.test_identity_id == ident.id,
                 TestResult.status.in_(FAILED_STATUSES),
             )
@@ -896,8 +907,8 @@ def _candidates_for_run(
         or latest
     )
     ranked = rank_candidates(
-        run.code_changes,
-        run.data_changes,
+        build.code_changes,
+        build.data_changes,
         file_path=failure.file_path if failure else None,
         error_details=failure.error_details if failure else None,
         error_stack_trace=failure.error_stack_trace if failure else None,
@@ -949,9 +960,9 @@ def _recurrence(
         "open_affected": len(open_episodes_for_signature(session, sig.id)),
         "occurrence_count": sig.occurrence_count,
         "exception_type": sig.exception_type,
-        "first_seen": _run_ref(session, sig.first_seen_run_id),
+        "first_seen": _build_ref(session, sig.first_seen_build_id),
         "first_seen_at": sig.first_seen_at,
-        "last_seen": _run_ref(session, sig.last_seen_run_id),
+        "last_seen": _build_ref(session, sig.last_seen_build_id),
         "last_seen_at": sig.last_seen_at,
         "similar": [asdict(c) for c in similar],
     }
@@ -974,8 +985,11 @@ def test_record(
     episodes = sorted(ident.episodes, key=lambda e: e.episode_number, reverse=True)
     current_ep = lc.current_episode if lc is not None else None
     latest = _latest_failing_result(session, identity_id)
-    candidates = _candidates_for_run(
-        session, current_ep.first_failure_run_id if current_ep is not None else None, ident, latest
+    candidates = _candidates_for_build(
+        session,
+        current_ep.first_failure_build_id if current_ep is not None else None,
+        ident,
+        latest,
     )
     flakiness = asdict(
         compute_stats(
@@ -1003,9 +1017,9 @@ def test_record(
             "acknowledged": lc.acknowledged,
             "acknowledged_by": lc.acknowledged_by,
             "acknowledged_at": lc.acknowledged_at,
-            "all_time_first_failure": _run_ref(session, lc.all_time_first_failure_run_id),
+            "all_time_first_failure": _build_ref(session, lc.all_time_first_failure_build_id),
             "all_time_first_failure_at": lc.all_time_first_failure_at,
-            "last_failing": _run_ref(session, lc.last_failing_run_id),
+            "last_failing": _build_ref(session, lc.last_failing_build_id),
             "last_failing_at": lc.last_failing_at,
             "current_episode_id": lc.current_episode_id,
         },
@@ -1089,16 +1103,16 @@ def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
     ]
 
 
-def run_summary(
+def build_summary(
     session: Session,
-    build: int,
+    number: int,
     *,
     limit: int = DEFAULT_ROW_LIMIT,
     page: int = 1,
     failures_only: bool = False,
     expand: Collection[str] = (),
 ) -> dict | None:
-    """The run summary: build/timing/totals, per-shard timing, baseline + diff, and results.
+    """The build summary: build/timing/totals, per-shard timing, baseline + diff, and results.
 
     The results table is the ~25k-row surface behind issues #19/#52: it is **paginated in SQL**
     (``limit`` rows per page, LIMIT/OFFSET) — never loaded whole, replacing the all-or-nothing
@@ -1109,19 +1123,19 @@ def run_summary(
     statuses — paging through ~25k rows to find the handful of failures is the current reality.
 
     Each diff bucket is ``{"rows": [...], "total": N}``, capped at :data:`DIFF_ROW_LIMIT` rows
-    unless its key (see :data:`_RUN_DIFF_SECTIONS`) is in ``expand`` — a bad night's regressions
+    unless its key (see :data:`_BUILD_DIFF_SECTIONS`) is in ``expand`` — a bad night's regressions
     would otherwise render as an unbounded link stream (issue #151).
     """
-    run = session.scalar(select(Run).where(Run.build_number == build))
-    if run is None:
+    build = session.scalar(select(Build).where(Build.build_number == number))
+    if build is None:
         return None
 
     baseline = (
-        session.get(Run, run.baseline_run_id)
-        if run.baseline_run_id is not None
-        else select_baseline(session, run)
+        session.get(Build, build.baseline_build_id)
+        if build.baseline_build_id is not None
+        else select_baseline(session, build)
     )
-    diff = compute_diff(session, run, baseline)
+    diff = compute_diff(session, build, baseline)
 
     # Resolve identity ids in the diff to linkable names.
     ids = set(diff.regressions + diff.newly_fixed + diff.still_failing + diff.removed)
@@ -1137,7 +1151,7 @@ def run_summary(
             "total": len(identity_ids),
         }
 
-    result_filters = [TestResult.run_id == run.id]
+    result_filters = [TestResult.build_id == build.id]
     if failures_only:
         result_filters.append(TestResult.status.in_(FAILED_STATUSES))
     results_total = session.scalar(
@@ -1156,16 +1170,16 @@ def run_summary(
     visible_results = session.execute(results_query).all()
 
     return {
-        "build": run.build_number,
-        "status": run.status,
-        "url": run.url,
-        "complete": run.complete,
-        "started_at": run.started_at,
-        "finished_at": run.finished_at,
+        "number": build.build_number,
+        "status": build.status,
+        "url": build.url,
+        "complete": build.complete,
+        "started_at": build.started_at,
+        "finished_at": build.finished_at,
         "totals": {
-            "passed": run.total_passed,
-            "failed": run.total_failed,
-            "skipped": run.total_skipped,
+            "passed": build.total_passed,
+            "failed": build.total_failed,
+            "skipped": build.total_skipped,
         },
         "shards": [
             {
@@ -1174,9 +1188,9 @@ def run_summary(
                 "started_at": s.started_at,
                 "finished_at": s.finished_at,
             }
-            for s in sorted(run.shards, key=lambda s: s.track)
+            for s in sorted(build.shards, key=lambda s: s.track)
         ],
-        "baseline": _run_ref(session, baseline.id) if baseline is not None else None,
+        "baseline": _build_ref(session, baseline.id) if baseline is not None else None,
         "diff": {
             "regressions": _diff_bucket("regressions", diff.regressions),
             "newly_fixed": _diff_bucket("newly_fixed", diff.newly_fixed),
@@ -1205,78 +1219,83 @@ def run_summary(
     }
 
 
-def job_runs(
+def job_builds(
     session: Session,
     *,
     poll_interval_seconds: int | None = None,
     limit: int = DEFAULT_ROW_LIMIT,
     page: int = 1,
 ) -> dict:
-    """The 'Job runs' page (issue #37): ingested runs, newest-first, with status, timing, test
+    """The 'Job builds' page (issue #37): ingested builds, newest-first, with status, timing, test
     totals and the regression / newly-fixed counts of its diff vs baseline.
 
-    Each run's counts are its diff against its baseline — the most recent *complete* run before it,
-    the same baseline the run summary uses (so the two pages never disagree). The list is
-    **paginated in SQL** (issue #52), and the per-run work is batched: one query fetches the page's
-    runs, one fetches the off-page baselines, and one grouped scan builds every needed
-    ``(identity_id, status)`` map — a constant query count per page instead of one scan per run.
+    Each build's counts are its diff against its baseline — the most recent *complete* build before
+    it,
+    the same baseline the build summary uses (so the two pages never disagree). The list is
+    **paginated in SQL** (issue #52), and the per-build work is batched: one query fetches the
+    page's
+    builds, one fetches the off-page baselines, and one grouped scan builds every needed
+    ``(identity_id, status)`` map — a constant query count per page instead of one scan per build.
 
     The poller block carries the last tick time and the projected next tick (last + interval) for
-    the header banner. The run-health timeline (issue #60) spans the runs on the rendered page.
+    the header banner. The build-health timeline (issue #60) spans the builds on the rendered page.
     """
-    total = session.scalar(select(func.count()).select_from(Run))
+    total = session.scalar(select(func.count()).select_from(Build))
     page, pages, offset = _page_window(total, limit=limit, page=page)
-    runs_query = select(Run).order_by(Run.started_at.desc(), Run.id.desc())
+    builds_query = select(Build).order_by(Build.started_at.desc(), Build.id.desc())
     if offset is not None:
-        runs_query = runs_query.limit(limit).offset(offset)
-    runs = session.scalars(runs_query).all()
+        builds_query = builds_query.limit(limit).offset(offset)
+    builds = session.scalars(builds_query).all()
 
-    # Resolve each run's baseline: the recorded id when the analysis stamped one, else the
-    # most-recent-complete-run rule (rare: the store's first run, or a run analysed pre-stamping).
-    by_id: dict[int, Run] = {run.id: run for run in runs}
+    # Resolve each build's baseline: the recorded id when the analysis stamped one, else the
+    # most-recent-complete-build rule (rare: the store's first build, or a build analysed
+    # pre-stamping).
+    by_id: dict[int, Build] = {build.id: build for build in builds}
     missing = {
-        run.baseline_run_id
-        for run in runs
-        if run.baseline_run_id is not None and run.baseline_run_id not in by_id
+        build.baseline_build_id
+        for build in builds
+        if build.baseline_build_id is not None and build.baseline_build_id not in by_id
     }
     if missing:
-        for baseline in session.scalars(select(Run).where(Run.id.in_(missing))).all():
+        for baseline in session.scalars(select(Build).where(Build.id.in_(missing))).all():
             by_id[baseline.id] = baseline
-    baselines: dict[int, Run | None] = {}
-    for run in runs:
-        if run.baseline_run_id is not None:
-            baselines[run.id] = by_id.get(run.baseline_run_id)
+    baselines: dict[int, Build | None] = {}
+    for build in builds:
+        if build.baseline_build_id is not None:
+            baselines[build.id] = by_id.get(build.baseline_build_id)
         else:
-            baselines[run.id] = select_baseline(session, run)
+            baselines[build.id] = select_baseline(session, build)
 
-    # One grouped scan builds every status map the page needs (runs + their baselines).
-    needed_ids = {run.id for run in runs} | {b.id for b in baselines.values() if b is not None}
+    # One grouped scan builds every status map the page needs (builds + their baselines).
+    needed_ids = {build.id for build in builds} | {
+        b.id for b in baselines.values() if b is not None
+    }
     status_maps = identity_status_maps(session, needed_ids)
 
     rows: list[dict] = []
-    for run in runs:
-        baseline = baselines[run.id]
+    for build in builds:
+        baseline = baselines[build.id]
         diff = compute_diff(
             session,
-            run,
+            build,
             baseline,
-            current=status_maps[run.id],
+            current=status_maps[build.id],
             baseline_status=status_maps[baseline.id] if baseline is not None else {},
         )
         rows.append(
             {
-                "build": run.build_number,
-                "status": run.status,
-                "url": run.url,
-                "complete": run.complete,
-                "started_at": run.started_at,
-                "finished_at": run.finished_at,
-                "duration_seconds": _duration_seconds(run.started_at, run.finished_at),
+                "number": build.build_number,
+                "status": build.status,
+                "url": build.url,
+                "complete": build.complete,
+                "started_at": build.started_at,
+                "finished_at": build.finished_at,
+                "duration_seconds": _duration_seconds(build.started_at, build.finished_at),
                 "totals": {
-                    "passed": run.total_passed,
-                    "failed": run.total_failed,
-                    "skipped": run.total_skipped,
-                    "total": run.total_passed + run.total_failed + run.total_skipped,
+                    "passed": build.total_passed,
+                    "failed": build.total_failed,
+                    "skipped": build.total_skipped,
+                    "total": build.total_passed + build.total_failed + build.total_skipped,
                 },
                 "regressions": len(diff.regressions),
                 "newly_fixed": len(diff.newly_fixed),
@@ -1289,15 +1308,19 @@ def job_runs(
     if last_poll_at is not None and poll_interval_seconds:
         next_poll_at = _aware(last_poll_at) + timedelta(seconds=poll_interval_seconds)
 
-    timeline = charts.run_health_timeline(
+    timeline = charts.build_health_timeline(
         [
-            {"build": r["build"], "failed": r["totals"]["failed"], "regressions": r["regressions"]}
+            {
+                "number": r["number"],
+                "failed": r["totals"]["failed"],
+                "regressions": r["regressions"],
+            }
             for r in reversed(rows)  # rows are newest-first; the chart reads left-to-right in time
         ]
     )
 
     return {
-        "runs": rows,
+        "builds": rows,
         "timeline": timeline,
         "total": total,
         "page": page,

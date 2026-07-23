@@ -4,7 +4,7 @@ Two source clocks feed the analyzer and they are NOT the same:
 
 * **Jenkins** emits epoch milliseconds in **UTC** (``timestamp``, ``startTimeMillis``).
 * **Oracle ut_ref** stores ``CREDATIM`` / ``UPDDATIM`` as **naive local wall-clock**: the server
-  OS clock runs on ``Europe/Luxembourg`` (UTC+2 in summer, +1 in winter) while ``DBTIMEZONE`` is
+  OS clock builds on ``Europe/Luxembourg`` (UTC+2 in summer, +1 in winter) while ``DBTIMEZONE`` is
   ``+00:00``. The stored value therefore has no offset and means "local time".
 
 Everything inside the app is stored and compared in **UTC, timezone-aware**. Convert at the edges:
@@ -48,7 +48,7 @@ def from_ut_ref_local(naive_local: datetime) -> datetime:
     explicitly rather than relied on as a default):
 
     * **Ambiguous** (fall-back night, 02:00-03:00 occurs twice): read as the *first* occurrence
-      (CEST), i.e. the earlier UTC instant. Data changes precede the run and the lookback window
+      (CEST), i.e. the earlier UTC instant. Data changes precede the build and the lookback window
       reaches hours back, so erring early keeps a candidate inside its window; erring late could
       push it past the window end and lose it.
     * **Nonexistent** (spring-forward gap, 02:00-03:00 never happens — only possible from clock

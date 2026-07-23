@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Help — how to use this dashboard</h1>
 <p class="meta">
-  This tool watches the nightly unit-test run, gathers the evidence for every new failure, and
+  This tool watches the nightly unit-test build, gathers the evidence for every new failure, and
   presents it here for a human to triage. It is deliberately <strong>assistive</strong>: it
   gathers, correlates, predicts and suggests — a person always confirms the cause and reason.
   Every action you take (Acknowledge, Confirm, Save) is stamped with the name in the
@@ -55,7 +55,7 @@
     predicted cause, triage status, flaky-only) works entirely through the URL, so a filtered view
     can be bookmarked or shared. Use the <strong>search box</strong> in the navbar to jump straight
     to a test by name. Owner, suite and predicted-cause values shown throughout the queue, on a
-    test's own record, a run's results and the flaky leaderboard are themselves
+    test's own record, a build's results and the flaky leaderboard are themselves
     <strong>clickable pivots</strong> — click one to jump straight to the triage queue filtered to
     just that value.
   </p>
@@ -70,19 +70,19 @@
 
 <h2 id="statuses">Statuses &amp; badges</h2>
 <div class="card">
-  <h3 class="h6 fw-bold">Test result (per run)</h3>
-  <p class="meta">The raw outcome of one test in one run — always shown with both a colour and a
+  <h3 class="h6 fw-bold">Test result (per build)</h3>
+  <p class="meta">The raw outcome of one test in one build — always shown with both a colour and a
     glyph so it reads without colour vision.</p>
   <table class="table table-sm align-middle mb-3">
     <tr><td style="width: 10rem"><span class="PASSED"><span class="status-glyph">✓</span> PASSED</span></td><td>The test passed.</td></tr>
-    <tr><td><span class="FAILED"><span class="status-glyph">✕</span> FAILED</span></td><td>The test failed in this run.</td></tr>
+    <tr><td><span class="FAILED"><span class="status-glyph">✕</span> FAILED</span></td><td>The test failed in this build.</td></tr>
     <tr><td><span class="SKIPPED"><span class="status-glyph">○</span> SKIPPED</span></td><td>The test did not run (e.g. disabled).</td></tr>
-    <tr><td><span class="REGRESSION">REGRESSION</span></td><td>A failure that is <em>new</em> versus the previous complete run — the thing the daily queue and email digest are built around.</td></tr>
+    <tr><td><span class="REGRESSION">REGRESSION</span></td><td>A failure that is <em>new</em> versus the previous complete build — the thing the daily queue and email digest are built around.</td></tr>
     <tr><td><span class="FIXED">FIXED</span></td><td>Passed again after having failed — shows up in "Recently fixed".</td></tr>
   </table>
 
   <h3 class="h6 fw-bold">Test lifecycle</h3>
-  <p class="meta">The test's ongoing state, independent of any single run.</p>
+  <p class="meta">The test's ongoing state, independent of any single build.</p>
   <table class="table table-sm align-middle mb-3">
     <tr><td style="width: 10rem"><span class="FAILING">FAILING</span></td><td>Currently failing — open in "Still failing" until it passes again.</td></tr>
     <tr><td><span class="FIXED">FIXED</span></td><td>Passing again. A test that fails again later reopens with a fresh <em>failure episode</em> — its history is never overwritten, so repeat regressions are visible.</td></tr>
@@ -96,7 +96,7 @@
     <tr><td style="width: 10rem">UNTRIAGED</td><td>Default — acknowledged, nothing decided yet.</td></tr>
     <tr><td>INVESTIGATING</td><td>Someone is actively looking into it.</td></tr>
     <tr><td>ROOT_CAUSED</td><td>The cause is understood (reason/causing person filled in) but the fix hasn't landed.</td></tr>
-    <tr><td>RESOLVED</td><td>Considered done — typically once the fix has been confirmed in a later run.</td></tr>
+    <tr><td>RESOLVED</td><td>Considered done — typically once the fix has been confirmed in a later build.</td></tr>
   </table>
 
   <h3 class="h6 fw-bold">Predicted cause &amp; confidence</h3>
@@ -115,9 +115,9 @@
     <tr><td>reopened ×N</td><td>How many times this test has failed, been fixed, and failed again.</td></tr>
     <tr><td><span class="badge match">match</span></td><td>Used on the knowledge base / similar-cases tables to flag a matching signature.</td></tr>
     <tr><td>shard-correlated</td><td>On the flaky leaderboard: this test only ever fails in one track, a tell for a shard-specific (rather than genuinely random) flake.</td></tr>
-    <tr><td>pattern: consecutive / intermittent / stable / none</td><td>How a flaky test's failures are distributed over the window — consecutive runs in a row, scattered intermittently, or effectively stable/none.</td></tr>
+    <tr><td>pattern: consecutive / intermittent / stable / none</td><td>How a flaky test's failures are distributed over the window — consecutive builds in a row, scattered intermittently, or effectively stable/none.</td></tr>
     <tr><td><span class="badge">overridden</span></td><td>Control panel: this threshold has a live override in place, above its env-file default.</td></tr>
-    <tr><td><span class="badge text-bg-success">SUCCESS</span> / <span class="badge text-bg-warning">UNSTABLE</span> / <span class="badge text-bg-danger">FAILURE</span></td><td>Job runs page: the Jenkins build's own result for that run (separate from any individual test's status).</td></tr>
+    <tr><td><span class="badge text-bg-success">SUCCESS</span> / <span class="badge text-bg-warning">UNSTABLE</span> / <span class="badge text-bg-danger">FAILURE</span></td><td>Job builds page: the Jenkins build's own result for that build (separate from any individual test's status).</td></tr>
   </table>
 </div>
 
@@ -197,7 +197,7 @@
     Every failure is reduced to a <strong>signature</strong>: the test's identity plus its error
     text with the noisy parts (numbers, timestamps, hex, paths) masked out, so the same failure
     is recognized again even if the odd detail changes. When a new failure matches a past
-    signature, the record surfaces <em>"this looks like the failure on run …; previous reason
+    signature, the record surfaces <em>"this looks like the failure on build …; previous reason
     was …; caused by …"</em> — someone else's already-confirmed answer, ready to reuse.
   </p>
   <p class="mb-0">
@@ -212,7 +212,7 @@
 <h2 id="pages">Other pages</h2>
 <div class="card">
   <table class="table table-sm align-middle mb-0">
-    <tr><td style="width: 10rem"><a href="/runs">Job runs</a></td><td>Every ingested run, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a run-health timeline chart and the poller's last/next tick. A run's failed count links straight to that run's results filtered to failures only.</td></tr>
+    <tr><td style="width: 10rem"><a href="/builds">Job builds</a></td><td>Every ingested build, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a build-health timeline chart and the poller's last/next tick. A build's failed count links straight to that build's results filtered to failures only.</td></tr>
     <tr><td><a href="/flaky">Flaky</a></td><td>Tests ranked by <strong>oscillation</strong> (how often they flip between pass and fail), not just fail count — a solidly-failing test is a regression, not flaky.</td></tr>
     <tr><td><a href="/kb">Knowledge base</a></td><td>Free-text search over past failures, described above.</td></tr>
     <tr><td><a href="/control">Control</a></td><td>Live-tunable thresholds (flaky sensitivity, knowledge-base cutoffs, retention windows, and more — no redeploy needed), the AI suggestion accuracy table, poller health, build quarantine, and on-demand ingest of a specific build or range.</td></tr>

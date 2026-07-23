@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% import "_macros.html" as ui %}
-{% block title %}Run #{{ run.build if run else build }} — UT Analyzer{% endblock %}
+{% block title %}Build #{{ build.number if build else number }} — UT Analyzer{% endblock %}
 
 {#- One diff bucket ({rows, total}, capped in the view layer, issue #151) as a comma-separated
-    link stream. When capped, `url` — pre-built by views.run_expand_urls so failures_only and the
+    link stream. When capped, `url` — pre-built by views.build_expand_urls so failures_only and the
     results page survive — re-requests the page with this bucket added to ?expand=. -#}
 {% macro diff_list(bucket, url) -%}
   {%- if not bucket.rows -%}<span class="empty">none</span>
@@ -16,21 +16,21 @@
 {%- endmacro %}
 
 {% block content %}
-{{ ui.breadcrumb("Job runs", "/runs") }}
-{% if not run %}
-  <h1>No run ingested for build #{{ build }}</h1>
+{{ ui.breadcrumb("Job builds", "/builds") }}
+{% if not build %}
+  <h1>No build ingested for build #{{ number }}</h1>
   <p class="meta">Run the back-fill CLI: <code>uta backfill &lt;build&gt;</code></p>
 {% else %}
-<h1>Run #{{ run.build }} — {{ run.status }}{% if not run.complete %} (incomplete){% endif %}</h1>
+<h1>Build #{{ build.number }} — {{ build.status }}{% if not build.complete %} (incomplete){% endif %}</h1>
 <p class="meta">
-  {{ run.started_at|ts }} → {{ run.finished_at|ts }}<br>
+  {{ build.started_at|ts }} → {{ build.finished_at|ts }}<br>
   {#- A non-zero failed count is actionable (issue #157): it deep-links to the failures-only
       results view below (the same GET param the checkbox sets). Zero stays plain text. -#}
-  {{ run.totals.passed }} passed ·
-  {% if run.totals.failed -%}
-  <a class="pivot-link" href="/runs/{{ run.build }}?failures_only=1#results">{{ run.totals.failed }} failed</a>
-  {%- else %}{{ run.totals.failed }} failed{% endif %} · {{ run.totals.skipped }} skipped
-  {% if run.url %}· <a href="{{ run.url }}">Jenkins</a>{% endif %}
+  {{ build.totals.passed }} passed ·
+  {% if build.totals.failed -%}
+  <a class="pivot-link" href="/builds/{{ build.number }}?failures_only=1#results">{{ build.totals.failed }} failed</a>
+  {%- else %}{{ build.totals.failed }} failed{% endif %} · {{ build.totals.skipped }} skipped
+  {% if build.url %}· <a href="{{ build.url }}">Jenkins</a>{% endif %}
 </p>
 
 <h2>Shards</h2>
@@ -38,7 +38,7 @@
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th>Track</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
   <tbody>
-    {% for s in run.shards %}
+    {% for s in build.shards %}
     <tr><td>{{ s.track }}</td><td>{{ s.status }}</td><td>{{ s.started_at|ts }}</td><td>{{ s.finished_at|ts }}</td></tr>
     {% endfor %}
   </tbody>
@@ -46,29 +46,29 @@
 </div>
 
 <h2 id="diff">Diff vs baseline
-  {% if run.baseline %}(<a href="/runs/{{ run.baseline.build }}">#{{ run.baseline.build }}</a>){% else %}(no baseline — first complete run){% endif %}
+  {% if build.baseline %}(<a href="/builds/{{ build.baseline.number }}">#{{ build.baseline.number }}</a>){% else %}(no baseline — first complete build){% endif %}
 </h2>
 <div class="table-responsive">
 <table class="table table-sm align-middle">
   <tbody>
-    <tr><th>Regressions — new failures ({{ run.diff.regressions.total }})</th><td>{{ diff_list(run.diff.regressions, diff_expand_urls["regressions"]) }}</td></tr>
-    <tr><th>Newly fixed ({{ run.diff.newly_fixed.total }})</th><td>{{ diff_list(run.diff.newly_fixed, diff_expand_urls["newly_fixed"]) }}</td></tr>
-    <tr><th>Still failing ({{ run.diff.still_failing.total }})</th><td>{{ diff_list(run.diff.still_failing, diff_expand_urls["still_failing"]) }}</td></tr>
-    <tr><th>Removed ({{ run.diff.removed.total }})</th><td>{{ diff_list(run.diff.removed, diff_expand_urls["removed"]) }}</td></tr>
+    <tr><th>Regressions — new failures ({{ build.diff.regressions.total }})</th><td>{{ diff_list(build.diff.regressions, diff_expand_urls["regressions"]) }}</td></tr>
+    <tr><th>Newly fixed ({{ build.diff.newly_fixed.total }})</th><td>{{ diff_list(build.diff.newly_fixed, diff_expand_urls["newly_fixed"]) }}</td></tr>
+    <tr><th>Still failing ({{ build.diff.still_failing.total }})</th><td>{{ diff_list(build.diff.still_failing, diff_expand_urls["still_failing"]) }}</td></tr>
+    <tr><th>Removed ({{ build.diff.removed.total }})</th><td>{{ diff_list(build.diff.removed, diff_expand_urls["removed"]) }}</td></tr>
   </tbody>
 </table>
 </div>
 
 {#- The heading names the active filter (issue #157): "failures only (512 of 24813)" — the
-    filtered count against the run's full result-row total (passed+failed+skipped counts
+    filtered count against the build's full result-row total (passed+failed+skipped counts
     per-(test, track) results, the same rows the table paginates; no extra query). -#}
-<h2 id="results">Results{% if run.failures_only %} — failures only ({{ run.results_total }} of {{ run.totals.passed + run.totals.failed + run.totals.skipped }}){% else %} ({{ run.results_total }}){% endif %}</h2>
+<h2 id="results">Results{% if build.failures_only %} — failures only ({{ build.results_total }} of {{ build.totals.passed + build.totals.failed + build.totals.skipped }}){% else %} ({{ build.results_total }}){% endif %}</h2>
 {#- The checkbox submits on change (same instant-filter pattern as the triage selects, issue #77);
     the Apply button stays as the no-JS fallback. -#}
-<form class="d-flex align-items-center gap-2 mb-2" method="get" action="/runs/{{ run.build }}#results">
+<form class="d-flex align-items-center gap-2 mb-2" method="get" action="/builds/{{ build.number }}#results">
   <div class="form-check">
     <input class="form-check-input" type="checkbox" name="failures_only" value="1" id="failures-only"
-           onchange="this.form.submit()" {% if run.failures_only %}checked{% endif %}>
+           onchange="this.form.submit()" {% if build.failures_only %}checked{% endif %}>
     <label class="form-check-label" for="failures-only">Failures only</label>
   </div>
   <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
@@ -79,7 +79,7 @@
     <tr><th>Status</th><th>Track</th><th>Test</th><th>Owner</th><th>Duration</th><th>Location</th></tr>
   </thead>
   <tbody>
-    {% for r in run.results %}
+    {% for r in build.results %}
     <tr>
       <td class="{{ r.status }}">{{ r.status }}</td>
       <td>{{ r.track }}</td>
@@ -92,6 +92,6 @@
   </tbody>
 </table>
 </div>
-{{ ui.pager(run.page, run.pages, run.results_total, anchor="results", extra="&failures_only=1" if run.failures_only else "") }}
+{{ ui.pager(build.page, build.pages, build.results_total, anchor="results", extra="&failures_only=1" if build.failures_only else "") }}
 {% endif %}
 {% endblock %}

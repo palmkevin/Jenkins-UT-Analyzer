@@ -1,4 +1,4 @@
-"""Offline test of the Slice-0 read-only run view (SQLite + injected session factory)."""
+"""Offline test of the Slice-0 read-only build view (SQLite + injected session factory)."""
 
 from __future__ import annotations
 
@@ -34,31 +34,31 @@ def test_health(client):
     body = resp.json()
     assert body["status"] == "ok"
     assert body["db"] == "ok"
-    assert body["poller"] == "never"  # no heartbeat row — this deployment runs no poller
+    assert body["poller"] == "never"  # no heartbeat row — this deployment builds no poller
 
 
 def test_run_view_renders_results(client):
-    resp = client.get("/runs/1702")
+    resp = client.get("/builds/1702")
     assert resp.status_code == 200
     body = resp.text
-    assert "Run #1702" in body
+    assert "Build #1702" in body
     assert "permanent_py39" in body
     assert "ut_accounting.ac_csvc.TestClass" in body
 
 
 def test_unknown_run_is_graceful(client):
-    resp = client.get("/runs/9999")
+    resp = client.get("/builds/9999")
     assert resp.status_code == 200
-    assert "No run ingested" in resp.text
+    assert "No build ingested" in resp.text
 
 
-def test_job_runs_page_lists_the_run(client):
-    resp = client.get("/runs")
+def test_job_builds_page_lists_the_run(client):
+    resp = client.get("/builds")
     assert resp.status_code == 200
     body = resp.text
-    assert "Job runs" in body
+    assert "Job builds" in body
     # The ingested build is listed and links to its detail page.
-    assert 'href="/runs/1702"' in body
-    # The run-health timeline chart (issue #53): inline SVG, no JS.
+    assert 'href="/builds/1702"' in body
+    # The build-health timeline chart (issue #53): inline SVG, no JS.
     assert '<svg class="timeline-chart"' in body
     assert '<polyline class="FAILED"' in body

@@ -1,7 +1,7 @@
 """Live Keycloak reachability (local-only, never in CI — see the testing contract).
 
 Asserts the realm's OIDC discovery document exposes everything the Phase-2 auth flow relies on.
-Run once the confidential client is provisioned:  pytest -m live tests/live/test_keycloak_live.py
+Build once the confidential client is provisioned:  pytest -m live tests/live/test_keycloak_live.py
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ from uta.control.tunables import (
     set_override,
 )
 from uta.db import session_scope
-from uta.models import IngestJob, Run, SettingOverride
+from uta.models import Build, IngestJob, SettingOverride
 from uta.models.enums import IngestJobStatus
 from uta.poller import poll_tick
 
@@ -156,7 +156,7 @@ def test_run_ingest_job_ingests_range_and_finishes(session_factory):
         assert job.builds_done == 2
         assert job.finished_at is not None
         # The builds were actually ingested.
-        assert s.scalar(select(func.count()).select_from(Run)) == 2
+        assert s.scalar(select(func.count()).select_from(Build)) == 2
 
 
 def test_run_ingest_job_records_failure(session_factory):
@@ -215,7 +215,7 @@ def test_poll_tick_ingests_and_records_heartbeat(session_factory):
     assert processed == [1, 2]
     with session_scope(session_factory) as s:
         assert read_heartbeat(s).last_processed_count == 2
-        assert s.scalar(select(func.count()).select_from(Run)) == 2
+        assert s.scalar(select(func.count()).select_from(Build)) == 2
 
 
 def test_poll_tick_swallows_error_and_records_it(session_factory):

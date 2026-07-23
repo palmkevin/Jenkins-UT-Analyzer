@@ -31,7 +31,7 @@ _MAX_CANDIDATES = 3
 SYSTEM_PROMPT = (
     "You triage failing nightly unit tests for a laboratory information management system (LIMS). "
     "You are given one failing test, a deterministic predicted cause, the candidate code commits "
-    "and reference-data changes in the run window ranked by relevance to this test (with the "
+    "and reference-data changes in the build window ranked by relevance to this test (with the "
     "match reason), and similar past failures with any validated human conclusions. "
     "Reply with ONE concise sentence naming the most likely root cause and, if the evidence "
     "supports it, the specific commit, change or person to look at. Prefer a validated past "
@@ -111,7 +111,7 @@ def build_prompt(
 ) -> tuple[str, str]:
     """Build the ``(system, user)`` prompt for one failing test. Deterministic — no I/O.
 
-    ``code_candidates`` / ``data_candidates`` are the run's change candidates already ranked
+    ``code_candidates`` / ``data_candidates`` are the build's change candidates already ranked
     against this test (:func:`uta.analyze.relevance.rank_candidates`); the top
     :data:`_MAX_CANDIDATES` of each kind are rendered in detail with their match reason.
     """

@@ -34,7 +34,7 @@ def assert_pg_trgm(engine: Engine) -> None:
         present = conn.scalar(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'"))
     if not present:
         raise MissingExtensionError(
-            "pg_trgm extension is not installed — run `uta migrate` (alembic upgrade head)."
+            "pg_trgm extension is not installed — build `uta migrate` (alembic upgrade head)."
         )
 
 

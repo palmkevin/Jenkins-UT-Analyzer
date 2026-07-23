@@ -21,10 +21,10 @@ from sqlalchemy.orm import Session
 
 from uta.models import (
     Attribution,
+    Build,
     Classification,
     FailureEpisode,
     FailureSignature,
-    Run,
     TestLifecycle,
     TestResult,
 )
@@ -43,12 +43,12 @@ def _episode_signature_id(session: Session, episode: FailureEpisode) -> int | No
     """
     return session.scalar(
         select(TestResult.signature_id)
-        .join(Run, Run.id == TestResult.run_id)
+        .join(Build, Build.id == TestResult.build_id)
         .where(
             TestResult.test_identity_id == episode.test_identity_id,
             TestResult.signature_id.isnot(None),
         )
-        .order_by(Run.started_at.desc(), TestResult.id.desc())
+        .order_by(Build.started_at.desc(), TestResult.id.desc())
         .limit(1)
     )
 

@@ -8,13 +8,14 @@ and so importing this package registers every mapper on ``Base.metadata`` (Alemb
 - **actor** is a plain string on every human action (acknowledged_by / validated_by / entered_by /
   causing_person) — Phase-1 self-declared, Phase-2 Keycloak swaps the value with no model change;
   there is intentionally no ``users`` table.
-- **Failure history** is the ``test_results`` rows across runs, not a separate table.
-- Candidate **signals** are run-windowed (link to a run), not per-test, in v1.
+- **Failure history** is the ``test_results`` rows across builds, not a separate table.
+- Candidate **signals** are build-windowed (link to a build), not per-test, in v1.
 """
 
 from __future__ import annotations
 
 from uta.models.attribution import Attribution
+from uta.models.build import Build, BuildShard
 from uta.models.classification import Classification
 from uta.models.control import BuildQuarantine, IngestJob, PollerHeartbeat, SettingOverride
 from uta.models.enums import (
@@ -31,13 +32,12 @@ from uta.models.identity import TestIdentity
 from uta.models.kb import FailureSignature
 from uta.models.lifecycle import FailureEpisode, TestLifecycle
 from uta.models.result import TestResult
-from uta.models.run import Run, RunShard
 from uta.models.signals import CodeChangeCandidate, DataChangeCandidate
 
 __all__ = [
     # entities
-    "Run",
-    "RunShard",
+    "Build",
+    "BuildShard",
     "TestIdentity",
     "TestResult",
     "TestLifecycle",

@@ -2,7 +2,7 @@
 
 These drive the *real* ingest -> analysis -> web stack on the fabricated history (no external
 system), so they double as the smoke test for the online-hosted demo: if these pass, the deployed
-app renders a populated, coherent dashboard. They run in the default offline suite (no ``live``
+app renders a populated, coherent dashboard. They build in the default offline suite (no ``live``
 marker), so CI executes them on every PR.
 """
 
@@ -140,7 +140,7 @@ def test_recurrence_and_similar_cases(session_factory):
 
 
 def test_divergent_top_ranked_candidates_in_the_same_run(session_factory):
-    """Two failures of the same run history lead with visibly different top candidates (#50):
+    """Two failures of the same build history lead with visibly different top candidates (#50):
     the invoice-rounding failure's is the commit touching its own module (path overlap), the
     timezone failure's is the LORDER data change its error text names (entity mention)."""
     session = session_factory()
@@ -270,14 +270,14 @@ def test_pdf_render_ties_stay_unknown_without_relevance(session_factory):
     assert all(e["evidence"]["relevance"]["tie_break"] is None for e in both_kinds)
 
 
-def test_run_summary_has_baseline_and_diff(session_factory):
+def test_build_summary_has_baseline_and_diff(session_factory):
     # Build 612 (index 11) opens the invoice-rounding regression.
-    run = views.run_summary(session_factory(), FIRST_BUILD + 11, limit=500)
-    assert run is not None
-    assert run["complete"] is True
-    assert run["baseline"] is not None
-    assert run["baseline"]["build"] == FIRST_BUILD + 10
-    reg = {r["test_id"] for r in run["diff"]["regressions"]["rows"]}
+    build = views.build_summary(session_factory(), FIRST_BUILD + 11, limit=500)
+    assert build is not None
+    assert build["complete"] is True
+    assert build["baseline"] is not None
+    assert build["baseline"]["number"] == FIRST_BUILD + 10
+    reg = {r["test_id"] for r in build["diff"]["regressions"]["rows"]}
     assert "ut_billing.bi_round.TestClass.test_invoice_rounding" in reg
 
 
@@ -288,7 +288,7 @@ def test_demo_app_serves_all_views():
     # The seeded heartbeat is fresh, so the demo reports a healthy poller.
     assert health.json()["status"] == "ok"
     assert health.json()["poller"] == "ok"
-    for path in ("/", "/flaky", "/kb", f"/runs/{FIRST_BUILD + 11}"):
+    for path in ("/", "/flaky", "/kb", f"/builds/{FIRST_BUILD + 11}"):
         resp = client.get(path)
         assert resp.status_code == 200, path
         assert resp.text  # non-empty HTML
@@ -469,7 +469,7 @@ def test_timezone_record_exercises_the_trace_clamp(session_factory):
 
 def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     """Issue #157: the demo's plain facts are pivots — owner and predicted-cause cells in the
-    triage queue, the run results' owner column, the flaky leaderboard's owner and the search
+    triage queue, the build results' owner column, the flaky leaderboard's owner and the search
     pick-list's suite/owner all deep-link to the triage queue pre-filtered on that one value."""
     from uta.web.app import create_app
 
@@ -486,8 +486,8 @@ def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     assert f'<a class="pivot-link" href="/?cause={row["predicted_cause"]}"' in triage_page
 
     # Build 612's results include the owned invoice-rounding failure -> owner column pivots.
-    run_page = client.get(f"/runs/{FIRST_BUILD + 11}").text
-    assert f'<a class="pivot-link" href="/?{owner_q}"' in run_page
+    build_page = client.get(f"/builds/{FIRST_BUILD + 11}").text
+    assert f'<a class="pivot-link" href="/?{owner_q}"' in build_page
 
     flaky_page = client.get("/flaky").text
     assert 'class="pivot-link" href="/?owner=' in flaky_page
@@ -501,21 +501,21 @@ def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     assert f"owner: {row['owner']}" in filtered
 
 
-def test_demo_run_page_failed_count_pivots_to_failures_only(session_factory):
-    """Issue #157: the run header's non-zero failed total deep-links to the failures-only results
+def test_demo_build_page_failed_count_pivots_to_failures_only(session_factory):
+    """Issue #157: the build header's non-zero failed total deep-links to the failures-only results
     view, whose heading then names the active filter with filtered-of-total counts."""
     from uta.web.app import create_app
 
-    build = FIRST_BUILD + 11
-    run = views.run_summary(session_factory(), build, limit=500)
-    failed = run["totals"]["failed"]
+    number = FIRST_BUILD + 11
+    build = views.build_summary(session_factory(), number, limit=500)
+    failed = build["totals"]["failed"]
     assert failed > 0
-    total = run["totals"]["passed"] + failed + run["totals"]["skipped"]
+    total = build["totals"]["passed"] + failed + build["totals"]["skipped"]
 
     client = TestClient(create_app(session_factory=session_factory))
-    page = client.get(f"/runs/{build}").text
-    assert f'href="/runs/{build}?failures_only=1#results">{failed} failed</a>' in page
-    filtered = client.get(f"/runs/{build}?failures_only=1").text
+    page = client.get(f"/builds/{number}").text
+    assert f'href="/builds/{number}?failures_only=1#results">{failed} failed</a>' in page
+    filtered = client.get(f"/builds/{number}?failures_only=1").text
     assert f"Results — failures only ({failed} of {total})" in filtered
 
 

@@ -5,7 +5,7 @@ Builds a throwaway SQLite database, creates the schema, seeds it with the synthe
 ``pg_trgm`` (the KB falls back to ``difflib``), no Jenkins/Oracle/SMTP/LLM — nothing external.
 
 The store is a **fresh temp file per process**, re-seeded on startup, so the deployment is stateless
-and reproducible: a restart wipes any demo edits and rebuilds the same dataset. Run it with::
+and reproducible: a restart wipes any demo edits and rebuilds the same dataset. Build it with::
 
     uvicorn uta.demo.app:app --host 0.0.0.0 --port 8000   # (Render supplies $PORT)
 

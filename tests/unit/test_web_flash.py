@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from tests.builders import get_identity, make_run
-from uta.analyze.lifecycle import apply_run
+from tests.builders import get_identity, make_build
+from uta.analyze.lifecycle import apply_build
 from uta.control import jobs
 from uta.db import Base, make_session_factory, session_scope
 from uta.web.app import create_app
@@ -38,8 +38,8 @@ def session_factory():
 def seeded(session_factory):
     """Two failing tests with open episodes, for the ack/attribute actions."""
     with session_scope(session_factory) as s:
-        r1 = make_run(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
-        apply_run(s, r1, baseline=None)
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_build(s, r1, baseline=None)
     return session_factory
 
 
@@ -129,18 +129,18 @@ def test_bulk_acknowledge_empty_selection_is_an_error(client):
 
 
 def test_acknowledge_by_signature_message_carries_count(session_factory):
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
     from uta.web import actions
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED"},
             errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
         sig_id = actions._episode_signature_id(
             s, get_identity(s, "alpha").lifecycle.current_episode
         )
@@ -150,18 +150,18 @@ def test_acknowledge_by_signature_message_carries_count(session_factory):
 
 
 def test_attribute_by_signature_message_carries_count(session_factory):
-    from uta.kb.store import record_signatures_for_run
+    from uta.kb.store import record_signatures_for_build
     from uta.web import actions
 
     with session_scope(session_factory) as s:
-        r1 = make_run(
+        r1 = make_build(
             s,
             1,
             {"alpha": "FAILED", "beta": "FAILED"},
             errors={"alpha": ("boom", "Traceback"), "beta": ("boom", "Traceback")},
         )
-        apply_run(s, r1, baseline=None)
-        record_signatures_for_run(s, r1)
+        apply_build(s, r1, baseline=None)
+        record_signatures_for_build(s, r1)
         sig_id = actions._episode_signature_id(
             s, get_identity(s, "alpha").lifecycle.current_episode
         )

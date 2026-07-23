@@ -1,12 +1,13 @@
 """Demo mode — a fully synthetic, offline dataset for integration tests and online hosting.
 
 No external system (Jenkins / Oracle ``ut_ref`` / FishEye / SMTP / LLM) is reachable when the app
-runs "in the wild" (e.g. the public Render deployment, or CI). This package fabricates a realistic
-run history entirely in-process so the whole ingest -> analysis -> dashboard stack can be exercised
+builds "in the wild" (e.g. the public Render deployment, or CI). This package fabricates a realistic
+build history entirely in-process so the whole ingest -> analysis -> dashboard stack can be
+exercised
 against **committed, synthetic** data:
 
 - :mod:`uta.demo.dataset` — a fake Jenkins client + tracking feed that generate deterministic build
-  payloads shaped exactly like the real ones (so the real parsers/pipeline run unchanged).
+  payloads shaped exactly like the real ones (so the real parsers/pipeline build unchanged).
 - :mod:`uta.demo.seed` — drives the real :func:`uta.ingest.pipeline.ingest_build` over those builds
   into any session factory, then adds a few human triage actions.
 - :mod:`uta.demo.app` — an ephemeral SQLite store, seeded on startup, wired to the real web app.

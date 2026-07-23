@@ -21,28 +21,28 @@ def _with_ut_stage_status(payload: dict, track: str, status: str) -> dict:
 
 
 def test_both_ut_shards_parsed(wfapi_1702):
-    run = parse_wfapi(wfapi_1702)
-    assert set(run.shards) == {"permanent", "permanent_py39"}
+    build = parse_wfapi(wfapi_1702)
+    assert set(build.shards) == {"permanent", "permanent_py39"}
 
 
 def test_shard_timings_are_utc(wfapi_1702):
-    run = parse_wfapi(wfapi_1702)
-    for shard in run.shards.values():
+    build = parse_wfapi(wfapi_1702)
+    for shard in build.shards.values():
         assert shard.start.tzinfo == UTC
         assert shard.end > shard.start
 
 
 def test_completeness_uses_expected_shard_count(wfapi_1702):
-    run = parse_wfapi(wfapi_1702)
-    assert run.is_complete(expected_shards=2)
-    assert not run.is_complete(expected_shards=3)
+    build = parse_wfapi(wfapi_1702)
+    assert build.is_complete(expected_shards=2)
+    assert not build.is_complete(expected_shards=3)
 
 
 @pytest.mark.parametrize("status", ["SUCCESS", "UNSTABLE", "FAILED"])
 def test_completeness_accepts_finished_stage_statuses(wfapi_1702, status):
     """UNSTABLE/FAILED are test outcomes, not truncation — the shard still ran to the end."""
-    run = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
-    assert run.is_complete(expected_shards=2)
+    build = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
+    assert build.is_complete(expected_shards=2)
 
 
 @pytest.mark.parametrize(
@@ -52,16 +52,16 @@ def test_completeness_accepts_finished_stage_statuses(wfapi_1702, status):
 def test_completeness_rejects_unfinished_stage_statuses(wfapi_1702, status):
     """An aborted build still lists both UT stages, so the shard count alone lies (issue #83);
     unknown statuses fail safe to incomplete."""
-    run = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
-    assert set(run.shards) == {"permanent", "permanent_py39"}  # both stages present…
-    assert not run.is_complete(expected_shards=2)  # …yet the run is not complete
+    build = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
+    assert set(build.shards) == {"permanent", "permanent_py39"}  # both stages present…
+    assert not build.is_complete(expected_shards=2)  # …yet the build is not complete
 
 
 def test_window_spans_all_shards(wfapi_1702):
-    run = parse_wfapi(wfapi_1702)
-    start, end = run.window
-    assert start == min(s.start for s in run.shards.values())
-    assert end == max(s.end for s in run.shards.values())
+    build = parse_wfapi(wfapi_1702)
+    start, end = build.window
+    assert start == min(s.start for s in build.shards.values())
+    assert end == max(s.end for s in build.shards.values())
 
 
 def test_find_unittest_stages_picks_named_suites_both_tracks(wfapi_1702):

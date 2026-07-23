@@ -1,8 +1,8 @@
 """Deterministic cause classification (the predicted cause).
 
-The pipeline has already persisted the code-change candidates (SVN-update revisions in the run
+The pipeline has already persisted the code-change candidates (SVN-update revisions in the build
 window) and data-change candidates (`ut_ref` changes in the lookback window, with the B1 tolerance
-margin) on the run. This step turns their presence — sharpened by the **per-test relevance
+margin) on the build. This step turns their presence — sharpened by the **per-test relevance
 ranking** (:mod:`uta.analyze.relevance`) — into a ``CODE_CHANGE`` / ``DATA_CHANGE`` /
 ``INFRASTRUCTURE`` / ``UNKNOWN`` label per newly-opened failure episode, attaching the evidence so
 the human can attribute the real cause.
@@ -50,10 +50,10 @@ from uta.analyze.relevance import SCORE_MODULE, RankedChanges, rank_candidates
 from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import PROVENANCE_WEIGHT, strongest_provenance_weight
 from uta.models import (
+    Build,
     Classification,
     CodeChangeCandidate,
     DataChangeCandidate,
-    Run,
     TestIdentity,
     TestResult,
 )
@@ -85,12 +85,12 @@ def _sole_author(candidates: Iterable[CodeChangeCandidate | DataChangeCandidate]
     return next(iter(authors)) or None
 
 
-def _failing_results(session: Session, run: Run, identity_id: int) -> list[TestResult]:
+def _failing_results(session: Session, build: Build, identity_id: int) -> list[TestResult]:
     return list(
         session.scalars(
             select(TestResult)
             .where(
-                TestResult.run_id == run.id,
+                TestResult.build_id == build.id,
                 TestResult.test_identity_id == identity_id,
                 TestResult.status.in_(FAILED_STATUSES),
             )
@@ -100,17 +100,18 @@ def _failing_results(session: Session, run: Run, identity_id: int) -> list[TestR
 
 
 def _rank_for_failure(
-    session: Session, run: Run, identity_id: int, failures: list[TestResult]
+    session: Session, build: Build, identity_id: int, failures: list[TestResult]
 ) -> RankedChanges:
-    """Rank the run's candidates against this test's failure (the first result with error text)."""
+    """Rank the build's candidates against this test's failure (the first result with error
+    text)."""
     primary = next(
         (r for r in failures if r.error_details or r.error_stack_trace),
         failures[0] if failures else None,
     )
     identity = session.get(TestIdentity, identity_id)
     return rank_candidates(
-        run.code_changes,
-        run.data_changes,
+        build.code_changes,
+        build.data_changes,
         file_path=primary.file_path if primary else None,
         error_details=primary.error_details if primary else None,
         error_stack_trace=primary.error_stack_trace if primary else None,
@@ -159,14 +160,14 @@ def _confidence(
 
 
 def classify_episode(
-    session: Session, run: Run, identity_id: int, episode_id: int
+    session: Session, build: Build, identity_id: int, episode_id: int
 ) -> Classification:
     """Create and persist the deterministic :class:`Classification` for one new episode."""
-    code_n = len(run.code_changes)
-    data_n = len(run.data_changes)
-    failures = _failing_results(session, run, identity_id)
+    code_n = len(build.code_changes)
+    data_n = len(build.data_changes)
+    failures = _failing_results(session, build, identity_id)
     infra = any(r.error_type == ErrorType.INFRA for r in failures)
-    ranked = _rank_for_failure(session, run, identity_id, failures)
+    ranked = _rank_for_failure(session, build, identity_id, failures)
     code_score = ranked.top_code.score if ranked.top_code else 0.0
     data_score = ranked.top_data.score if ranked.top_data else 0.0
 
@@ -187,10 +188,10 @@ def classify_episode(
         cause = PredictedCause.UNKNOWN
 
     if cause == PredictedCause.CODE_CHANGE:
-        contact = _sole_author(run.code_changes)
+        contact = _sole_author(build.code_changes)
         win_score, lose_score = code_score, data_score
     elif cause == PredictedCause.DATA_CHANGE:
-        contact = _sole_author(run.data_changes)
+        contact = _sole_author(build.data_changes)
         win_score, lose_score = data_score, code_score
     else:
         contact = None
@@ -205,7 +206,7 @@ def classify_episode(
         "code_candidates": code_n,
         "data_candidates": data_n,
         "infra_error": infra,
-        "baseline_run_id": run.baseline_run_id,
+        "baseline_build_id": build.baseline_build_id,
         "relevance": {
             "code_matched": sum(1 for c in ranked.code if c.score > 0),
             "data_matched": sum(1 for d in ranked.data if d.score > 0),
@@ -231,8 +232,8 @@ def classify_episode(
     return classification
 
 
-def classify_run(session: Session, run: Run, opened_episodes: list[tuple[int, int]]) -> int:
-    """Classify every episode newly opened by this run. Returns how many were classified."""
+def classify_build(session: Session, build: Build, opened_episodes: list[tuple[int, int]]) -> int:
+    """Classify every episode newly opened by this build. Returns how many were classified."""
     for identity_id, episode_id in opened_episodes:
-        classify_episode(session, run, identity_id, episode_id)
+        classify_episode(session, build, identity_id, episode_id)
     return len(opened_episodes)

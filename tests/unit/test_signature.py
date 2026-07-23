@@ -1,6 +1,6 @@
 """Signature normalization (the load-bearing mask set).
 
-The whole learning loop dies if the same bug doesn't hash to itself across runs, and collapses if
+The whole learning loop dies if the same bug doesn't hash to itself across builds, and collapses if
 distinct bugs collide. These tests pin both directions: same-bug variants normalize identically;
 different bugs stay apart; the mask table from the PLAN is honoured.
 """
@@ -36,7 +36,7 @@ def test_same_bug_different_run_normalizes_identically():
     a = normalize("test failure", _STACK_TMPL.format(track="permanent", line=793, msg="13 != 99"))
     b = normalize("test failure", _STACK_TMPL.format(track="permanent", line=801, msg="5 != 7"))
     assert a is not None and b is not None
-    # line numbers + assertion values differ run-to-run; the signature must not.
+    # line numbers + assertion values differ build-to-build; the signature must not.
     assert a.text == b.text
     assert a.exception_type == "AssertionError"
 
@@ -110,7 +110,7 @@ def test_display_message_falls_back_to_details_then_none():
 def test_keeps_only_our_frames_top_n():
     stack = (
         "Traceback (most recent call last):\n"
-        '  File "/usr/lib/python3.12/unittest/case.py", line 59, in run\n'
+        '  File "/usr/lib/python3.12/unittest/case.py", line 59, in build\n'
         '  File "/opt/ls/lx/release/permanent/tests/dev/a.py", line 1, in test_a\n'
         '  File "/opt/ls/lx/release/permanent/tests/dev/b.py", line 2, in helper\n'
         "RuntimeError: boom\n"

@@ -1,10 +1,12 @@
 """Lifecycle state machine + failure episodes.
 
-Driven once per **complete** run, comparing each test identity's collapsed status in this run
-against the **baseline** (the previous complete run). Working only from those two persisted facts —
-never from the stored lifecycle state — makes re-running the analysis for an already-processed run
-**idempotent**: the same (baseline, run) pair always yields the same transitions. (The one addition
-that does consult stored state — reconciling a still-open episode whose test passes this run, the
+Driven once per **complete** build, comparing each test identity's collapsed status in this build
+against the **baseline** (the previous complete build). Working only from those two persisted
+facts —
+never from the stored lifecycle state — makes re-running the analysis for an already-processed build
+**idempotent**: the same (baseline, build) pair always yields the same transitions. (The one
+addition
+that does consult stored state — reconciling a still-open episode whose test passes this build, the
 REMOVED → FIXED edge below — is itself idempotent: once closed, nothing is open to reconcile.)
 
 Transitions (lifecycle state is *about the result*; acknowledgement is orthogonal):
@@ -14,11 +16,11 @@ Transitions (lifecycle state is *about the result*; acknowledgement is orthogona
   New bucket.
 - FAILING → FAILING (still failing): extend the open episode's last-failing pointer + age.
 - FAILING → **FIXED**: the test ran and **passed** again — close the open episode (set fixed-in
-  run). Set only on a real pass, never on removal.
-- FAILING → **REMOVED**: the test is absent from this complete run — the episode stays open
+  build). Set only on a real pass, never on removal.
+- FAILING → **REMOVED**: the test is absent from this complete build — the episode stays open
   (disappeared ≠ fixed), surfaced with a Removed flag.
 - REMOVED → **FIXED**: the test reappears and **passes**. The baseline never saw it fail (it was
-  already absent), so the run diff alone can't express this — :func:`apply_run` reconciles any
+  already absent), so the build diff alone can't express this — :func:`apply_build` reconciles any
   identity that passes while its episode is still open as newly fixed. A reappearance that *fails*
   instead lands in the regression path, which finds the open episode and simply extends it — same
   episode, no reopen, no acknowledgement clearing.
@@ -43,17 +45,17 @@ from uta.analyze.baseline import (
     select_baseline,
 )
 from uta.ingest.ut_report import FAILED_STATUSES
-from uta.models import FailureEpisode, Run, TestLifecycle, TestResult
+from uta.models import Build, FailureEpisode, TestLifecycle, TestResult
 from uta.models.enums import LifecycleState
 
 
 @dataclass
 class RunAnalysis:
-    """Outcome of analysing one run — drives classification and the run summary."""
+    """Outcome of analysing one build — drives classification and the build summary."""
 
-    baseline_run_id: int | None
+    baseline_build_id: int | None
     diff: RunDiff
-    # Episodes opened *this* run (identity_id, episode_id) — the regressions to classify.
+    # Episodes opened *this* build (identity_id, episode_id) — the regressions to classify.
     opened_episodes: list[tuple[int, int]] = field(default_factory=list)
 
 
@@ -84,19 +86,19 @@ def _episode_count(session: Session, identity_id: int) -> int:
     )
 
 
-def _age_runs(session: Session, identity_id: int, episode: FailureEpisode) -> int:
-    """Count complete runs in which this identity failed within the episode's open span."""
+def _age_builds(session: Session, identity_id: int, episode: FailureEpisode) -> int:
+    """Count complete builds in which this identity failed within the episode's open span."""
     upper = episode.fixed_at or episode.last_failing_at or episode.first_failure_at
     return (
         session.scalar(
-            select(func.count(func.distinct(TestResult.run_id)))
-            .join(Run, Run.id == TestResult.run_id)
+            select(func.count(func.distinct(TestResult.build_id)))
+            .join(Build, Build.id == TestResult.build_id)
             .where(
                 TestResult.test_identity_id == identity_id,
                 TestResult.status.in_(FAILED_STATUSES),
-                Run.complete.is_(True),
-                Run.started_at >= episode.first_failure_at,
-                Run.started_at <= upper,
+                Build.complete.is_(True),
+                Build.started_at >= episode.first_failure_at,
+                Build.started_at <= upper,
             )
         )
         or 0
@@ -155,33 +157,33 @@ def _preload_episode_counts(session: Session, identity_ids: set[int]) -> dict[in
     return counts
 
 
-def _preload_failing_run_starts(
+def _preload_failing_build_starts(
     session: Session, identity_ids: set[int]
 ) -> dict[int, list[datetime]]:
-    """The distinct complete-run start times in which each affected identity failed (age source).
+    """The distinct complete-build start times in which each affected identity failed (age source).
 
-    Replaces the per-identity COUNT-DISTINCT age query with one scan: an episode's ``age_runs`` is
+    Replaces the per-identity COUNT-DISTINCT age query with one scan: an episode's ``age_builds`` is
     then the number of these start times within ``[first_failure_at, upper]`` (computed in Python).
     """
     starts: dict[int, list[datetime]] = {}
     if not identity_ids:
         return starts
     rows = session.execute(
-        select(TestResult.test_identity_id, TestResult.run_id, Run.started_at)
-        .join(Run, Run.id == TestResult.run_id)
+        select(TestResult.test_identity_id, TestResult.build_id, Build.started_at)
+        .join(Build, Build.id == TestResult.build_id)
         .where(
             TestResult.test_identity_id.in_(identity_ids),
             TestResult.status.in_(FAILED_STATUSES),
-            Run.complete.is_(True),
+            Build.complete.is_(True),
         )
         .distinct()
     ).all()
     seen: dict[int, set[int]] = {}
-    for identity_id, run_id, started_at in rows:
-        run_ids = seen.setdefault(identity_id, set())
-        if run_id in run_ids:
-            continue  # one run can have >1 failing track row — count the run once
-        run_ids.add(run_id)
+    for identity_id, build_id, started_at in rows:
+        build_ids = seen.setdefault(identity_id, set())
+        if build_id in build_ids:
+            continue  # one build can have >1 failing track row — count the build once
+        build_ids.add(build_id)
         starts.setdefault(identity_id, []).append(_aware(started_at))
     return starts
 
@@ -189,37 +191,37 @@ def _preload_failing_run_starts(
 def _age_from_starts(
     starts: dict[int, list[datetime]], identity_id: int, episode: FailureEpisode
 ) -> int:
-    """Age = distinct complete failing runs within the episode's open span (from the preload)."""
+    """Age = distinct complete failing builds within the episode's open span (from the preload)."""
     upper = _aware(episode.fixed_at or episode.last_failing_at or episode.first_failure_at)
     lower = _aware(episode.first_failure_at)
     return sum(1 for s in starts.get(identity_id, ()) if lower <= s <= upper)
 
 
-def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> RunAnalysis:
-    """Advance lifecycle + episodes for ``run`` vs its baseline. Idempotent per (baseline, run).
+def apply_build(session: Session, build: Build, *, baseline: Build | None = None) -> RunAnalysis:
+    """Advance lifecycle + episodes for ``build`` vs its baseline. Idempotent per (baseline, build).
 
     ``baseline`` defaults to :func:`select_baseline`; pass it explicitly to avoid a re-query. Only
-    call for **complete** runs — an incomplete run's absent tests would be misread as removals —
-    and only for the **newest** complete run: the transitions mutate the current lifecycle/episode
-    rows, so an older run's diff would corrupt them (the pipeline guards this via
-    :func:`~uta.analyze.baseline.has_newer_complete_run`, issue #82).
+    call for **complete** builds — an incomplete build's absent tests would be misread as removals —
+    and only for the **newest** complete build: the transitions mutate the current lifecycle/episode
+    rows, so an older build's diff would corrupt them (the pipeline guards this via
+    :func:`~uta.analyze.baseline.has_newer_complete_build`, issue #82).
 
-    Batched: the affected identities' lifecycles, open episodes, episode counts and failing-run
+    Batched: the affected identities' lifecycles, open episodes, episode counts and failing-build
     start times are each preloaded in a single query (not one round-trip per test), and all new
     episodes are flushed once. The transition logic and field updates are identical to the
-    unbatched form, so results (and idempotency per (baseline, run)) are preserved.
+    unbatched form, so results (and idempotency per (baseline, build)) are preserved.
     """
     if baseline is None:
-        baseline = select_baseline(session, run)
+        baseline = select_baseline(session, build)
 
-    current = identity_status_map(session, run)
+    current = identity_status_map(session, build)
     base_status = identity_status_map(session, baseline) if baseline is not None else {}
-    diff = compute_diff(session, run, baseline, current=current, baseline_status=base_status)
+    diff = compute_diff(session, build, baseline, current=current, baseline_status=base_status)
 
     # Reconciliation (REMOVED → FIXED, issue #117): a test that was REMOVED (absent, episode left
     # open) and now reappears **passing** lands in no diff bucket — the baseline never saw it fail,
     # so ``compute_diff`` can't emit it as newly fixed — and without this it would stay REMOVED
-    # forever with its episode open. Any identity that passes this run while its episode is still
+    # forever with its episode open. Any identity that passes this build while its episode is still
     # open is folded into ``newly_fixed`` so the normal fix path closes the episode. A reappearance
     # that *fails* is deliberately left alone: it lands in ``regressions``, which finds the open
     # episode and extends it (disappeared ≠ fixed — no new episode, no acknowledgement clearing).
@@ -230,28 +232,28 @@ def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> Run
         if current.get(identity_id) == PASSED and identity_id not in in_diff:
             diff.newly_fixed.append(identity_id)
 
-    analysis = RunAnalysis(baseline_run_id=diff.baseline_run_id, diff=diff)
+    analysis = RunAnalysis(baseline_build_id=diff.baseline_build_id, diff=diff)
 
     affected: set[int] = set(diff.regressions) | set(diff.still_failing)
     affected |= set(diff.newly_fixed) | set(diff.removed)
     # Age is only ever computed for the failing identities (regressions + still_failing + the
-    # newly_fixed episode's final age); preload their failing-run start times together.
+    # newly_fixed episode's final age); preload their failing-build start times together.
     failing_ids = set(diff.regressions) | set(diff.still_failing) | set(diff.newly_fixed)
 
     lifecycles = _preload_lifecycles(session, affected)
     open_episodes = _preload_open_episodes(session, affected)
     episode_counts = _preload_episode_counts(session, affected)
-    starts = _preload_failing_run_starts(session, failing_ids)
+    starts = _preload_failing_build_starts(session, failing_ids)
 
-    # New episodes opened this run, tracked so we can flush once then resolve their ids.
+    # New episodes opened this build, tracked so we can flush once then resolve their ids.
     new_episodes: list[tuple[int, FailureEpisode]] = []
 
     def _new_episode(identity_id: int) -> FailureEpisode:
         episode = FailureEpisode(
             test_identity_id=identity_id,
             episode_number=episode_counts.get(identity_id, 0) + 1,
-            first_failure_run_id=run.id,
-            first_failure_at=run.started_at,
+            first_failure_build_id=build.id,
+            first_failure_at=build.started_at,
         )
         session.add(episode)
         open_episodes[identity_id] = episode
@@ -270,33 +272,33 @@ def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> Run
                 lc.acknowledged = False
                 lc.acknowledged_by = None
                 lc.acknowledged_at = None
-        episode.last_failing_run_id = run.id
-        episode.last_failing_at = run.started_at
+        episode.last_failing_build_id = build.id
+        episode.last_failing_at = build.started_at
         episode.is_open = True
         lc.state = LifecycleState.FAILING
-        lc.last_failing_run_id = run.id
-        lc.last_failing_at = run.started_at
-        if lc.all_time_first_failure_run_id is None:
-            lc.all_time_first_failure_run_id = run.id
-            lc.all_time_first_failure_at = run.started_at
+        lc.last_failing_build_id = build.id
+        lc.last_failing_at = build.started_at
+        if lc.all_time_first_failure_build_id is None:
+            lc.all_time_first_failure_build_id = build.id
+            lc.all_time_first_failure_at = build.started_at
 
     for identity_id in diff.still_failing:
         lc = lifecycles[identity_id]
         episode = open_episodes.get(identity_id)
         if episode is None:  # defensive: failing in baseline but no episode yet — open one
             episode = _new_episode(identity_id)
-        episode.last_failing_run_id = run.id
-        episode.last_failing_at = run.started_at
+        episode.last_failing_build_id = build.id
+        episode.last_failing_at = build.started_at
         lc.state = LifecycleState.FAILING
-        lc.last_failing_run_id = run.id
-        lc.last_failing_at = run.started_at
+        lc.last_failing_build_id = build.id
+        lc.last_failing_at = build.started_at
 
     for identity_id in diff.newly_fixed:
         lc = lifecycles[identity_id]
         episode = open_episodes.get(identity_id)
         if episode is not None:
-            episode.fixed_in_run_id = run.id
-            episode.fixed_at = run.started_at
+            episode.fixed_in_build_id = build.id
+            episode.fixed_at = build.started_at
             episode.is_open = False
         lc.state = LifecycleState.FIXED
 
@@ -311,20 +313,20 @@ def apply_run(session: Session, run: Run, *, baseline: Run | None = None) -> Run
     for identity_id, episode in new_episodes:
         analysis.opened_episodes.append((identity_id, episode.id))
 
-    # Ages + current_episode link, now that failing-run starts include this run and ids exist.
+    # Ages + current_episode link, now that failing-build starts include this build and ids exist.
     for identity_id in diff.regressions:
         episode = open_episodes[identity_id]
-        episode.age_runs = _age_from_starts(starts, identity_id, episode)
+        episode.age_builds = _age_from_starts(starts, identity_id, episode)
         lifecycles[identity_id].current_episode_id = episode.id
     for identity_id in diff.still_failing:
         episode = open_episodes[identity_id]
-        episode.age_runs = _age_from_starts(starts, identity_id, episode)
+        episode.age_builds = _age_from_starts(starts, identity_id, episode)
         lifecycles[identity_id].current_episode_id = episode.id
     for identity_id in diff.newly_fixed:
         episode = open_episodes.get(identity_id)
         if episode is not None:
-            episode.age_runs = _age_from_starts(starts, identity_id, episode)
+            episode.age_builds = _age_from_starts(starts, identity_id, episode)
             lifecycles[identity_id].current_episode_id = episode.id
 
-    run.baseline_run_id = diff.baseline_run_id
+    build.baseline_build_id = diff.baseline_build_id
     return analysis

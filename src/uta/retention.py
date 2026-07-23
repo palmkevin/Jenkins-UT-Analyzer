@@ -1,29 +1,29 @@
 """Data retention: prune old raw *passing* results and finished ingest jobs (issue #52).
 
 Nothing else in the store ever deletes, so at ~25k :class:`~uta.models.TestResult` rows per nightly
-run the results table grows by roughly 9M rows/year — almost all of them passing rows whose only
-long-term value is already captured elsewhere (the run's stored totals, the lifecycle/episode
+build the results table grows by roughly 9M rows/year — almost all of them passing rows whose only
+long-term value is already captured elsewhere (the build's stored totals, the lifecycle/episode
 history, and the KB aggregates). The policy is therefore:
 
-- **Drop passing/skipped results** from runs older than ``RESULT_RETENTION_DAYS``. **Failing
+- **Drop passing/skipped results** from builds older than ``RESULT_RETENTION_DAYS``. **Failing
   results are kept forever** — they are the failure-history evidence: episodes' failure detail,
   the KB signature links (``kb/store.py`` recomputes ``occurrence_count`` from linked results, so
   deleting a linked row would corrupt the count), and the all-time failure counts all read them.
   Only rows with ``signature_id IS NULL`` are ever deleted (belt and braces: a signed row is never
   in scope even if a failing status were mis-classified).
-- **Runs, episodes, lifecycles, attributions and KB signatures/aggregates are kept forever** —
+- **Builds, episodes, lifecycles, attributions and KB signatures/aggregates are kept forever** —
   they carry the long-term value and are tiny next to the raw results.
 - **Finished ingest jobs** (DONE/ERROR) older than ``INGEST_JOB_RETENTION_DAYS`` are dropped;
   queued/running jobs are never touched. The poller heartbeat is a singleton row (no history to
   cap; its error text is already length-capped).
 
-Pruning is **idempotent** (a plain cutoff DELETE) and runs on every poll tick plus on demand via
+Pruning is **idempotent** (a plain cutoff DELETE) and builds on every poll tick plus on demand via
 ``uta prune``. Both windows are runtime-tunable (control panel); ``0`` disables that window.
 
-Known, accepted degradation: the diff of a run *older than the retention window* loses its
+Known, accepted degradation: the diff of a build *older than the retention window* loses its
 "newly fixed" entries (the passing rows that proved the fix are gone — regressions/still-failing/
-removed survive because failing rows are kept). Recent runs — everything inside the window — are
-unaffected, and the run's stored pass/fail/skip totals remain exact forever.
+removed survive because failing rows are kept). Recent builds — everything inside the window — are
+unaffected, and the build's stored pass/fail/skip totals remain exact forever.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from uta.ingest.ut_report import FAILED_STATUSES
-from uta.models import IngestJob, Run, TestResult
+from uta.models import Build, IngestJob, TestResult
 from uta.models.enums import IngestJobStatus
 
 logger = logging.getLogger(__name__)
@@ -64,21 +64,21 @@ def _cutoff(now: datetime | None, days: int) -> datetime:
 def prune_passing_results(
     session: Session, *, retention_days: int, now: datetime | None = None
 ) -> int:
-    """Delete passing/skipped results belonging to runs older than ``retention_days``.
+    """Delete passing/skipped results belonging to builds older than ``retention_days``.
 
     Returns the number of rows deleted. ``retention_days <= 0`` disables pruning (returns 0).
-    The run's ``started_at`` is the age reference (the domain clock), not the row's insert time,
+    The build's ``started_at`` is the age reference (the domain clock), not the row's insert time,
     so a late back-fill of an old build is pruned consistently with its neighbours.
     """
     if retention_days <= 0:
         return 0
-    old_runs = select(Run.id).where(Run.started_at < _cutoff(now, retention_days))
+    old_builds = select(Build.id).where(Build.started_at < _cutoff(now, retention_days))
     result = session.execute(
         delete(TestResult)
         .where(
             TestResult.status.not_in(FAILED_STATUSES),
             TestResult.signature_id.is_(None),  # never touch a KB-linked row
-            TestResult.run_id.in_(old_runs),
+            TestResult.build_id.in_(old_builds),
         )
         .execution_options(synchronize_session=False)
     )
