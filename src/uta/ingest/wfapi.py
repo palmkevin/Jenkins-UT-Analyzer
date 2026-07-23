@@ -1,4 +1,4 @@
-"""Parser for ``/<build>/wfapi/describe`` — per-shard UT stage timing & completeness.
+"""Parser for ``/<build>/wfapi/describe`` — per-track UT stage timing & completeness.
 
 The UT execution stages are ``devUTs: Execute - permanent`` and ``devUTs: Execute - permanent_py39``
 (one per track). Each carries ``startTimeMillis`` + ``durationMillis`` (Jenkins epoch-millis, UTC).
@@ -17,12 +17,12 @@ from datetime import datetime, timedelta
 
 from .clock import from_jenkins_millis
 
-# The UT shard stages, e.g. "devUTs: Execute - permanent_py39".
+# The UT track stages, e.g. "devUTs: Execute - permanent_py39".
 _UT_STAGE_RE = re.compile(r"^devUTs: Execute - (permanent(?:_py39)?)$")
 
 # The wfapi stage statuses meaning "the stage ran its tests to the end". UNSTABLE/FAILED are *test
 # outcomes* — the JUnit surface is still full — so they count as complete; the rest of the wfapi
-# vocabulary (ABORTED, IN_PROGRESS, PAUSED, PAUSED_PENDING_INPUT, NOT_EXECUTED) means the shard was
+# vocabulary (ABORTED, IN_PROGRESS, PAUSED, PAUSED_PENDING_INPUT, NOT_EXECUTED) means the track was
 # cut short or never ran. An **allow-list** (not a deny-list) so an unknown/future status fails
 # safe: a partial build marked complete would become the next baseline and invent phantom
 # removed/newly-fixed mass transitions — exactly what the flag exists to prevent (issue #83).
@@ -48,7 +48,7 @@ class LogStage:
 
 
 @dataclass(frozen=True)
-class ShardTiming:
+class TrackTiming:
     track: str
     status: str
     start: datetime  # aware UTC
@@ -65,24 +65,24 @@ class RunTiming:
     status: str
     start: datetime
     end: datetime
-    shards: dict[str, ShardTiming]
+    tracks: dict[str, TrackTiming]
 
-    def is_complete(self, expected_shards: int) -> bool:
-        """All expected shards are present **and** each finished running its tests.
+    def is_complete(self, expected_tracks: int) -> bool:
+        """All expected tracks are present **and** each finished running its tests.
 
         An aborted build still lists the interrupted UT stage in ``wfapi/describe`` (with status
-        ABORTED), so counting shards alone would mark a partial build complete.
+        ABORTED), so counting tracks alone would mark a partial build complete.
         """
-        return len(self.shards) >= expected_shards and all(
-            shard.status in FINISHED_STAGE_STATUSES for shard in self.shards.values()
+        return len(self.tracks) >= expected_tracks and all(
+            track.status in FINISHED_STAGE_STATUSES for track in self.tracks.values()
         )
 
     @property
     def window(self) -> tuple[datetime, datetime]:
-        """The span covering all UT shards (falls back to the overall build span)."""
-        if self.shards:
-            start = min(s.start for s in self.shards.values())
-            end = max(s.end for s in self.shards.values())
+        """The span covering all UT tracks (falls back to the overall build span)."""
+        if self.tracks:
+            start = min(s.start for s in self.tracks.values())
+            end = max(s.end for s in self.tracks.values())
             return start, end
         return self.start, self.end
 
@@ -90,7 +90,7 @@ class RunTiming:
 def parse_wfapi(payload: dict) -> RunTiming:
     start = from_jenkins_millis(int(payload["startTimeMillis"]))
     end = start + timedelta(milliseconds=int(payload.get("durationMillis", 0)))
-    shards: dict[str, ShardTiming] = {}
+    tracks: dict[str, TrackTiming] = {}
     for stage in payload.get("stages", []):
         m = _UT_STAGE_RE.match(stage.get("name", ""))
         if not m:
@@ -98,7 +98,7 @@ def parse_wfapi(payload: dict) -> RunTiming:
         track = m.group(1)
         s_start = from_jenkins_millis(int(stage["startTimeMillis"]))
         s_end = s_start + timedelta(milliseconds=int(stage.get("durationMillis", 0)))
-        shards[track] = ShardTiming(
+        tracks[track] = TrackTiming(
             track=track,
             status=stage.get("status", ""),
             start=s_start,
@@ -109,7 +109,7 @@ def parse_wfapi(payload: dict) -> RunTiming:
         status=payload.get("status", ""),
         start=start,
         end=end,
-        shards=shards,
+        tracks=tracks,
     )
 
 
@@ -119,7 +119,7 @@ def find_unittest_stages(
     """The console-log UT stages whose suite is in ``suites`` — one per ``(suite, track)``.
 
     Used by the pipeline to fetch each stage's ``wfapi/log`` and parse it with
-    :mod:`uta.ingest.unittest_log`. The devUTs shard stages are deliberately excluded (they're in
+    :mod:`uta.ingest.unittest_log`. The devUTs track stages are deliberately excluded (they're in
     the JUnit report and matched by :data:`_UT_STAGE_RE`); only the named ``suites`` are returned.
     """
     found: list[LogStage] = []

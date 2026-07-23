@@ -32,7 +32,7 @@
       <td>
         <a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a>
         {% if r.flaky %}<span class="badge flaky">flaky</span>{% endif %}
-        {% if r.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
+        {% if r.track_correlated %}<span class="badge">track-correlated</span>{% endif %}
       </td>
       {#- Owner pivots into the triage queue filtered on just that owner (issue #157). -#}
       <td>{{ ui.pivot(r.owner, r.owner_url) }}</td>

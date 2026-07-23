@@ -84,12 +84,12 @@ def test_empty_value_reverts_override(client, factory):
 
 def test_invalid_override_is_rejected_with_error(client, factory):
     resp = client.post(
-        "/control/settings", data={"key": "expected_shards", "value": "999"}, follow_redirects=False
+        "/control/settings", data={"key": "expected_tracks", "value": "999"}, follow_redirects=False
     )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/control"
     with session_scope(factory) as s:
-        assert s.get(SettingOverride, "expected_shards") is None
+        assert s.get(SettingOverride, "expected_tracks") is None
     # The error surfaces on the panel as a one-shot flash banner (issue #75).
     page = client.get(resp.headers["location"]).text
     assert "must be between" in page and "alert-danger" in page

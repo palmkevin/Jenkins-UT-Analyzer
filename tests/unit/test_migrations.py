@@ -23,7 +23,7 @@ _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 # Every table the Information model must create.
 _EXPECTED_TABLES = {
     "builds",
-    "build_shards",
+    "build_tracks",
     "test_identities",
     "test_results",
     "test_lifecycles",

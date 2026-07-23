@@ -33,12 +33,12 @@
   {% if build.url %}· <a href="{{ build.url }}">Jenkins</a>{% endif %}
 </p>
 
-<h2>Shards</h2>
+<h2>Tracks</h2>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
   <thead><tr><th>Track</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
   <tbody>
-    {% for s in build.shards %}
+    {% for s in build.tracks %}
     <tr><td>{{ s.track }}</td><td>{{ s.status }}</td><td>{{ s.started_at|ts }}</td><td>{{ s.finished_at|ts }}</td></tr>
     {% endfor %}
   </tbody>

@@ -68,7 +68,7 @@ def test_resolve_for_cases_respects_existing_owner_unless_refresh():
 
 
 def test_resolve_all_backfills_from_stored_source_paths(session_factory):
-    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)
 
     with session_scope(session_factory) as s:
         resolved = resolve_all(s, FakeSvnBlameClient(default="Blamed Dev"))
@@ -103,7 +103,7 @@ def test_ingest_populates_main_developer_and_keeps_zephyr_owner():
         FakeJenkinsClient(),
         factory,
         1702,
-        expected_shards=2,
+        expected_tracks=2,
         svn_blame_client=FakeSvnBlameClient(default="A. Developer"),
     )
 
@@ -121,7 +121,7 @@ def test_ingest_populates_main_developer_and_keeps_zephyr_owner():
 
 
 def test_ingest_without_blame_client_leaves_owner_unresolved(session_factory):
-    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)
     with session_scope(session_factory) as s:
         assert (
             s.scalars(select(TestIdentity).where(TestIdentity.main_developer.is_not(None))).first()

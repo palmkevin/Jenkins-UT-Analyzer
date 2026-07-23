@@ -2,7 +2,7 @@
 (for complete builds) drive the cross-build analysis (lifecycle + diff + classification).
 
 Wires the Jenkins client + Oracle feed (real or fake) and the parsers. Idempotent on
-``build_number``: a re-ingest replaces the build's results/shards/candidates rather than duplicating
+``build_number``: a re-ingest replaces the build's results/tracks/candidates rather than duplicating
 them, and re-builds the analysis (which is itself idempotent per baseline+build). The analysis pass
 only runs when the build is (still) the newest complete build — a **historical** re-ingest persists
 the build's data but never drives the lifecycle (issue #82).
@@ -44,7 +44,7 @@ from uta.kb.store import record_signatures_for_build
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.models import (
     Build,
-    BuildShard,
+    BuildTrack,
     CodeChangeCandidate,
     DataChangeCandidate,
     TestIdentity,
@@ -150,7 +150,7 @@ def ingest_build(
     session_factory: sessionmaker[Session],
     number: int,
     *,
-    expected_shards: int = 2,
+    expected_tracks: int = 2,
     feed: TrackingFeed | None = None,
     data_change_lookback: timedelta = timedelta(hours=12),
     data_change_tolerance: timedelta = timedelta(minutes=5),
@@ -170,7 +170,7 @@ def ingest_build(
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the build's build_number.
 
-    Persists the build, its per-(test, track) results (with derived error type), per-shard timing
+    Persists the build, its per-(test, track) results (with derived error type), per-track timing
     and
     the change-signal candidates (SVN revisions; ``ut_ref`` changes when a ``feed`` is supplied),
     and records a normalized **failure signature** per failing result (the KB recurrence key).
@@ -194,7 +194,7 @@ def ingest_build(
     track) results, so they share the JUnit tests' identity/lifecycle/classification path. Off by
     default, so the devUTs-only ingest is unchanged unless the caller opts in. A selected stage
     that didn't run to the end (its wfapi status is not a finished one) marks the build incomplete,
-    mirroring the devUTs shard guard; a suite stage absent from the payload has no effect.
+    mirroring the devUTs track guard; a suite stage absent from the payload has no effect.
     """
     t_total = time.perf_counter()
 
@@ -263,7 +263,7 @@ def ingest_build(
                 )
             )
             build.results.clear()  # idempotent re-ingest
-            build.shards.clear()
+            build.tracks.clear()
             build.code_changes.clear()
             build.data_changes.clear()
             session.flush()  # delete old rows before re-inserting (unique constraint)
@@ -272,27 +272,27 @@ def ingest_build(
         build.url = meta.get("url", "")
         build.started_at = win_start
         build.finished_at = win_end
-        # Completeness spans both ingest sources: the devUTs JUnit shards (via is_complete) *and*
+        # Completeness spans both ingest sources: the devUTs JUnit tracks (via is_complete) *and*
         # every selected unittest console-log stage. A stage cut short (ABORTED, NOT_EXECUTED, …)
         # yields a truncated log that parses to a partial case list — marking the build complete
         # would invent phantom removed/newly-fixed transitions and poison the next baseline,
-        # exactly the issue-#83 failure mode the shard guard prevents. A suite stage absent from
+        # exactly the issue-#83 failure mode the track guard prevents. A suite stage absent from
         # the wfapi payload never affects completeness (job configuration varies over history);
         # the truncated results are still persisted below — analysis is gated on build.complete.
-        build.complete = timing.is_complete(expected_shards) and all(
+        build.complete = timing.is_complete(expected_tracks) and all(
             stage.status in FINISHED_STAGE_STATUSES for stage in log_stages
         )
         build.total_passed = sum(1 for c in cases if c.status in _PASSED)
         build.total_failed = sum(1 for c in cases if c.status in _FAILED)
         build.total_skipped = sum(1 for c in cases if c.status == "SKIPPED")
 
-        for shard in timing.shards.values():
-            build.shards.append(
-                BuildShard(
-                    track=shard.track,
-                    status=shard.status,
-                    started_at=shard.start,
-                    finished_at=shard.end,
+        for track_timing in timing.tracks.values():
+            build.tracks.append(
+                BuildTrack(
+                    track=track_timing.track,
+                    status=track_timing.status,
+                    started_at=track_timing.start,
+                    finished_at=track_timing.end,
                 )
             )
 

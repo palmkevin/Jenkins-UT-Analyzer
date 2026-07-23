@@ -357,8 +357,8 @@ def _case(spec: TestSpec, track: str, status_char: str, index: int) -> dict:
 class SyntheticJenkins:
     """A fixtures-free Jenkins client producing the demo build history.
 
-    Duck-types the pipeline's ``JenkinsClient`` protocol. All builds are **complete** (both track
-    shards report), so every build advances the lifecycle.
+    Duck-types the pipeline's ``JenkinsClient`` protocol. All builds are **complete** (both
+    tracks report), so every build advances the lifecycle.
     """
 
     anchor: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -442,13 +442,13 @@ class SyntheticJenkins:
         start = _build_start(index, self.anchor)
         stages = []
         for offset, track in enumerate(TRACKS):
-            shard_start = start + timedelta(minutes=offset)
+            track_start = start + timedelta(minutes=offset)
             stages.append(
                 {
                     "id": str(300 + offset),
                     "name": f"devUTs: Execute - {track}",
                     "status": "SUCCESS",
-                    "startTimeMillis": _millis(shard_start),
+                    "startTimeMillis": _millis(track_start),
                     "durationMillis": int(
                         (_RUN_DURATION - timedelta(minutes=5)).total_seconds() * 1000
                     ),

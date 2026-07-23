@@ -34,7 +34,7 @@ from uta.models.enums import LifecycleState, PredictedCause
 
 
 def test_ingest_persists_run_and_results(session_factory):
-    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)
     with session_scope(session_factory) as s:
         build = s.scalar(select(Build).where(Build.build_number == 1702))
         assert build is not None
@@ -46,8 +46,8 @@ def test_ingest_persists_run_and_results(session_factory):
         assert tracks == {"permanent", "permanent_py39"}
 
 
-class _AbortedShardFakeJenkins(FakeJenkinsClient):
-    """A build interrupted mid-way through the py39 UT shard: ``wfapi/describe`` still lists both
+class _AbortedTrackFakeJenkins(FakeJenkinsClient):
+    """A build interrupted mid-way through the py39 UT track: ``wfapi/describe`` still lists both
     UT stages, but the interrupted one carries status ABORTED (issue #83)."""
 
     def wfapi(self, build: int) -> dict:
@@ -58,13 +58,13 @@ class _AbortedShardFakeJenkins(FakeJenkinsClient):
         return payload
 
 
-def test_ingest_aborted_shard_run_is_incomplete_and_never_a_baseline(session_factory):
-    """Both shards present but one ABORTED ⇒ not complete, no analysis, never the baseline."""
-    ingest_build(_AbortedShardFakeJenkins(), session_factory, 1702, expected_shards=2)
+def test_ingest_aborted_track_run_is_incomplete_and_never_a_baseline(session_factory):
+    """Both tracks present but one ABORTED ⇒ not complete, no analysis, never the baseline."""
+    ingest_build(_AbortedTrackFakeJenkins(), session_factory, 1702, expected_tracks=2)
     with session_scope(session_factory) as s:
         build = s.scalar(select(Build).where(Build.build_number == 1702))
         assert build.complete is False
-        assert {sh.track: sh.status for sh in build.shards}["permanent_py39"] == "ABORTED"
+        assert {sh.track: sh.status for sh in build.tracks}["permanent_py39"] == "ABORTED"
         # The partial build is persisted but gated out of the analysis…
         assert s.scalar(select(func.count()).select_from(TestResult)) == 14
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
@@ -75,7 +75,7 @@ def test_ingest_aborted_shard_run_is_incomplete_and_never_a_baseline(session_fac
 
 def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
     """The ZEPHYR test case(s) a failing test references are resolved onto its identity."""
-    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_shards=2)
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)
     with session_scope(session_factory) as s:
         ident = s.scalar(
             select(TestIdentity).where(
@@ -146,7 +146,7 @@ def test_ingest_unittest_logs_adds_console_log_results(session_factory):
 
 
 class _LogStageStatusFakeJenkins(FakeJenkinsClient):
-    """Both devUTs shards SUCCESS, but the SMB Transform py39 console-log stage carries ``status``
+    """Both devUTs tracks SUCCESS, but the SMB Transform py39 console-log stage carries ``status``
     (e.g. ABORTED halfway — its truncated log would parse to a partial case list)."""
 
     def __init__(self, status: str) -> None:
@@ -164,7 +164,7 @@ class _LogStageStatusFakeJenkins(FakeJenkinsClient):
 @pytest.mark.parametrize("status", ["ABORTED", "NOT_EXECUTED"])
 def test_ingest_unfinished_log_stage_marks_run_incomplete(session_factory, status):
     """A selected console-log stage cut short ⇒ incomplete build: results persisted, no analysis,
-    never a baseline — the devUTs shard guard (issue #83), mirrored for the second source."""
+    never a baseline — the devUTs track guard (issue #83), mirrored for the second source."""
     ingest_build(
         _LogStageStatusFakeJenkins(status),
         session_factory,
@@ -610,7 +610,7 @@ class _ConcurrencyTrackingFake(FakeJenkinsClient):
 def test_ingest_fetches_base_endpoints_concurrently(session_factory):
     """The 4 base Jenkins calls overlap in flight instead of running one after another."""
     fake = _ConcurrencyTrackingFake()
-    ingest_build(fake, session_factory, 1702, expected_shards=2)
+    ingest_build(fake, session_factory, 1702, expected_tracks=2)
     assert fake.peak_concurrency >= 2
 
 
@@ -649,7 +649,7 @@ class _ScriptedJenkins:
     Duck-types the pipeline's ``JenkinsClient`` protocol (the golden-fixtures fake serves a single
     build, so cross-build scenarios script their own history here). Every build is **complete**
     (both
-    track shards report), and build #N starts N hours after a fixed epoch, so build-number order ==
+    tracks report), and build #N starts N hours after a fixed epoch, so build-number order ==
     start-time order, as on the real job. The ``builds`` dict is held by reference — a test may
     mutate a build's statuses to simulate a re-build with different content.
     """

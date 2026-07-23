@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # Path to a CA bundle (PEM) for verifying Jenkins' cert, e.g. an internal CA. Takes precedence
     # over jenkins_verify_tls when set (verification stays on, against this bundle).
     jenkins_ca_bundle: str = ""
-    expected_shards: int = 2
+    expected_tracks: int = 2
     # Also ingest the unittest console-log UT stages (no JUnit artifact — parsed from stage logs).
     ingest_unittest_stages: bool = True
     unittest_suites: str = "LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests"

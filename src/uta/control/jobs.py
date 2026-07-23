@@ -81,7 +81,7 @@ def run_ingest_job(
                 client,
                 session_factory,
                 n,
-                expected_shards=settings.expected_shards,
+                expected_tracks=settings.expected_tracks,
                 feed=feed,
                 data_change_lookback=lookback,
                 data_change_tolerance=tolerance,

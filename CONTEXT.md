@@ -26,6 +26,13 @@ _Avoid_: Test case (for the identity)
 The raw outcome of one test in one build and track, exactly as Jenkins reported it.
 _Avoid_: TestCaseResult, outcome
 
+**Track**:
+A parallel lane in which the nightly build executes the test suite, each lane distinguished by its
+execution environment — e.g. interpreter version or operating system (currently `permanent` and
+`permanent_py39`). An attribute of a Test Result — the same test can run, and fail independently,
+in several tracks; a Test's identity and lifecycle span all tracks.
+_Avoid_: Shard, lane, stage
+
 ### Failure lifecycle
 
 **Failure Episode**:
@@ -85,8 +92,3 @@ failure on the same test.
 **Knowledge Base**:
 The accumulated record of confirmed causes, retrieved by failure signature to inform the triage of
 new failures.
-
----
-
-*Deliberately not yet defined:* **Track** and **Shard** — their sharpening (two terms or one) is
-deferred to a future domain-modeling session.

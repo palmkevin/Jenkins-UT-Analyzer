@@ -15,7 +15,7 @@ and so importing this package registers every mapper on ``Base.metadata`` (Alemb
 from __future__ import annotations
 
 from uta.models.attribution import Attribution
-from uta.models.build import Build, BuildShard
+from uta.models.build import Build, BuildTrack
 from uta.models.classification import Classification
 from uta.models.control import BuildQuarantine, IngestJob, PollerHeartbeat, SettingOverride
 from uta.models.enums import (
@@ -37,7 +37,7 @@ from uta.models.signals import CodeChangeCandidate, DataChangeCandidate
 __all__ = [
     # entities
     "Build",
-    "BuildShard",
+    "BuildTrack",
     "TestIdentity",
     "TestResult",
     "TestLifecycle",

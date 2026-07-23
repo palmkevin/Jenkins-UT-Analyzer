@@ -111,10 +111,10 @@
 
   <h3 class="h6 fw-bold">Other badges you'll see</h3>
   <table class="table table-sm align-middle mb-0">
-    <tr><td style="width: 10rem"><span class="badge track">permanent</span></td><td>Which parallel test track (shard) the failure is in — a test can fail in one track or both.</td></tr>
+    <tr><td style="width: 10rem"><span class="badge track">permanent</span></td><td>Which parallel test track the failure is in — a test can fail in one track or both.</td></tr>
     <tr><td>reopened ×N</td><td>How many times this test has failed, been fixed, and failed again.</td></tr>
     <tr><td><span class="badge match">match</span></td><td>Used on the knowledge base / similar-cases tables to flag a matching signature.</td></tr>
-    <tr><td>shard-correlated</td><td>On the flaky leaderboard: this test only ever fails in one track, a tell for a shard-specific (rather than genuinely random) flake.</td></tr>
+    <tr><td>track-correlated</td><td>On the flaky leaderboard: this test only ever fails in one track, a tell for a track-specific (rather than genuinely random) flake.</td></tr>
     <tr><td>pattern: consecutive / intermittent / stable / none</td><td>How a flaky test's failures are distributed over the window — consecutive builds in a row, scattered intermittently, or effectively stable/none.</td></tr>
     <tr><td><span class="badge">overridden</span></td><td>Control panel: this threshold has a live override in place, above its env-file default.</td></tr>
     <tr><td><span class="badge text-bg-success">SUCCESS</span> / <span class="badge text-bg-warning">UNSTABLE</span> / <span class="badge text-bg-danger">FAILURE</span></td><td>Job builds page: the Jenkins build's own result for that build (separate from any individual test's status).</td></tr>
