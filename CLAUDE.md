@@ -5,6 +5,11 @@ concept/architecture doc; this file captures the invariants and conventions that
 wrong or re-derive.
 
 ## Read these first
+- [CONTEXT.md](CONTEXT.md) — the **ubiquitous-language catalogue**: the single authority for what
+  domain terms mean (with `_Avoid_` synonyms). A glossary and nothing else; when it and any other
+  doc disagree on a *term*, CONTEXT.md wins. Maintained live during domain-modeling sessions and
+  guarded as a doc surface (see **Keep the docs in sync**); decisions land in `docs/adr/`
+  (per ADR-0001).
 - [docs/OVERVIEW.html](docs/OVERVIEW.html) — the **authoritative concept/architecture overview**:
   purpose, the parts involved (Jenkins, Oracle `ut_ref`, the containers, PostgreSQL, LLM, email), the
   ingest → analysis → triage → learning → alert workflows with a schematic system map, and a
@@ -76,25 +81,29 @@ of work and the closed issue + merged PR *is* the record.
   `.devcontainer/docker-compose.dev.yml` parametrized).
 
 ## Keep the docs in sync (required, every change)
-Three hand-maintained doc surfaces describe the product but aren't generated from it, so they rot
-silently, and **one agent owns all three**:
+Four hand-maintained doc surfaces describe the product but aren't generated from it, so they rot
+silently, and **one agent owns all four**:
 [docs/OVERVIEW.html](docs/OVERVIEW.html) (architecture, for contributors), the in-app
 **[Help page](src/uta/web/templates/help.html)** at `/help` (the daily workflow, statuses, badges,
-and the LLM feedback loop, for end users), and the **[README.md](README.md) Configuration
-reference + [.env.example](.env.example)** (the settings reference, for operators). You **must
+and the LLM feedback loop, for end users), the **[README.md](README.md) Configuration
+reference + [.env.example](.env.example)** (the settings reference, for operators), and
+**[CONTEXT.md](CONTEXT.md)** (the ubiquitous-language catalogue — the terminology authority, per
+ADR-0001). You **must
 invoke the [`docs-overview-maintainer`](.claude/agents/docs-overview-maintainer.md) agent** to check
-whether any of the three needs updating (it edits the surface(s), including OVERVIEW.html's
+whether any of the four needs updating (it edits the surface(s), including OVERVIEW.html's
 system-map SVG, or reports "no update needed" per surface) after any change that could alter:
 - **what parts the app involves, how they communicate, or its workflows** — a new/removed external
   system or integration, a container/service change, a change to the ingest/analysis/triage/
-  learning/alert flow, or a shift in what the tool outputs (the triage queue, per-test record, run
+  learning/alert flow, or a shift in what the tool outputs (the triage queue, per-test record, build
   summary, flakiness, knowledge base, or email surfaces);
 - **what an end user sees or does in the dashboard** — a new/renamed status or enum value, a new
   badge, a new/changed triage bucket or dashboard page, or a change to how the LLM hypothesis /
   Confirm / correct feedback loop works;
 - **the settings surface** — a [`config.py`](src/uta/config.py) field or `.env.example` key added,
   removed, renamed, or re-gated, or a changed default/effect (every var needs both a README table
-  row and a documented `.env.example` line).
+  row and a documented `.env.example` line);
+- **the domain language** — a domain concept added, renamed, or re-defined (an entity, an enum's
+  meaning, a canonical term or its `_Avoid_` synonyms): CONTEXT.md must still match the code.
 
 Pure bug fixes, refactors, perf work, and test/CI/dependency changes that leave the depicted parts,
 communications, workflows, user-visible surfaces **and** the settings surface unchanged do **not**
@@ -107,13 +116,13 @@ require it. When in doubt, invoke it — deciding materiality is the agent's job
   Verified empirically: `SYSDATE` returns local time while `DBTIMEZONE=+00:00`.
 - **Test identity is test-level.** One lifecycle per `suite/class/method`. The **track**
   (`permanent` / `permanent_py39`) is an **attribute**, not a separate identity. A result is keyed by
-  `(run, test, track)` — the same test runs in both tracks. Track comes from the JUnit suite's
+  `(build, test, track)` — the same test runs in both tracks. Track comes from the JUnit suite's
   `enclosingBlockNames`.
 - **Ingest scope.** The primary source is **devUTs (nose2) JUnit**, via `/<n>/testReport/api/json`
   (the authoritative ~25k-test surface). The unittest **console-log** stages (SMB Pricing/Transform,
   ITF Highlevel, LXS, Uniface) were the v1-deferred second source; they are now ingested **behind
   the same interface** by `ingest/unittest_log.py`, which parses each stage's
-  `…/execution/node/<id>/wfapi/log` into the same per-`(test, track)` `TestCaseResult`. Gated by
+  `…/execution/node/<id>/wfapi/log` into the same per-`(test, track)` `TestResult`. Gated by
   `INGEST_UNITTEST_STAGES` (default on); `UNITTEST_SUITES` is the suite allowlist (a
   `"<suite> - <track>"` stage name → suite), keeping non-test `"… - permanent"` stages out.
 - **Data-change feed = Oracle `V_TRACKING` view as-is** (author already resolved as `USRCODE`).
