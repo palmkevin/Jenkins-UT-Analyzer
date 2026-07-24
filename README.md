@@ -195,7 +195,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 ### Ingest / correlation windows
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATA_CHANGE_LOOKBACK_HOURS` | `12` | How far **before** a build's start to look for `ut_ref` changes (they precede the build). |
+| `DATA_CHANGE_MAX_LOOKBACK_DAYS` | `30` | Cap on how far **before** a build's start to look for `ut_ref` changes; the window's lower bound is normally the previous build's start, and this cap is also the fallback when there is no previous build (first-ever build / cold start). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
 | `POLL_INTERVAL_SECONDS` | `300` | Cadence of the `uta poll` scheduler. |
 

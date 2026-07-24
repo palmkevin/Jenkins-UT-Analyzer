@@ -43,7 +43,11 @@ class CodeChangeCandidate(Base, TimestampMixin):
 
 
 class DataChangeCandidate(Base, TimestampMixin):
-    """A candidate ``ut_ref`` ``V_TRACKING`` data change in the build's (lookback) window."""
+    """A candidate ``ut_ref`` ``V_TRACKING`` data change in the build's correlation window.
+
+    The window runs from the previous build's start through this build's end (ADR-0004), so the
+    change is attributed to the first build that ran after it.
+    """
 
     __tablename__ = "data_change_candidates"
 

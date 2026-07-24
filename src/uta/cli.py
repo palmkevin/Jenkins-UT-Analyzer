@@ -82,7 +82,7 @@ def backfill(build: int, to: int | None = None) -> None:
     client = _build_client(settings)
     feed = _build_feed(settings)
     svn_blame_client = _build_svn_blame_client(settings)
-    lookback, tolerance = _windows(settings)
+    max_lookback, tolerance = _windows(settings)
     for n in range(build, (to or build) + 1):
         # No email sender on back-fill: historical regressions must not be (re-)mailed. Flaky flags
         # are display-only and derived purely from results, so defer them to a single pass after the
@@ -93,7 +93,7 @@ def backfill(build: int, to: int | None = None) -> None:
             n,
             expected_tracks=settings.expected_tracks,
             feed=feed,
-            data_change_lookback=lookback,
+            data_change_max_lookback=max_lookback,
             data_change_tolerance=tolerance,
             flaky_window_days=settings.flaky_window_days,
             flaky_threshold=settings.flaky_transition_threshold,
@@ -169,7 +169,7 @@ def bootstrap(depth: int | None = None) -> None:
         return
     feed = _build_feed(settings)
     svn_blame_client = _build_svn_blame_client(settings)
-    lookback, tolerance = _windows(settings)
+    max_lookback, tolerance = _windows(settings)
     start = max(1, latest - depth + 1)
     for n in range(start, latest + 1):
         # Defer flaky flags to a single post-loop pass (see `backfill`) — they are display-only and
@@ -180,7 +180,7 @@ def bootstrap(depth: int | None = None) -> None:
             n,
             expected_tracks=settings.expected_tracks,
             feed=feed,
-            data_change_lookback=lookback,
+            data_change_max_lookback=max_lookback,
             data_change_tolerance=tolerance,
             flaky_window_days=settings.flaky_window_days,
             flaky_threshold=settings.flaky_transition_threshold,

@@ -487,9 +487,10 @@
     <li><b>Parse.</b> <small>JUnit report → per-<code>(test, track)</code> results; console-log stages parsed
       into the <i>same</i> shape behind one interface; SVN change sets → code-change candidates; timing → the
       build window + per-track start/finish.</small></li>
-    <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes inside a
-      <i>lookback</i> window before the build (changes precede the build) plus a tolerance margin for
-      clock skew.</small></li>
+    <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes between the
+      <i>previous build's start</i> and this build's end (changes precede the build, and can occur during
+      the previous build's run), capped by <code>DATA_CHANGE_MAX_LOOKBACK_DAYS</code> (also the fallback
+      when there is no previous build), plus a tolerance margin for clock skew.</small></li>
     <li><b>Persist.</b> <small>Bulk-insert the build, results, track timings and candidates into Postgres — idempotent
       on <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>,
       also resolves each newly-seen failing test's <b>owner</b> (main developer) via <code>svn blame</code> of
@@ -727,8 +728,11 @@
       <b>console-log</b> stages are ingested behind the same interface, gated by <code>INGEST_UNITTEST_STAGES</code>
       with a <code>UNITTEST_SUITES</code> allowlist.</td></tr>
     <tr><th>Data-change feed</th><td>The Oracle <code>V_TRACKING</code> view as-is (author already resolved as
-      <code>USRCODE</code>). Correlation needs a <b>lookback window</b> — changes precede the build — not just the
-      build’s own start/finish window.</td></tr>
+      <code>USRCODE</code>). Correlation needs a window anchored at the <b>previous build's start</b> (changes
+      precede the build, and can occur during the previous build's run) through this build's end, capped by
+      <code>DATA_CHANGE_MAX_LOOKBACK_DAYS</code> — see
+      <a href="adr/0004-data-change-attribution-window.md">ADR-0004</a> — not just the build's own start/finish
+      window.</td></tr>
     <tr><th>Medical data</th><td>LIMS error text, stack traces, and especially <code>MODDATA</code> may contain
       patient data. Golden fixtures are anonymized/redacted before commit and <b>raw <code>MODDATA</code> is never
       committed</b> — structure preserved, values redacted.</td></tr>
@@ -953,10 +957,11 @@
   <h3>Ingest / correlation windows &amp; poll cadence</h3>
   <table class="kv">
     <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
-    <tr><td><code>DATA_CHANGE_LOOKBACK_HOURS</code> <span class="pill">control panel</span></td>
-      <td><code>12</code></td>
-      <td>How far before a build's start to look for correlated Oracle <code>V_TRACKING</code> data
-      changes (they precede the build).</td></tr>
+    <tr><td><code>DATA_CHANGE_MAX_LOOKBACK_DAYS</code> <span class="pill">control panel</span></td>
+      <td><code>30</code></td>
+      <td>Cap on how far before a build's start the correlation window's lower bound (normally the
+      previous build's start) may reach; also the fallback lookback when there is no previous build
+      (first-ever build / cold start).</td></tr>
     <tr><td><code>DATA_CHANGE_TOLERANCE_MINUTES</code> <span class="pill">control panel</span></td>
       <td><code>5</code></td>
       <td>Margin widening both ends of that window to absorb Jenkins↔Oracle clock skew.</td></tr>

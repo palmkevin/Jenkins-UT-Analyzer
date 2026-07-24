@@ -58,8 +58,9 @@ def build_svn_blame_client(settings: Settings):
 
 
 def windows(settings: Settings) -> tuple[timedelta, timedelta]:
+    """The (max-lookback cap, tolerance) for the data-change correlation window (ADR-0004)."""
     return (
-        timedelta(hours=settings.data_change_lookback_hours),
+        timedelta(days=settings.data_change_max_lookback_days),
         timedelta(minutes=settings.data_change_tolerance_minutes),
     )
 

@@ -80,7 +80,7 @@ _Avoid_: Classification, AI analysis
 
 **Change Candidate**:
 A code change (SVN commit) or data change (`ut_ref` tracking row) that falls in an episode's
-lookback window and may explain it.
+correlation window and may explain it.
 _Avoid_: Culprit, suspect
 
 **Attribution**:

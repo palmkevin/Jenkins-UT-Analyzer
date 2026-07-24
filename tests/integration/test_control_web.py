@@ -108,13 +108,13 @@ def test_non_whitelisted_key_is_rejected(client, factory):
 
 def test_override_reflected_in_a_view_on_next_load(client, factory):
     """The acceptance check: change the row cap and the build view honours it on the next load."""
-    build = FIRST_BUILD + 11  # a complete build with 32 result rows
-    # The demo seeds ui_row_limit=20, so the build page arrives already paginated (32 rows → 2
+    build = FIRST_BUILD + 11  # a complete build with 34 result rows
+    # The demo seeds ui_row_limit=20, so the build page arrives already paginated (34 rows → 2
     # pages).
     assert "Page 1 of 2" in client.get(f"/builds/{build}").text
 
     client.post("/control/settings", data={"key": "ui_row_limit", "value": "1"})
-    assert "Page 1 of 32" in client.get(f"/builds/{build}").text  # cap now bites — view reflects it
+    assert "Page 1 of 34" in client.get(f"/builds/{build}").text  # cap now bites — view reflects it
 
     client.post("/control/settings/ui_row_limit/reset")
     # Reverted to the env default (50): everything fits on one page again — no pager.

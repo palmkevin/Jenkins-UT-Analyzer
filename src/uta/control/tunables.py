@@ -121,13 +121,15 @@ TUNABLES: tuple[Tunable, ...] = (
         "Tracks a build must report to be considered complete.",
     ),
     Tunable(
-        "data_change_lookback_hours",
-        "Data-change lookback (hours)",
+        "data_change_max_lookback_days",
+        "Data-change max lookback (days)",
         "Ingest",
         "int",
         0,
-        168,
-        "How far before a build's start to look for correlated data changes.",
+        365,
+        "Cap on how far before a build's start to look for correlated data changes, and the "
+        "fallback when there is no previous build. The window normally reaches back only to the "
+        "previous build's start.",
     ),
     Tunable(
         "data_change_tolerance_minutes",

@@ -65,7 +65,7 @@ def run_ingest_job(
     from uta.control.quarantine import clear_failure
     from uta.ingest.pipeline import ingest_build
 
-    lookback, tolerance = windows(settings)
+    max_lookback, tolerance = windows(settings)
     with session_scope(session_factory) as session:
         job = session.get(IngestJob, job_id)
         if job is None:
@@ -83,7 +83,7 @@ def run_ingest_job(
                 n,
                 expected_tracks=settings.expected_tracks,
                 feed=feed,
-                data_change_lookback=lookback,
+                data_change_max_lookback=max_lookback,
                 data_change_tolerance=tolerance,
                 flaky_window_days=settings.flaky_window_days,
                 flaky_threshold=settings.flaky_transition_threshold,

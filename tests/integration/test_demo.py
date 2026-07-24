@@ -167,6 +167,22 @@ def test_divergent_top_ranked_candidates_in_the_same_run(session_factory):
     assert tz["candidates"]["data"][1]["score"] == 0
 
 
+def test_intra_build_data_change_is_attributed_to_the_failing_build(session_factory):
+    """ADR-0004: the ut_ref change that broke this test landed *during the previous build's run*,
+    yet the correlation window — anchored at the previous build's start, not its end — still
+    attributes it to the failing build, which the classifier reads as DATA_CHANGE."""
+    session = session_factory()
+    ident = session.scalar(
+        select(TestIdentity).where(
+            TestIdentity.canonical_name == "ut_order.or_lifecycle.TestClass.test_status_transition"
+        )
+    )
+    record = views.test_record(session, ident.id)
+    assert record["candidates"]["data"], "expected the intra-build ut_ref change as a candidate"
+    assert not record["candidates"]["code"], "data-only window -> DATA_CHANGE"
+    assert record["episodes"][0]["predicted_cause"] == "DATA_CHANGE"
+
+
 def test_score_magnitude_tie_break_resolves_to_code(session_factory):
     """Both candidate kinds match test_discount_tiers, but the tier-3 module match outscores the
     tier-2 component mention — the margin-aware tie-break (issue #73) resolves it to CODE_CHANGE
