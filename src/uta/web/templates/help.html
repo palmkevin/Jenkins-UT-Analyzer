@@ -13,6 +13,7 @@
 
 <p class="mb-4">
   <a href="#workflow">Daily workflow</a> ·
+  <a href="#incidents">Build Incidents</a> ·
   <a href="#statuses">Statuses &amp; badges</a> ·
   <a href="#llm">How the LLM contributes</a> ·
   <a href="#feedback">Acting on an AI suggestion</a> ·
@@ -62,9 +63,51 @@
   <p class="mb-0">
     Clicking a test name opens its <strong>per-test record</strong>: the full failure history,
     every candidate code/data change ranked by relevance, the AI suggestion (see below), and the
-    editable fields you own — causing person, reason, Jira ticket, triage status. When the same
-    failure signature affects other open tests, a second button lets you apply the same
-    conclusion to all of them at once.
+    editable fields you own — causing person, reason, <strong>assignee</strong> (the person
+    handling the fix, distinct from the causing person), <strong>cause ticket</strong>,
+    <strong>resolution ticket</strong> and triage status. When the same failure signature affects
+    other open tests, a second button lets you apply the same conclusion to all of them at once.
+  </p>
+</div>
+
+<h2 id="incidents">Build Incidents</h2>
+<div class="card">
+  <p>
+    Sometimes the problem isn't one test — it's the whole build. Whenever a build's own overall
+    result is a failure or it gets aborted, the tool opens a <strong>Build Incident</strong> so
+    that gets tracked and triaged too, the same way a failing test does. A run of several bad
+    builds in a row counts as <strong>one</strong> incident (shown as "×N builds"), and it clears
+    itself automatically the next time the pipeline goes green again.
+  </p>
+  <p>
+    You'll find the queue at <strong>Incidents</strong> in the top navigation — it carries the
+    same red badge as Triage, showing how many are currently open. Open incidents are listed
+    above recovered ones. A build that belongs to one also shows an incident card right on its own
+    build page.
+  </p>
+  <table class="table table-sm align-middle mb-3">
+    <tr>
+      <td style="width: 12rem">Build actually failed</td>
+      <td>Shown as <span class="FAILED">PIPELINE_FAILURE</span> — something in the pipeline
+        itself broke (not just a test). These get the same AI treatment as a test failure: a
+        predicted cause, similar past incidents from the knowledge base, and — when configured —
+        an LLM hypothesis, with the same one-click <strong>Confirm AI suggestion</strong>.</td>
+    </tr>
+    <tr>
+      <td>Build was aborted</td>
+      <td>Shown as <span class="SKIPPED">ABORTED</span> — the build was cancelled. There's
+        nothing to correlate an abort against, so no prediction is attempted; you document what
+        happened by hand.</td>
+    </tr>
+  </table>
+  <p>
+    Documenting an incident works like documenting a test failure: a free-text
+    <strong>problem / reason</strong> for what happened, <strong>causing person</strong>,
+    <strong>assignee</strong> (the person handling the fix — distinct from the causing person),
+    <strong>cause ticket</strong>, <strong>resolution ticket</strong> and <strong>triage
+    status</strong>. <strong>Resolution ticket</strong> is specifically the ticket the assignee is
+    working on to fix the problem — it is <em>not</em> a claim that the issue is already resolved.
+    An <strong>Acknowledge</strong> button marks that someone has seen it, same as for a test.
   </p>
 </div>
 
@@ -152,7 +195,9 @@
   </p>
   <p>
     On a test record with a predicted cause and/or an LLM hypothesis, you have two ways to
-    respond:
+    respond (the same two options, and the same panel, appear on a
+    <strong>pipeline-failure</strong> Build Incident, since it's driven by the identical
+    machinery):
   </p>
   <table class="table table-sm align-middle mb-3">
     <tr>
@@ -163,10 +208,11 @@
     </tr>
     <tr>
       <td><strong>Edit the fields yourself</strong></td>
-      <td>Type your own causing person / reason / Jira ticket / triage status and hit Save. If
-        what you type happens to match the AI's suggestion, it's recorded the same as a Confirm;
-        if it differs, your version is saved and the AI's original guess is kept alongside it
-        (shown as "was (AI): …") so nothing is lost.</td>
+      <td>Type your own causing person / reason / assignee / cause ticket / resolution ticket /
+        triage status and hit Save. If what you type for causing person or reason happens to
+        match the AI's suggestion, it's recorded the same as a Confirm; if it differs, your
+        version is saved and the AI's original guess is kept alongside it (shown as "was (AI):
+        …") so nothing is lost.</td>
     </tr>
   </table>
   <p>
@@ -226,7 +272,7 @@
     read-only deep links, not integrations:
   </p>
   <ul class="mb-0">
-    <li><strong>Jira</strong> — the ticket field links to <code>{{ jira_base_url }}/browse/&lt;TICKET&gt;</code>.</li>
+    <li><strong>Jira</strong> — the cause ticket and resolution ticket fields both link to <code>{{ jira_base_url }}/browse/&lt;TICKET&gt;</code>.</li>
     <li><strong>FishEye</strong> — each candidate SVN revision links to <code>{{ fisheye_changelog_url }}?cs=&lt;revision&gt;</code>.</li>
     <li><strong>ZEPHYR (Kanoah Test Management)</strong> — test case IDs parsed from a failure's stack trace (e.g. <code>LX-T4792</code>) link to <code>{{ zephyr_test_case_url_prefix }}&lt;ID&gt;</code>. Each case's own <strong>ZEPHYR owner</strong> initials are shown next to it — the owner of the manual test case, kept separate from the dashboard <strong>Owner</strong> (the unit test's main developer).</li>
   </ul>

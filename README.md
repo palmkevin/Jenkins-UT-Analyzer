@@ -120,6 +120,9 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `JENKINS_USER` | *(empty)* | Optional — anonymous read works on the target job. |
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
 | `EXPECTED_TRACKS` | `2` | Tracks a build must report to count as **complete**. |
+| `INGEST_UNITTEST_STAGES` | `true` | Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS, Uniface), parsed from each stage's `wfapi/log` behind the same interface as the JUnit report. |
+| `UNITTEST_SUITES` | `LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests` | Allowlist of stage names (a `"<suite> - <track>"` stage → suite) treated as test stages. |
+| `INGEST_BUILD_INCIDENTS` | `true` | Detect **Build Incidents** (issue #171): open/extend/recover a build-level triage entity when a build's own result is `FAILURE`/`ABORTED` (recovers on `SUCCESS`/`UNSTABLE`), folded into the same ingest pass. Off skips build-level incident detection entirely. |
 
 ### Oracle `ut_ref` (reference-data change feed, read-only)
 | Variable | Default | Purpose |
