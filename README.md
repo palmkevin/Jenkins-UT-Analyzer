@@ -1,6 +1,6 @@
 # Jenkins UT Analyzer
 
-Ingests the nightly **devUTs** unit-test builds from Jenkins, tracks each test's failure **lifecycle**
+Ingests **devUTs** unit-test builds from the **Permanent Pipeline** (one build per commit) on Jenkins, tracks each test's failure **lifecycle**
 across builds, correlates regressions with **code** (SVN) and **reference-data** (Oracle `ut_ref`)
 changes, and surfaces it all in a triage dashboard — with flakiness detection, a failure **knowledge
 base**, regression-only **email** alerts, and an optional **LLM root-cause hypothesis**.
@@ -116,7 +116,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | Variable | Default | Purpose |
 |---|---|---|
 | `JENKINS_BASE_URL` | `https://jenkins2.labsolution.lu` | Jenkins root URL. |
-| `JENKINS_JOB_PATH` | `job/Development/job/lsdevbuild-build-release-permanent` | Path to the nightly job. |
+| `JENKINS_JOB_PATH` | `job/Development/job/lsdevbuild-build-release-permanent` | Path to the Permanent Pipeline job (runs one build per commit, not on a schedule). |
 | `JENKINS_USER` | *(empty)* | Optional — anonymous read works on the target job. |
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
 | `EXPECTED_TRACKS` | `2` | Tracks a build must report to count as **complete**. |
@@ -195,7 +195,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 ### Ingest / correlation windows
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATA_CHANGE_LOOKBACK_HOURS` | `12` | How far **before** a build's start to look for `ut_ref` changes (they precede the nightly build). |
+| `DATA_CHANGE_LOOKBACK_HOURS` | `12` | How far **before** a build's start to look for `ut_ref` changes (they precede the build). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
 | `POLL_INTERVAL_SECONDS` | `300` | Cadence of the `uta poll` scheduler. |
 

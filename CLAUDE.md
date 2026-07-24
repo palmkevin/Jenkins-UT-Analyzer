@@ -127,7 +127,7 @@ require it. When in doubt, invoke it — deciding materiality is the agent's job
   `"<suite> - <track>"` stage name → suite), keeping non-test `"… - permanent"` stages out.
 - **Data-change feed = Oracle `V_TRACKING` view as-is** (author already resolved as `USRCODE`).
   PFLOG / BFLOGLINK fan-out are deferred. Correlation needs a **lookback window** (changes precede
-  the nightly run), not just the run's own start/finish window.
+  the build), not just the build's own start/finish window.
 - **Medical data.** LIMS error text, stack traces, and especially `MODDATA` may contain patient
   data. Golden fixtures are **anonymized/redacted before commit**, and **raw `MODDATA` is never
   committed**. See `tests/fixtures/` — values redacted, structure (paths, line numbers, exception

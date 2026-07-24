@@ -29,7 +29,7 @@ _MAX_MESSAGE_CHARS = 200
 _MAX_CANDIDATES = 3
 
 SYSTEM_PROMPT = (
-    "You triage failing nightly unit tests for a laboratory information management system (LIMS). "
+    "You triage failing unit tests for a laboratory information management system (LIMS). "
     "You are given one failing test, a deterministic predicted cause, the candidate code commits "
     "and reference-data changes in the build window ranked by relevance to this test (with the "
     "match reason), and similar past failures with any validated human conclusions. "

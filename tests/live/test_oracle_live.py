@@ -32,7 +32,7 @@ def feed():
 
 
 def test_live_window_returns_candidates_converted_to_utc(feed):
-    # #1702 day, with lookback (changes precede the nightly build).
+    # #1702 day, with lookback (changes precede the build).
     start = datetime(2026, 6, 26, 5, 8, tzinfo=UTC)
     end = datetime(2026, 6, 26, 18, 42, tzinfo=UTC)
     changes = feed.changes_in_window(start, end)

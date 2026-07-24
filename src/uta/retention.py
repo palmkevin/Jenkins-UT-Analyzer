@@ -1,7 +1,7 @@
 """Data retention: prune old raw *passing* results and finished ingest jobs (issue #52).
 
-Nothing else in the store ever deletes, so at ~25k :class:`~uta.models.TestResult` rows per nightly
-build the results table grows by roughly 9M rows/year — almost all of them passing rows whose only
+Nothing else in the store ever deletes, so at ~25k :class:`~uta.models.TestResult` rows per build
+the results table grows by roughly 9M rows/year — almost all of them passing rows whose only
 long-term value is already captured elsewhere (the build's stored totals, the lifecycle/episode
 history, and the KB aggregates). The policy is therefore:
 

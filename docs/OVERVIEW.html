@@ -105,8 +105,10 @@
 <section id="why">
   <h2>Why this tool exists</h2>
   <div class="card">
-    <p>Integration tests run in a Jenkins job triggered by <b>every commit to the SVN trunk</b>. Before each
-    build, a working <code>ut</code> database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
+    <p>Integration tests run in the <b>Permanent Pipeline</b>, a Jenkins job that runs continuously — one
+    build <b>per commit</b> to the SVN trunk, not on a schedule (that per-commit cadence is why the app
+    polls Jenkins continuously rather than once a night). Before each build, a working <code>ut</code>
+    database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
     Roughly <b>25 000 tests</b> run in each of two parallel <b>tracks</b> (<code>permanent</code> and
     <code>permanent_py39</code> — distinguished by execution environment, not by which tests they run) and
     merged into one report.</p>
@@ -486,7 +488,7 @@
       into the <i>same</i> shape behind one interface; SVN change sets → code-change candidates; timing → the
       build window + per-track start/finish.</small></li>
     <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes inside a
-      <i>lookback</i> window before the build (changes precede the nightly build) plus a tolerance margin for
+      <i>lookback</i> window before the build (changes precede the build) plus a tolerance margin for
       clock skew.</small></li>
     <li><b>Persist.</b> <small>Bulk-insert the build, results, track timings and candidates into Postgres — idempotent
       on <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>,
@@ -954,7 +956,7 @@
     <tr><td><code>DATA_CHANGE_LOOKBACK_HOURS</code> <span class="pill">control panel</span></td>
       <td><code>12</code></td>
       <td>How far before a build's start to look for correlated Oracle <code>V_TRACKING</code> data
-      changes (they precede the nightly build).</td></tr>
+      changes (they precede the build).</td></tr>
     <tr><td><code>DATA_CHANGE_TOLERANCE_MINUTES</code> <span class="pill">control panel</span></td>
       <td><code>5</code></td>
       <td>Margin widening both ends of that window to absorb Jenkins↔Oracle clock skew.</td></tr>
