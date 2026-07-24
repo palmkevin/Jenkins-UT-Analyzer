@@ -143,10 +143,50 @@ def display_message(error_details: str | None, error_stack_trace: str | None) ->
     return details or None
 
 
-def compute_hash(identity_name: str, normalized_text: str) -> str:
-    """sha256 over ``identity + normalized text`` — the exact-recurrence key (index-backed)."""
+def compute_hash(identity_name: str, normalized_text: str, kind: str = "TEST") -> str:
+    """sha256 over ``kind + identity + normalized text`` — the exact-recurrence key (index-backed).
+
+    ``kind`` namespaces the space (issue #171): a "TEST" signature and an "INCIDENT" signature with
+    identical text hash to different values, so the two spaces never cross-match. The default keeps
+    the historical (test-space) hash of any two-argument caller unchanged.
+    """
     digest = hashlib.sha256()
+    digest.update(kind.encode("utf-8"))
+    digest.update(b"\x00")
     digest.update(identity_name.encode("utf-8"))
     digest.update(b"\x00")
     digest.update(normalized_text.encode("utf-8"))
     return digest.hexdigest()
+
+
+# How many trailing log lines characterise a build-incident failure (the tail of the failing
+# stage's log, or of the build console fallback). Deliberately small: enough to fingerprint the
+# failure mode, short enough that one noisy build doesn't drown the signal.
+_INCIDENT_TAIL_LINES = 15
+
+
+def normalize_incident(
+    log_text: str | None, *, tail_lines: int = _INCIDENT_TAIL_LINES
+) -> NormalizedSignature | None:
+    """Normalize a build-incident's failing-stage log into a stable signature, or ``None``.
+
+    Build logs are not necessarily Python tracebacks, so — unlike :func:`normalize` — this keeps the
+    **tail** of the log (where the failure surfaces) rather than stack frames, but reuses the exact
+    same value masks so dynamic noise (timestamps, ids, addresses, line numbers) collapses and the
+    same failure mode hashes identically across builds. If a Python-style exception line is present
+    it is surfaced as the ``exception_type`` for display, mirroring :func:`normalize`.
+    """
+    text = (log_text or "").strip()
+    if not text:
+        return None
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    exc_type: str | None = None
+    for raw in lines:
+        exc = _EXC_LINE.match(raw.strip())
+        if exc:
+            exc_type = exc["type"]
+    kept = lines[-tail_lines:]
+    normalized = _mask_values("\n".join(kept))
+    return NormalizedSignature(text=normalized, exception_type=exc_type)

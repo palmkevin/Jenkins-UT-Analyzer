@@ -40,6 +40,42 @@ class PredictedCause(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class IncidentKind(StrEnum):
+    """Discriminator for a **Build Incident** — a build-level condition requiring human triage.
+
+    Two kinds are implemented today, keyed off the build's top-level Jenkins ``result``:
+
+    - ``PIPELINE_FAILURE`` — the build itself failed (``result == FAILURE``): the full analysis
+      stack (change candidates → classification → LLM hypothesis) applies.
+    - ``ABORTED`` — the build was aborted (``result == ABORTED``): no signature, no classification,
+      no change candidates — straight to a human-documented reason.
+
+    ``HUNG`` and ``SLOW`` are **reserved** for issue #172 (hung / slow builds detected on
+    *in-progress* builds). They are defined here so the enum, schema and UI are forward-compatible
+    with no future churn, but there is **no detector** for them yet — nothing opens an incident of
+    these kinds today.
+    """
+
+    PIPELINE_FAILURE = "PIPELINE_FAILURE"
+    ABORTED = "ABORTED"
+    # ── Reserved for #172 (no detector yet) ──────────────────────────────────
+    HUNG = "HUNG"
+    SLOW = "SLOW"
+
+
+class SignatureKind(StrEnum):
+    """Namespace for a :class:`~uta.models.kb.FailureSignature`.
+
+    Test-failure signatures and build-incident signatures live in the **same** table but must never
+    cross-match: a recurrence/similarity lookup in one space only sees signatures of that space. The
+    kind is folded into the signature hash (so the exact-recurrence key is namespaced too) and every
+    retrieval query filters on it.
+    """
+
+    TEST = "TEST"
+    INCIDENT = "INCIDENT"
+
+
 class Provenance(StrEnum):
     """How a cause/reason was reached — weights KB retrieval."""
 

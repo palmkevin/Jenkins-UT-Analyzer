@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
-from uta.models import Build, Classification, FailureEpisode, TestIdentity
+from uta.models import Build, BuildIncident, Classification, FailureEpisode, TestIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +215,53 @@ def build_regression_report(
         lines.append(f"Dashboard: {build_link}")
     return EmailMessage(
         subject=f"UT regressions — build #{build.build_number}: {len(new_failures)} new failing",
+        body="\n".join(lines) + "\n",
+        recipients=recipients,
+    )
+
+
+def build_incident_alert(
+    session: Session,
+    incident: BuildIncident,
+    build: Build,
+    recipients: tuple[str, ...],
+    *,
+    app_base_url: str = "",
+) -> EmailMessage | None:
+    """The alert for a **newly-opened** ``pipeline_failure`` Build Incident (issue #171).
+
+    Sent only for the *opening* build of a streak (the caller enforces that), and only for
+    ``pipeline_failure`` — ``aborted`` incidents and recoveries are suppressed by default. Leads
+    with the failing stage and the deterministic prediction (+ suggested contact), and — when
+    ``app_base_url`` is set — deep-links the incident's build page. Rides the same
+    :class:`EmailSender` seam as the regression report; composed inside the ingest transaction,
+    delivered after commit (:func:`send_alert`).
+    """
+    classification = session.scalar(
+        select(Classification)
+        .where(Classification.incident_id == incident.id)
+        .order_by(Classification.created_at.desc(), Classification.id.desc())
+        .limit(1)
+    )
+    cause = classification.predicted_cause if classification else "UNKNOWN"
+    contact = classification.suggested_contact if classification else None
+    lines = [
+        f"Build #{build.build_number} FAILED — a new pipeline-failure incident was opened.",
+        "",
+        f"Failing stage: {incident.failing_stage or 'unknown'}",
+        f"Predicted cause: {cause}",
+    ]
+    if contact:
+        lines.append(f"Suggested contact: {contact}")
+    if classification and classification.llm_hypothesis:
+        lines += ["", f"Hypothesis: {classification.llm_hypothesis}"]
+    lines.append("")
+    lines.append(build.url or "")
+    build_link = _dashboard_url(app_base_url, f"/builds/{build.build_number}")
+    if build_link:
+        lines.append(f"Dashboard: {build_link}")
+    return EmailMessage(
+        subject=f"UT pipeline failure — build #{build.build_number} incident opened",
         body="\n".join(lines) + "\n",
         recipients=recipients,
     )

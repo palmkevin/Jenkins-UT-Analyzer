@@ -19,6 +19,7 @@ from uta.models.enums import Provenance
 from uta.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
+    from uta.models.incident import BuildIncident
     from uta.models.kb import FailureSignature
     from uta.models.lifecycle import FailureEpisode
 
@@ -27,8 +28,14 @@ class Attribution(Base, TimestampMixin):
     __tablename__ = "attributions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    episode_id: Mapped[int] = mapped_column(
-        ForeignKey("failure_episodes.id"), unique=True, index=True
+    # An attribution belongs to EITHER a test-level episode OR a build-level incident (issue #171)
+    # — exactly one of the two FKs is set. Both are nullable + unique so the same confirm/correct
+    # provenance loop serves both surfaces (Postgres/SQLite both allow many NULLs under UNIQUE).
+    episode_id: Mapped[int | None] = mapped_column(
+        ForeignKey("failure_episodes.id"), unique=True, index=True, nullable=True
+    )
+    incident_id: Mapped[int | None] = mapped_column(
+        ForeignKey("build_incidents.id"), unique=True, index=True, nullable=True
     )
 
     # Human conclusions (entered by the person in charge; may differ from the predicted cause).
@@ -52,5 +59,6 @@ class Attribution(Base, TimestampMixin):
         ForeignKey("failure_signatures.id"), nullable=True, index=True
     )
 
-    episode: Mapped[FailureEpisode] = relationship(back_populates="attribution")
+    episode: Mapped[FailureEpisode | None] = relationship(back_populates="attribution")
+    incident: Mapped[BuildIncident | None] = relationship(back_populates="attribution")
     signature: Mapped[FailureSignature | None] = relationship(back_populates="attributions")

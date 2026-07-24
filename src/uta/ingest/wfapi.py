@@ -113,6 +113,25 @@ def parse_wfapi(payload: dict) -> RunTiming:
     )
 
 
+def find_failing_stage(payload: dict) -> tuple[str, str] | None:
+    """The build's failing stage as ``(node_id, name)`` — the anchor for a Build Incident signature.
+
+    Picks the first stage whose wfapi status is ``FAILED`` (the stage that broke the pipeline);
+    failing that, the first stage in a non-finished, non-aborted state. Returns ``None`` when no
+    stage looks failed (the caller then falls back to the build console). Used by the ingest path
+    only for non-green builds, so it never runs on the happy path.
+    """
+    stages = payload.get("stages", [])
+    for stage in stages:
+        if stage.get("status", "").upper() == "FAILED":
+            return str(stage.get("id", "")), stage.get("name", "")
+    for stage in stages:
+        status = stage.get("status", "").upper()
+        if status not in FINISHED_STAGE_STATUSES and status not in {"NOT_EXECUTED", "ABORTED"}:
+            return str(stage.get("id", "")), stage.get("name", "")
+    return None
+
+
 def find_unittest_stages(
     payload: dict, suites: frozenset[str] | set[str] = DEFAULT_UNITTEST_SUITES
 ) -> list[LogStage]:

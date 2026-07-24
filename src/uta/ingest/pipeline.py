@@ -24,10 +24,17 @@ from uta.analyze.classify import classify_build
 from uta.analyze.error_type import derive_error_type
 from uta.analyze.flakiness import recompute_flaky_flags
 from uta.analyze.hypothesize import hypothesize_build
+from uta.analyze.incident import IncidentKind, apply_build_incident
 from uta.analyze.lifecycle import apply_build
 from uta.analyze.ownership import resolve_for_cases
 from uta.db import session_scope
-from uta.delivery.email import EmailMessage, EmailSender, build_regression_report, send_alert
+from uta.delivery.email import (
+    EmailMessage,
+    EmailSender,
+    build_incident_alert,
+    build_regression_report,
+    send_alert,
+)
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.unittest_log import parse_unittest_log
@@ -36,6 +43,7 @@ from uta.ingest.wfapi import (
     DEFAULT_UNITTEST_SUITES,
     FINISHED_STAGE_STATUSES,
     LogStage,
+    find_failing_stage,
     find_log_step_node,
     find_unittest_stages,
     parse_wfapi,
@@ -100,6 +108,30 @@ def _fetch_stage_log(client: JenkinsClient, build: int, stage: LogStage) -> tupl
     describe = client.stage_describe(build, stage.node_id)
     step_id = find_log_step_node(describe) or stage.node_id
     return stage, client.stage_log(build, step_id)
+
+
+def _fetch_failing_stage_log(
+    client: JenkinsClient, build: int, wfapi_payload: dict
+) -> tuple[str | None, str | None]:
+    """The failing stage's name + console text for a non-green build (the incident signature src).
+
+    Descends the failing stage to its log-bearing step exactly like the unittest-log path. Returns
+    ``(stage_name, log_text)``; either may be ``None`` (no failing stage found, or an empty log —
+    the incident then falls back to no signature / the caller's console fallback). Best-effort: any
+    fetch error yields ``(name, None)`` so a flaky log endpoint never fails the whole ingest.
+    """
+    failing = find_failing_stage(wfapi_payload)
+    if failing is None:
+        return None, None
+    node_id, name = failing
+    try:
+        describe = client.stage_describe(build, node_id)
+        step_id = find_log_step_node(describe) or node_id
+        log = client.stage_log(build, step_id)
+    except Exception:  # noqa: BLE001 — incident enrichment is best-effort, never fails the ingest
+        logger.warning("failed to fetch failing-stage log for build #%d", build, exc_info=True)
+        return name, None
+    return name, log.get("text") or None
 
 
 _IDENTITY_CHUNK = 1000
@@ -167,6 +199,7 @@ def ingest_build(
     unittest_suites: frozenset[str] | set[str] | None = None,
     recompute_flaky: bool = True,
     svn_blame_client: SvnBlameClient | None = None,
+    ingest_build_incidents: bool = False,
 ) -> int:
     """Fetch, parse and persist one build, then analyse it. Returns the build's build_number.
 
@@ -244,6 +277,7 @@ def ingest_build(
 
     t_persist = t_signatures = t_lifecycle = t_classify = t_flaky = 0.0
     pending_alert: EmailMessage | None = None
+    pending_incident_alert: EmailMessage | None = None
     with session_scope(session_factory) as session:
         t = time.perf_counter()
         build = session.scalar(select(Build).where(Build.build_number == number))
@@ -382,6 +416,47 @@ def ingest_build(
         record_signatures_for_build(session, build, stale_signature_ids=stale_signature_ids)
         t_signatures = time.perf_counter() - t
 
+        # ── Build Incidents (issue #171) ─────────────────────────────────────────────────────────
+        # Orthogonal to the test lifecycle and run even when test analysis is skipped: a FAILURE
+        # build is usually "incomplete" (a track was cut short) and is stored-but-skipped as a
+        # baseline, but its build-level incident must still open. Only acted on for TERMINAL builds
+        # (a null/in-progress result is #172 territory) and only for the newest build ingested — a
+        # historical re-ingest must not rewrite the forward-only incident streak.
+        result = meta.get("result")
+        incident_historical = (
+            session.scalar(select(Build.id).where(Build.build_number > number).limit(1)) is not None
+        )
+        if ingest_build_incidents and result and not incident_historical:
+            stage_name: str | None = None
+            failing_log: str | None = None
+            if result.upper() == "FAILURE":
+                stage_name, failing_log = _fetch_failing_stage_log(client, number, wfapi_payload)
+            outcome = apply_build_incident(
+                session,
+                build,
+                result,
+                failing_stage=stage_name,
+                failing_stage_log=failing_log,
+                hypothesis_provider=hypothesis_provider,
+                kb_top_k=kb_top_k,
+                kb_similarity_cutoff=kb_similarity_cutoff,
+            )
+            # Alert only on a NEW pipeline_failure (streak start); aborted + recovery are silent.
+            if (
+                outcome.opened
+                and outcome.incident is not None
+                and outcome.incident.kind == IncidentKind.PIPELINE_FAILURE
+                and email_sender is not None
+                and email_recipients
+            ):
+                pending_incident_alert = build_incident_alert(
+                    session,
+                    outcome.incident,
+                    build,
+                    email_recipients,
+                    app_base_url=app_base_url,
+                )
+
         if build.complete:
             # Lifecycle only ever advances forward: a **historical** re-ingest — a build older
             # than the newest complete build, reachable via the control panel's range ingest (the
@@ -445,6 +520,8 @@ def ingest_build(
     # re-ingest paths (CLI back-fill, on-demand job) pass no sender by contract.
     if pending_alert is not None and email_sender is not None:
         send_alert(email_sender, pending_alert)
+    if pending_incident_alert is not None and email_sender is not None:
+        send_alert(email_sender, pending_incident_alert)
 
     total = time.perf_counter() - t_total
     logger.info(

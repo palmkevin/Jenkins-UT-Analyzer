@@ -18,6 +18,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from uta.db import Base
+from uta.models.enums import SignatureKind
 from uta.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
@@ -30,7 +31,14 @@ class FailureSignature(Base, TimestampMixin):
     __tablename__ = "failure_signatures"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    test_identity_id: Mapped[int] = mapped_column(ForeignKey("test_identities.id"), index=True)
+    # Namespace (issue #171): "TEST" signatures (per test identity) and "INCIDENT" signatures
+    # (per build-level failing stage) share this table but never cross-match — the kind is folded
+    # into ``signature_hash`` and every retrieval query filters on it. Incident signatures have no
+    # test identity, so ``test_identity_id`` is nullable.
+    kind: Mapped[str] = mapped_column(String(16), default=SignatureKind.TEST, index=True)
+    test_identity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_identities.id"), nullable=True, index=True
+    )
     normalized_text: Mapped[str] = mapped_column(Text)
     # sha256 over (identity + normalized_text); exact recurrence is an index-backed equality lookup.
     signature_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -42,7 +50,7 @@ class FailureSignature(Base, TimestampMixin):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
 
-    identity: Mapped[TestIdentity] = relationship()
+    identity: Mapped[TestIdentity | None] = relationship()
     results: Mapped[list[TestResult]] = relationship(back_populates="signature")
     attributions: Mapped[list[Attribution]] = relationship(back_populates="signature")
 

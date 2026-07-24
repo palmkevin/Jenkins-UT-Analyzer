@@ -39,8 +39,8 @@ PROVENANCE_WEIGHT: dict[str, int] = {
 @dataclass(frozen=True)
 class SimilarCase:
     signature_id: int
-    identity_id: int
-    test_id: str
+    identity_id: int | None
+    test_id: str | None
     exception_type: str | None
     occurrence_count: int
     similarity: float
@@ -107,10 +107,14 @@ def strongest_provenance_weight(session: Session, signature_id: int | None) -> i
 
 
 def exact_recurrence(
-    session: Session, identity_name: str, sig: NormalizedSignature
+    session: Session, identity_name: str, sig: NormalizedSignature, *, kind: str = "TEST"
 ) -> FailureSignature | None:
-    """The stored signature whose hash matches this failure exactly, if any (instant lookup)."""
-    sig_hash = compute_hash(identity_name, sig.text)
+    """The stored signature whose hash matches this failure exactly, if any (instant lookup).
+
+    ``kind`` namespaces the lookup (issue #171): the hash folds it in, so a "TEST" probe can never
+    return an "INCIDENT" signature or vice-versa.
+    """
+    sig_hash = compute_hash(identity_name, sig.text, kind)
     return session.scalar(
         select(FailureSignature).where(FailureSignature.signature_hash == sig_hash)
     )
@@ -119,10 +123,15 @@ def exact_recurrence(
 def _to_case(session: Session, sig: FailureSignature, similarity: float) -> SimilarCase:
     best = _best_attribution(session, sig.id)
     provenance = _strongest_provenance(best) if best else None
+    identity = (
+        session.get(TestIdentity, sig.test_identity_id)
+        if sig.test_identity_id is not None
+        else None
+    )
     return SimilarCase(
         signature_id=sig.id,
         identity_id=sig.test_identity_id,
-        test_id=session.get(TestIdentity, sig.test_identity_id).canonical_name,
+        test_id=identity.canonical_name if identity is not None else None,
         exception_type=sig.exception_type,
         occurrence_count=sig.occurrence_count,
         similarity=round(similarity, 4),
@@ -140,22 +149,29 @@ def similar_cases(
     k: int = 5,
     cutoff: float = 0.3,
     exclude_signature_id: int | None = None,
+    kind: str = "TEST",
 ) -> list[SimilarCase]:
     """Top-``k`` historical signatures most similar to ``normalized_text`` (similarity > cutoff).
 
     Ranked by trigram similarity, then by provenance weight so confirmed knowledge surfaces among
     near-equal text matches. Postgres uses ``pg_trgm``; offline falls back to a difflib ratio.
+    ``kind`` namespaces the search (issue #171): a "TEST" query only ever matches "TEST" signatures
+    and an "INCIDENT" query only "INCIDENT" signatures — the two spaces never cross-match.
     """
     if _is_postgres(session):
         sim = func.similarity(FailureSignature.normalized_text, normalized_text)
-        stmt = select(FailureSignature, sim.label("sim")).where(sim > cutoff)
+        stmt = select(FailureSignature, sim.label("sim")).where(
+            sim > cutoff, FailureSignature.kind == kind
+        )
         if exclude_signature_id is not None:
             stmt = stmt.where(FailureSignature.id != exclude_signature_id)
         rows = session.execute(stmt.order_by(sim.desc()).limit(max(k * 2, k))).all()
         scored = [(s, float(score)) for s, score in rows]
     else:
         scored = []
-        for s in session.scalars(select(FailureSignature)).all():
+        for s in session.scalars(
+            select(FailureSignature).where(FailureSignature.kind == kind)
+        ).all():
             if exclude_signature_id is not None and s.id == exclude_signature_id:
                 continue
             ratio = SequenceMatcher(None, normalized_text, s.normalized_text).ratio()

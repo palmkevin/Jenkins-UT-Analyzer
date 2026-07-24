@@ -262,6 +262,36 @@ _SPECS: tuple[TestSpec, ...] = (
 
 TRACKS = ("permanent", "permanent_py39")
 
+# ── Build Incidents (issue #171) ──────────────────────────────────────────────────────────────
+# A small, dedicated tail of build-level incidents, appended after the test-story builds so the
+# 14-build test narrative above is untouched. These builds are deliberately **incomplete** (a single
+# track reported, a stage cut short) — the real-world case where a FAILURE build is stored but
+# skipped as a test baseline — so they drive the *incident* feed without perturbing the test
+# lifecycle. The sequence tells one story: a pipeline-failure streak spanning two builds (704/705…
+# here 700/701) that then recovers (702), followed by an aborted build (703) left open.
+INCIDENT_FIRST = 700
+# (build_number, result, failing_stage, has_code_change) — oldest-first.
+_INCIDENT_SEQUENCE: tuple[tuple[int, str, str | None, bool], ...] = (
+    (700, "FAILURE", "Compile sources - permanent", True),
+    (701, "FAILURE", "Compile sources - permanent", True),
+    (702, "SUCCESS", None, False),
+    (703, "ABORTED", "Deploy release - permanent", False),
+)
+_INCIDENT_BUILDS: dict[int, tuple[str, str | None, bool]] = {
+    b: (r, s, c) for b, r, s, c in _INCIDENT_SEQUENCE
+}
+_INCIDENT_FAILING_NODE = "500"
+# Synthetic failing-stage log (a compile break) — no real data; masked & tailed into the incident
+# signature. No infra tokens + code candidates in the window -> the classifier reads CODE_CHANGE.
+_INCIDENT_LOG = (
+    "+ mvn -q -pl lx-pricing compile\n"
+    "[INFO] Building lx-pricing 1.0\n"
+    "[ERROR] BUILD FAILURE\n"
+    "[ERROR] compilation failure in lx-pricing\n"
+    "[ERROR] cannot find symbol: method computeMargin(int) in class PricingEngine\n"
+    "[ERROR] build step exited with status 1\n"
+)
+
 # Builds that carry candidate signals (see the classifier: code-only -> CODE, data-only -> DATA,
 # both -> per-test relevance tie-break, else UNKNOWN; infra error trumps all). Keyed by build
 # number.
@@ -307,8 +337,19 @@ _BUILD_INTERVAL = timedelta(days=1)
 
 
 def build_numbers() -> list[int]:
-    """The build numbers this dataset produces, oldest-first."""
-    return [FIRST_BUILD + i for i in range(_N_BUILDS)]
+    """The build numbers this dataset produces, oldest-first (test story + incident tail)."""
+    return [FIRST_BUILD + i for i in range(_N_BUILDS)] + [b for b, *_ in _INCIDENT_SEQUENCE]
+
+
+def _incident_start(build: int, anchor: datetime) -> datetime:
+    """Start of an incident-tail build — staggered in the recent past, after the newest test build.
+
+    The newest test build starts at ``anchor - _RUN_DURATION``; each incident build starts a few
+    minutes later, so the incident tail is the most recent slice of history by both build number
+    and wall-clock time.
+    """
+    pos = [b for b, *_ in _INCIDENT_SEQUENCE].index(build)
+    return anchor - _RUN_DURATION + timedelta(minutes=10 * (pos + 1))
 
 
 def _build_start(index: int, anchor: datetime) -> datetime:
@@ -398,6 +439,10 @@ class SyntheticJenkins:
             raise KeyError(f"no synthetic fixture for build {build}")
         return index
 
+    @staticmethod
+    def _is_incident(build: int) -> bool:
+        return build in _INCIDENT_BUILDS
+
     def _present(self, spec: TestSpec, index: int) -> str | None:
         char = spec.schedule[index]
         return None if char == "x" else char
@@ -407,6 +452,16 @@ class SyntheticJenkins:
 
     # ── JenkinsClient protocol ───────────────────────────────────────────────
     def build_meta(self, build: int) -> dict:
+        if self._is_incident(build):
+            result, _stage, _code = _INCIDENT_BUILDS[build]
+            start = _incident_start(build, self.anchor)
+            return {
+                "number": build,
+                "result": result,
+                "url": _JENKINS_URL.format(build=build),
+                "timestamp": _millis(start),
+                "duration": int((_RUN_DURATION / 4).total_seconds() * 1000),
+            }
         index = self._index(build)
         start = _build_start(index, self.anchor)
         result = "UNSTABLE" if self._has_failure(index) else "SUCCESS"
@@ -419,6 +474,10 @@ class SyntheticJenkins:
         }
 
     def test_report(self, build: int) -> dict:
+        if self._is_incident(build):
+            # Incident-tail builds carry no test artifact (the pipeline broke before/around the UT
+            # stage) — the incident feed keys off the build result + failing stage, not tests.
+            return {"suites": []}
         index = self._index(build)
         suites = []
         for track in TRACKS:
@@ -440,6 +499,21 @@ class SyntheticJenkins:
         return {"suites": suites}
 
     def change_sets(self, build: int) -> dict:
+        if self._is_incident(build):
+            _result, _stage, has_code = _INCIDENT_BUILDS[build]
+            if not has_code:
+                return {"changeSets": []}
+            start = _incident_start(build, self.anchor)
+            items = [
+                {
+                    "commitId": str(49000 + build),
+                    "timestamp": _millis(start - timedelta(minutes=20)),
+                    "author": {"fullName": _COMMIT_AUTHORS[build % len(_COMMIT_AUTHORS)]},
+                    "msg": f"LX-{build}: refactor PricingEngine.computeMargin signature",
+                    "paths": [{"editType": "edit", "file": "trunk/lx/ut_pricing/pr_engine.py"}],
+                }
+            ]
+            return {"changeSets": [{"kind": "svn", "items": items}]}
         self._index(build)
         if build not in _CODE_CHANGE_BUILDS:
             return {"changeSets": []}
@@ -462,6 +536,40 @@ class SyntheticJenkins:
         return {"changeSets": [{"kind": "svn", "items": items}]}
 
     def wfapi(self, build: int) -> dict:
+        if self._is_incident(build):
+            result, stage_name, _code = _INCIDENT_BUILDS[build]
+            start = _incident_start(build, self.anchor)
+            dur = int((_RUN_DURATION / 4).total_seconds() * 1000)
+            # One track only -> the build reads as INCOMPLETE (skipped as a test baseline), the
+            # exact case the incident feed must still act on. A named failing/aborted stage anchors
+            # the incident signature for a FAILURE.
+            stages = [
+                {
+                    "id": "300",
+                    "name": "devUTs: Execute - permanent",
+                    "status": "SUCCESS" if result != "ABORTED" else "ABORTED",
+                    "startTimeMillis": _millis(start),
+                    "durationMillis": dur,
+                }
+            ]
+            if stage_name is not None:
+                stages.append(
+                    {
+                        "id": _INCIDENT_FAILING_NODE,
+                        "name": stage_name,
+                        "status": "FAILED" if result == "FAILURE" else "ABORTED",
+                        "startTimeMillis": _millis(start),
+                        "durationMillis": dur,
+                    }
+                )
+            return {
+                "id": str(build),
+                "name": f"#{build}",
+                "status": result,
+                "startTimeMillis": _millis(start),
+                "durationMillis": int(_RUN_DURATION.total_seconds() * 1000),
+                "stages": stages,
+            }
         index = self._index(build)
         start = _build_start(index, self.anchor)
         stages = []
@@ -488,15 +596,20 @@ class SyntheticJenkins:
         }
 
     def stage_describe(self, build: int, node_id: str) -> dict:
-        self._index(build)
+        if not self._is_incident(build):
+            self._index(build)
         return {"id": str(node_id), "stageFlowNodes": []}
 
     def stage_log(self, build: int, node_id: str) -> dict:
+        if self._is_incident(build):
+            result, stage_name, _code = _INCIDENT_BUILDS[build]
+            text = _INCIDENT_LOG if result == "FAILURE" and stage_name is not None else ""
+            return {"nodeId": str(node_id), "text": text}
         self._index(build)
         return {"nodeId": str(node_id), "text": ""}
 
     def last_completed_build(self) -> int | None:
-        return FIRST_BUILD + _N_BUILDS - 1
+        return max(build_numbers())
 
 
 class SyntheticTrackingFeed:

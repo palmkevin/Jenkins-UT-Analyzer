@@ -30,6 +30,7 @@ _EXPECTED_TABLES = {
     "failure_episodes",
     "attributions",
     "classifications",
+    "build_incidents",
     "code_change_candidates",
     "data_change_candidates",
     "failure_signatures",

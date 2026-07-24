@@ -652,21 +652,21 @@ def test_set_attribution_correction_retains_original_ai(session_factory):
         assert attr.original_ai_reason == "trunk commit r123"
 
 
-def test_set_attribution_sets_and_clears_jira_ticket(session_factory):
+def test_set_attribution_sets_and_clears_cause_ticket(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_build(s, 1, {"t": "FAILED"})
         apply_build(s, r1, baseline=None)
         ep_id = _episode_id(s, "t")
         ep = s.get(FailureEpisode, ep_id)
         # Set a ticket (trimmed); it lives on the episode, not the Attribution row.
-        actions.set_attribution(s, ep_id, "bob", jira_ticket="  ABC-123  ")
-        assert ep.jira_ticket == "ABC-123"
+        actions.set_attribution(s, ep_id, "bob", cause_ticket="  ABC-123  ")
+        assert ep.cause_ticket == "ABC-123"
         # Omitting the field leaves it untouched…
         actions.set_attribution(s, ep_id, "bob", causing_person="carol")
-        assert ep.jira_ticket == "ABC-123"
+        assert ep.cause_ticket == "ABC-123"
         # …and an empty submission clears it.
-        actions.set_attribution(s, ep_id, "bob", jira_ticket="")
-        assert ep.jira_ticket is None
+        actions.set_attribution(s, ep_id, "bob", cause_ticket="")
+        assert ep.cause_ticket is None
 
 
 def test_acknowledge_unknown_identity_returns_false(session_factory):
@@ -1247,13 +1247,13 @@ def test_attribute_by_signature_applies_to_all_matching_open_episodes(session_fa
             causing_person="frank",
             reason_text="SMTP relay outage",
             triage_status="ROOT_CAUSED",
-            jira_ticket="LX-42",
+            cause_ticket="LX-42",
         )
         assert count == 2
         for name in ("alpha", "beta"):
             ep = _lc(s, name).current_episode
             assert ep.triage_status == "ROOT_CAUSED"
-            assert ep.jira_ticket == "LX-42"
+            assert ep.cause_ticket == "LX-42"
             assert ep.attribution.causing_person == "frank"
             assert ep.attribution.reason_text == "SMTP relay outage"
             assert ep.attribution.validated_by == "erin"
@@ -1262,7 +1262,7 @@ def test_attribute_by_signature_applies_to_all_matching_open_episodes(session_fa
         # gamma's failure does not share the signature — entirely untouched.
         gamma_ep = _lc(s, "gamma").current_episode
         assert gamma_ep.triage_status == "UNTRIAGED"
-        assert gamma_ep.jira_ticket is None
+        assert gamma_ep.cause_ticket is None
         assert gamma_ep.attribution is None
 
 
@@ -1318,11 +1318,11 @@ def test_attribute_by_signature_empty_jira_leaves_tickets_untouched(session_fact
         apply_build(s, r1, baseline=None)
         record_signatures_for_build(s, r1)
         beta_ep_id = _lc(s, "beta").current_episode_id
-        actions.set_attribution(s, beta_ep_id, "bob", jira_ticket="LX-7")
+        actions.set_attribution(s, beta_ep_id, "bob", cause_ticket="LX-7")
         sig_id = actions._episode_signature_id(s, _lc(s, "alpha").current_episode)
 
-        actions.attribute_by_signature(s, sig_id, "erin", causing_person="frank", jira_ticket="")
-        assert s.get(FailureEpisode, beta_ep_id).jira_ticket == "LX-7"
+        actions.attribute_by_signature(s, sig_id, "erin", causing_person="frank", cause_ticket="")
+        assert s.get(FailureEpisode, beta_ep_id).cause_ticket == "LX-7"
 
 
 def test_attribute_by_signature_unknown_signature_is_a_noop(session_factory):

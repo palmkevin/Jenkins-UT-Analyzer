@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from uta.models import (
     Attribution,
     Build,
+    BuildIncident,
     Classification,
     FailureEpisode,
     FailureSignature,
@@ -212,15 +213,20 @@ def set_attribution(
     causing_person: str | None = None,
     reason_text: str | None = None,
     triage_status: str | None = None,
-    jira_ticket: str | None = None,
+    cause_ticket: str | None = None,
+    resolution_ticket: str | None = None,
+    assignee: str | None = None,
 ) -> Attribution | None:
-    """Human edit of cause/reason/triage/Jira-ticket, deriving provenance from the AI suggestion.
+    """Human edit of cause/reason/triage + documentation fields, deriving provenance from the AI.
 
     Only non-empty submitted ``causing_person``/``reason_text`` are written (so a partial form
-    never clears the others). ``triage_status`` is set on the episode. ``jira_ticket`` is also set
-    directly on the episode — a submitted value is trimmed and stored, an empty submission clears it
-    (so the ticket is editable both ways); it is not a provenance-tracked conclusion, so it does not
-    touch the Attribution row. Returns None if the episode doesn't exist.
+    never clears the others). ``triage_status`` is set on the episode. The documentation fields —
+    ``cause_ticket`` (the ticket describing the cause, formerly the single "Jira ticket"),
+    ``resolution_ticket`` (the ticket the ``assignee`` is working on to resolve it) and ``assignee``
+    (the person handling the fix, distinct from the causing person) — are set directly on the
+    episode: a submitted value is trimmed and stored, an empty submission clears it; ``None`` leaves
+    the field untouched. They are not provenance-tracked conclusions. Returns None if the episode
+    doesn't exist.
     """
     episode = session.get(FailureEpisode, episode_id)
     if episode is None:
@@ -253,8 +259,12 @@ def set_attribution(
     if triage_status:
         episode.triage_status = triage_status
 
-    if jira_ticket is not None:
-        episode.jira_ticket = jira_ticket.strip() or None
+    if cause_ticket is not None:
+        episode.cause_ticket = cause_ticket.strip() or None
+    if resolution_ticket is not None:
+        episode.resolution_ticket = resolution_ticket.strip() or None
+    if assignee is not None:
+        episode.assignee = assignee.strip() or None
 
     if touched:
         attr.entered_by = actor
@@ -323,7 +333,9 @@ def attribute_by_signature(
     causing_person: str | None = None,
     reason_text: str | None = None,
     triage_status: str | None = None,
-    jira_ticket: str | None = None,
+    cause_ticket: str | None = None,
+    resolution_ticket: str | None = None,
+    assignee: str | None = None,
 ) -> int:
     """Apply one root-cause conclusion to every open failing episode sharing a signature (#106).
 
@@ -333,11 +345,13 @@ def attribute_by_signature(
     derived **per episode** against that episode's own AI suggestion (a mixed set yields a mix of
     ``HUMAN_CORRECTED`` / ``HUMAN_ENTERED``), and each conclusion attaches to that episode's own
     signature row for KB recurrence retrieval. One deviation from the single-episode form: an
-    empty ``jira_ticket`` leaves tickets **untouched** rather than clearing them — mass-clearing
-    unrelated tickets from a shared-outage form would be a foot-gun. Returns the number of
-    episodes attributed (0 if the signature is unknown or nothing matches).
+    empty ticket / assignee field leaves those **untouched** rather than clearing them —
+    mass-clearing unrelated documentation from a shared-outage form would be a foot-gun. Returns the
+    number of episodes attributed (0 if the signature is unknown or nothing matches).
     """
-    ticket = jira_ticket.strip() if jira_ticket and jira_ticket.strip() else None
+    ct = cause_ticket.strip() if cause_ticket and cause_ticket.strip() else None
+    rt = resolution_ticket.strip() if resolution_ticket and resolution_ticket.strip() else None
+    asg = assignee.strip() if assignee and assignee.strip() else None
     count = 0
     for _lc, ep in open_episodes_for_signature(session, signature_id):
         set_attribution(
@@ -347,7 +361,130 @@ def attribute_by_signature(
             causing_person=causing_person,
             reason_text=reason_text,
             triage_status=triage_status,
-            jira_ticket=ticket,
+            cause_ticket=ct,
+            resolution_ticket=rt,
+            assignee=asg,
         )
         count += 1
     return count
+
+
+# ── Build Incident actions (issue #171) ──────────────────────────────────────────────────────────
+# The build-level twins of the episode actions above: they reuse the same Attribution /
+# Classification rows (now nullable-keyed on incident_id) and the same confirm/correct provenance
+# loop, so a build-level triage carries identical audit semantics to a test-level one.
+
+
+def _latest_incident_classification(session: Session, incident_id: int) -> Classification | None:
+    return session.scalar(
+        select(Classification)
+        .where(Classification.incident_id == incident_id)
+        .order_by(Classification.created_at.desc(), Classification.id.desc())
+        .limit(1)
+    )
+
+
+def _get_or_create_incident_attribution(session: Session, incident_id: int) -> Attribution:
+    attr = session.scalar(select(Attribution).where(Attribution.incident_id == incident_id))
+    if attr is None:
+        attr = Attribution(incident_id=incident_id)
+        session.add(attr)
+    return attr
+
+
+def acknowledge_incident(session: Session, incident_id: int, actor: str) -> bool:
+    """Acknowledge a Build Incident. Returns False if the incident doesn't exist."""
+    incident = session.get(BuildIncident, incident_id)
+    if incident is None:
+        return False
+    incident.acknowledged = True
+    incident.acknowledged_by = actor
+    incident.acknowledged_at = _now()
+    return True
+
+
+def confirm_incident(session: Session, incident_id: int, actor: str) -> Attribution | None:
+    """One-click **Confirm** of the AI suggestion for a Build Incident (tier ``AI_CONFIRMED``)."""
+    incident = session.get(BuildIncident, incident_id)
+    if incident is None:
+        return None
+    classification = _latest_incident_classification(session, incident_id)
+    ai_cause = classification.suggested_contact if classification else None
+    ai_reason = classification.llm_hypothesis if classification else None
+
+    attr = _get_or_create_incident_attribution(session, incident_id)
+    attr.causing_person = ai_cause
+    attr.reason_text = ai_reason
+    attr.cause_provenance = Provenance.AI_CONFIRMED
+    attr.reason_provenance = Provenance.AI_CONFIRMED
+    attr.original_ai_cause = ai_cause
+    attr.original_ai_reason = ai_reason
+    attr.validated_by = actor
+    attr.validated_at = _now()
+    attr.signature_id = incident.signature_id
+    return attr
+
+
+def set_incident_attribution(
+    session: Session,
+    incident_id: int,
+    actor: str,
+    *,
+    causing_person: str | None = None,
+    reason_text: str | None = None,
+    triage_status: str | None = None,
+    cause_ticket: str | None = None,
+    resolution_ticket: str | None = None,
+    assignee: str | None = None,
+    problem_text: str | None = None,
+) -> BuildIncident | None:
+    """Human edit of a Build Incident's cause/reason/triage + documentation fields.
+
+    Mirrors :func:`set_attribution` for the build-level surface: cause/reason are provenance-tracked
+    conclusions on the reused Attribution row, ``triage_status`` / ``assignee`` / the two tickets /
+    the ``problem_text`` documentation are set directly on the incident (``None`` leaves a field
+    untouched, an empty string clears it). Returns None if the incident doesn't exist.
+    """
+    incident = session.get(BuildIncident, incident_id)
+    if incident is None:
+        return None
+    classification = _latest_incident_classification(session, incident_id)
+    ai_cause = classification.suggested_contact if classification else None
+    ai_reason = classification.llm_hypothesis if classification else None
+
+    attr = _get_or_create_incident_attribution(session, incident_id)
+    touched = False
+    if causing_person and causing_person.strip():
+        value = causing_person.strip()
+        provenance = _provenance(value, ai_cause)
+        attr.causing_person = value
+        attr.cause_provenance = provenance
+        if provenance == Provenance.HUMAN_CORRECTED:
+            attr.original_ai_cause = ai_cause
+        touched = True
+    if reason_text and reason_text.strip():
+        value = reason_text.strip()
+        provenance = _provenance(value, ai_reason)
+        attr.reason_text = value
+        attr.reason_provenance = provenance
+        if provenance == Provenance.HUMAN_CORRECTED:
+            attr.original_ai_reason = ai_reason
+        touched = True
+
+    if triage_status:
+        incident.triage_status = triage_status
+    if cause_ticket is not None:
+        incident.cause_ticket = cause_ticket.strip() or None
+    if resolution_ticket is not None:
+        incident.resolution_ticket = resolution_ticket.strip() or None
+    if assignee is not None:
+        incident.assignee = assignee.strip() or None
+    if problem_text is not None:
+        incident.problem_text = problem_text.strip() or None
+
+    if touched:
+        attr.entered_by = actor
+        attr.validated_by = actor
+        attr.validated_at = _now()
+        attr.signature_id = incident.signature_id
+    return incident

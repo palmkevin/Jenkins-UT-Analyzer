@@ -20,6 +20,7 @@ from uta.models.enums import PredictedCause
 from uta.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
+    from uta.models.incident import BuildIncident
     from uta.models.lifecycle import FailureEpisode
 
 
@@ -27,7 +28,15 @@ class Classification(Base, TimestampMixin):
     __tablename__ = "classifications"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    episode_id: Mapped[int] = mapped_column(ForeignKey("failure_episodes.id"), index=True)
+    # A classification belongs to EITHER a test-level episode OR a build-level incident (issue #171)
+    # — exactly one of the two FKs is set. Both stay nullable so the same append-only, provenance-
+    # weighted prediction/hypothesis machinery serves both surfaces.
+    episode_id: Mapped[int | None] = mapped_column(
+        ForeignKey("failure_episodes.id"), nullable=True, index=True
+    )
+    incident_id: Mapped[int | None] = mapped_column(
+        ForeignKey("build_incidents.id"), nullable=True, index=True
+    )
 
     predicted_cause: Mapped[str] = mapped_column(String(16), default=PredictedCause.UNKNOWN)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)  # null pre-#73 rows
@@ -37,4 +46,5 @@ class Classification(Base, TimestampMixin):
         Text, nullable=True
     )  # JSON of the signals behind it
 
-    episode: Mapped[FailureEpisode] = relationship(back_populates="classifications")
+    episode: Mapped[FailureEpisode | None] = relationship(back_populates="classifications")
+    incident: Mapped[BuildIncident | None] = relationship(back_populates="classifications")

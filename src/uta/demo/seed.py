@@ -171,6 +171,7 @@ def seed_demo_data(
             ingest_unittest_logs=False,
             recompute_flaky=False,  # one pass after the loop (flags are display-only)
             svn_blame_client=svn_blame_client,
+            ingest_build_incidents=True,
         )
 
     with session_scope(session_factory) as session:
@@ -191,8 +192,10 @@ def seed_demo_data(
                 _DEMO_ACTOR,
                 causing_person="THA",
                 reason_text="Reference table updated without a matching migration.",
-                triage_status="in_progress",
-                jira_ticket="LX-8842",
+                triage_status="INVESTIGATING",
+                cause_ticket="LX-8842",
+                resolution_ticket="LX-8850",
+                assignee="M. Weber",
             )
 
         # One-click Confirm of the tie-break test's AI suggestion (issue #73): together with the
@@ -202,7 +205,60 @@ def seed_demo_data(
         if dt is not None:
             actions.confirm(session, dt[1], _DEMO_ACTOR)
 
+    # Document the recovered pipeline-failure incident so the demo's Build Incidents surface shows
+    # the generalized assignee / cause-ticket / resolution-ticket fields populated (issue #171),
+    # plus a synthetic LLM hypothesis on its classification (the demo runs no real provider). The
+    # aborted incident is deliberately left open & untriaged so both incident kinds are on show.
+    _seed_incident_triage(session_factory)
+
     # Synthetic control-panel state so the demo's /control page renders populated (issue #16).
     _seed_control_state(session_factory, anchor=anchor, builds=builds)
 
     return len(builds)
+
+
+def _seed_incident_triage(session_factory: sessionmaker[Session]) -> None:
+    """Populate one Build Incident's documentation fields + a synthetic hypothesis (issue #171)."""
+    from sqlalchemy import select
+
+    from uta.models import BuildIncident, Classification
+    from uta.models.enums import IncidentKind
+
+    with session_scope(session_factory) as session:
+        incident = session.scalar(
+            select(BuildIncident)
+            .where(
+                BuildIncident.kind == IncidentKind.PIPELINE_FAILURE,
+                BuildIncident.is_open.is_(False),
+            )
+            .order_by(BuildIncident.opened_build_id)
+            .limit(1)
+        )
+        if incident is None:
+            return
+        classification = session.scalar(
+            select(Classification)
+            .where(Classification.incident_id == incident.id)
+            .order_by(Classification.id.desc())
+            .limit(1)
+        )
+        if classification is not None:
+            # Display-only synthetic hypothesis (the demo runs no real LLM provider). Left
+            # unconfirmed so it does not perturb the control panel's AI-accuracy metric, which
+            # scores confirmed-vs-corrected attributions across both surfaces.
+            classification.llm_hypothesis = (
+                "PricingEngine.computeMargin's signature changed in the window's commit; the "
+                "compile step fails because a caller still passes the old argument shape."
+            )
+        # Document the incident (assignee / tickets / triage / problem text) without adding a
+        # confirmed/corrected cause or reason, so the AI-accuracy panel stays about test episodes.
+        actions.set_incident_attribution(
+            session,
+            incident.id,
+            _DEMO_ACTOR,
+            problem_text="Pipeline compile stage failed for two consecutive builds, then green.",
+            triage_status="ROOT_CAUSED",
+            assignee="K. Larsen",
+            cause_ticket="LX-9001",
+            resolution_ticket="LX-9002",
+        )

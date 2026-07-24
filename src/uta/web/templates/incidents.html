@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Build Incidents — UT Analyzer{% endblock %}
+
+{% macro build_link(ref) -%}
+  {%- if ref -%}<a href="/builds/{{ ref.number }}">#{{ ref.number }}</a>{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% macro incident_table(rows) -%}
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead>
+    <tr><th>Build</th><th>Kind</th><th>Failing stage</th><th>Span</th><th>Triage</th><th>Assignee</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><a href="/incidents/{{ r.id }}">{{ build_link(r.opened) }}</a>{% if r.build_count > 1 %} <span class="badge">×{{ r.build_count }} builds</span>{% endif %}</td>
+      <td><span class="{{ 'FAILED' if r.kind == 'PIPELINE_FAILURE' else 'SKIPPED' }}">{{ r.kind }}</span>{% for k in r.mixed_kinds %} <span class="badge">+{{ k }}</span>{% endfor %}</td>
+      <td>{% if r.failing_stage %}<code>{{ r.failing_stage }}</code>{% else %}—{% endif %}</td>
+      <td>{{ build_link(r.opened) }} → {% if r.recovered %}{{ build_link(r.recovered) }} <span class="badge match">recovered</span>{% else %}<span class="badge removed">open</span>{% endif %}</td>
+      <td>{{ r.triage_status }}{% if r.acknowledged %} <span class="badge">ack</span>{% endif %}</td>
+      <td>{{ r.assignee or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<h1>Build Incidents</h1>
+<p class="meta">Build-level conditions requiring triage — the pipeline itself failing or being aborted, orthogonal to test-level failure episodes.</p>
+
+<h2 id="open">Open ({{ queue.counts.open }})</h2>
+{% if queue.open %}{{ incident_table(queue.open) }}{% else %}<p class="empty">No open incidents — the pipeline is healthy.</p>{% endif %}
+
+<h2 id="recovered">Recovered ({{ queue.counts.recovered }})</h2>
+{% if queue.recovered %}{{ incident_table(queue.recovered) }}{% else %}<p class="empty">No recovered incidents yet.</p>{% endif %}
+{% endblock %}
