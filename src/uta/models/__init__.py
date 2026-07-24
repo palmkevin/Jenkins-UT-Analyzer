@@ -22,13 +22,16 @@ from uta.models.enums import (
     AliasState,
     ChangeType,
     ErrorType,
+    IncidentKind,
     IngestJobStatus,
     LifecycleState,
     PredictedCause,
     Provenance,
+    SignatureKind,
     TriageStatus,
 )
 from uta.models.identity import TestIdentity
+from uta.models.incident import BuildIncident
 from uta.models.kb import FailureSignature
 from uta.models.lifecycle import FailureEpisode, TestLifecycle
 from uta.models.result import TestResult
@@ -44,6 +47,7 @@ __all__ = [
     "FailureEpisode",
     "Attribution",
     "Classification",
+    "BuildIncident",
     "CodeChangeCandidate",
     "DataChangeCandidate",
     "FailureSignature",
@@ -56,9 +60,11 @@ __all__ = [
     "AliasState",
     "ChangeType",
     "ErrorType",
+    "IncidentKind",
     "IngestJobStatus",
     "LifecycleState",
     "PredictedCause",
     "Provenance",
+    "SignatureKind",
     "TriageStatus",
 ]

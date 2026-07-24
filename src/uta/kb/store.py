@@ -23,10 +23,55 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from uta.ingest.ut_report import FAILED_STATUSES
-from uta.kb.signature import compute_hash, normalize
-from uta.models import Build, FailureSignature, TestIdentity, TestResult
+from uta.kb.signature import compute_hash, normalize, normalize_incident
+from uta.models import Build, BuildIncident, FailureSignature, TestIdentity, TestResult
+from uta.models.enums import SignatureKind
 
 _HASH_CHUNK = 1000
+
+
+def record_incident_signature(
+    session: Session, incident: BuildIncident, log_text: str | None
+) -> FailureSignature | None:
+    """Compute + upsert the **incident-namespaced** signature for a build incident, and link it.
+
+    Draws the normalized text from the failing stage's log (issue #171). The signature lives in the
+    "INCIDENT" namespace (:class:`~uta.models.enums.SignatureKind`), keyed on the failing-stage name
+    so a recurring pipeline failure of the same stage recurs, and never cross-matches a test-failure
+    signature. Returns the signature (``None`` when the log yields nothing to key on — the incident
+    then simply carries no signature, exactly like an aborted incident). Idempotent per incident:
+    the aggregates are recomputed from the current facts each time.
+    """
+    sig = normalize_incident(log_text)
+    if sig is None:
+        return None
+    anchor = incident.failing_stage or "pipeline"
+    sig_hash = compute_hash(anchor, sig.text, SignatureKind.INCIDENT)
+    signature = session.scalar(
+        select(FailureSignature).where(FailureSignature.signature_hash == sig_hash)
+    )
+    seen_at = incident.opened_at
+    if signature is None:
+        signature = FailureSignature(
+            kind=SignatureKind.INCIDENT,
+            test_identity_id=None,
+            normalized_text=sig.text,
+            signature_hash=sig_hash,
+            exception_type=sig.exception_type,
+            occurrence_count=1,
+            first_seen_build_id=incident.opened_build_id,
+            first_seen_at=seen_at,
+            last_seen_build_id=incident.opened_build_id,
+            last_seen_at=seen_at,
+        )
+        session.add(signature)
+    else:
+        signature.occurrence_count = (signature.occurrence_count or 0) + 1
+        signature.last_seen_build_id = incident.opened_build_id
+        signature.last_seen_at = seen_at
+    session.flush()
+    incident.signature_id = signature.id
+    return signature
 
 
 def _recompute_aggregates_bulk(session: Session, signature_ids: set[int]) -> None:

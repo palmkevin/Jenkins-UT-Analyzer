@@ -33,6 +33,16 @@
   {% if build.url %}· <a href="{{ build.url }}">Jenkins</a>{% endif %}
 </p>
 
+{% if incident %}
+<h2 id="incident">Build Incident
+  <a class="badge" href="/incidents/{{ incident.id }}">#{{ incident.id }}</a>
+</h2>
+<div class="card">
+  {{ ui.incident_summary(incident, jira=jira_base_url, fisheye=fisheye_changelog_url) }}
+  <p><a href="/incidents/{{ incident.id }}">Open incident detail &amp; documentation →</a></p>
+</div>
+{% endif %}
+
 <h2>Tracks</h2>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">

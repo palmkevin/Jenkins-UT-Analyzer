@@ -29,7 +29,9 @@ from uta.ingest.ut_report import FAILED_STATUSES
 from uta.kb.retrieval import similar_cases
 from uta.kb.signature import display_message
 from uta.models import (
+    Attribution,
     Build,
+    BuildIncident,
     Classification,
     FailureEpisode,
     FailureSignature,
@@ -37,7 +39,7 @@ from uta.models import (
     TestLifecycle,
     TestResult,
 )
-from uta.models.enums import LifecycleState
+from uta.models.enums import LifecycleState, SignatureKind
 from uta.web import charts
 from uta.web.actions import _error_key, open_episodes_for_signature
 
@@ -844,7 +846,9 @@ def _episode_dict(session: Session, ep: FailureEpisode) -> dict:
         "age_builds": ep.age_builds,
         "age_days": _days_between(ep.first_failure_at, ep.fixed_at or _now()),
         "triage_status": ep.triage_status,
-        "jira_ticket": ep.jira_ticket,
+        "cause_ticket": ep.cause_ticket,
+        "resolution_ticket": ep.resolution_ticket,
+        "assignee": ep.assignee,
         "predicted_cause": classification.predicted_cause if classification else None,
         "confidence": classification.confidence if classification else None,
         "llm_hypothesis": classification.llm_hypothesis if classification else None,
@@ -1029,6 +1033,203 @@ def test_record(
         "spark": charts.sparkline(history),
         "recurrence": recurrence,
     }
+
+
+def open_incident_count(session: Session) -> int:
+    """How many Build Incidents are currently open — the nav badge count (issue #171)."""
+    return session.scalar(
+        select(func.count()).select_from(BuildIncident).where(BuildIncident.is_open.is_(True))
+    )
+
+
+def _incident_latest_classification(session: Session, incident_id: int) -> Classification | None:
+    return session.scalar(
+        select(Classification)
+        .where(Classification.incident_id == incident_id)
+        .order_by(Classification.created_at.desc(), Classification.id.desc())
+        .limit(1)
+    )
+
+
+def _incident_row(incident: BuildIncident, build_refs: dict[int, dict]) -> dict:
+    """One row for the Build Incidents triage list — a projection over prefetched build refs."""
+    return {
+        "id": incident.id,
+        "kind": incident.kind,
+        "failing_stage": incident.failing_stage,
+        "is_open": incident.is_open,
+        "triage_status": incident.triage_status,
+        "acknowledged": incident.acknowledged,
+        "assignee": incident.assignee,
+        "cause_ticket": incident.cause_ticket,
+        "resolution_ticket": incident.resolution_ticket,
+        "build_count": incident.build_count,
+        "reopen_count": incident.reopen_count,
+        "mixed_kinds": [k for k in (incident.mixed_kinds or "").split(",") if k],
+        "opened": build_refs.get(incident.opened_build_id),
+        "opened_at": incident.opened_at,
+        "last": build_refs.get(incident.last_build_id),
+        "last_at": incident.last_at,
+        "recovered": build_refs.get(incident.recovered_build_id),
+        "recovered_at": incident.recovered_at,
+    }
+
+
+def incidents_queue(session: Session) -> dict:
+    """The Build Incidents triage page (issue #171): open incidents first, then recovered ones.
+
+    A build-level counterpart to the test triage queue. Open incidents (a broken pipeline needing
+    attention) sort to the top, newest-first; recovered incidents follow as history.
+    """
+    incidents = list(
+        session.scalars(
+            select(BuildIncident).order_by(
+                BuildIncident.is_open.desc(), BuildIncident.opened_build_id.desc()
+            )
+        )
+    )
+    build_ids: set[int] = set()
+    for inc in incidents:
+        build_ids.update(
+            i
+            for i in (inc.opened_build_id, inc.last_build_id, inc.recovered_build_id)
+            if i is not None
+        )
+    build_refs = _build_refs(session, build_ids)
+    open_rows = [_incident_row(i, build_refs) for i in incidents if i.is_open]
+    recovered_rows = [_incident_row(i, build_refs) for i in incidents if not i.is_open]
+    return {
+        "open": open_rows,
+        "recovered": recovered_rows,
+        "counts": {"open": len(open_rows), "recovered": len(recovered_rows)},
+    }
+
+
+def _incident_dict(session: Session, incident: BuildIncident) -> dict:
+    """The full detail projection for one Build Incident (detail page + per-build inline card)."""
+    classification = _incident_latest_classification(session, incident.id)
+    attribution = session.scalar(select(Attribution).where(Attribution.incident_id == incident.id))
+    evidence = None
+    if classification and classification.evidence:
+        try:
+            evidence = json.loads(classification.evidence)
+        except (ValueError, TypeError):
+            evidence = None
+    signature = (
+        session.get(FailureSignature, incident.signature_id)
+        if incident.signature_id is not None
+        else None
+    )
+    similar: list[dict] = []
+    if signature is not None:
+        similar = [
+            asdict(c)
+            for c in similar_cases(
+                session,
+                signature.normalized_text,
+                k=5,
+                cutoff=0.3,
+                exclude_signature_id=signature.id,
+                kind=SignatureKind.INCIDENT,
+            )
+        ]
+    opened = session.get(Build, incident.opened_build_id)
+    candidates = {"code": [], "data": []}
+    if opened is not None:
+        candidates = {
+            "code": [
+                {
+                    "revision": c.revision,
+                    "author": c.author,
+                    "message": c.message,
+                    "committed_at": c.committed_at,
+                }
+                for c in opened.code_changes
+            ],
+            "data": [
+                {
+                    "entity": d.lx_table_code,
+                    "change_type": d.change_type,
+                    "component": d.component_name,
+                    "author": d.author,
+                    "changed_at": d.changed_at,
+                }
+                for d in opened.data_changes
+            ],
+        }
+    return {
+        "id": incident.id,
+        "kind": incident.kind,
+        "failing_stage": incident.failing_stage,
+        "is_open": incident.is_open,
+        "build_count": incident.build_count,
+        "reopen_count": incident.reopen_count,
+        "mixed_kinds": [k for k in (incident.mixed_kinds or "").split(",") if k],
+        "opened": _build_ref(session, incident.opened_build_id),
+        "opened_at": incident.opened_at,
+        "last": _build_ref(session, incident.last_build_id),
+        "last_at": incident.last_at,
+        "recovered": _build_ref(session, incident.recovered_build_id),
+        "recovered_at": incident.recovered_at,
+        "triage_status": incident.triage_status,
+        "acknowledged": incident.acknowledged,
+        "acknowledged_by": incident.acknowledged_by,
+        "acknowledged_at": incident.acknowledged_at,
+        "assignee": incident.assignee,
+        "cause_ticket": incident.cause_ticket,
+        "resolution_ticket": incident.resolution_ticket,
+        "problem_text": incident.problem_text,
+        "predicted_cause": classification.predicted_cause if classification else None,
+        "confidence": classification.confidence if classification else None,
+        "suggested_contact": classification.suggested_contact if classification else None,
+        "llm_hypothesis": classification.llm_hypothesis if classification else None,
+        "evidence_items": _evidence_items(evidence),
+        "causing_person": attribution.causing_person if attribution else None,
+        "reason_text": attribution.reason_text if attribution else None,
+        "cause_provenance": attribution.cause_provenance if attribution else None,
+        "reason_provenance": attribution.reason_provenance if attribution else None,
+        "validated_by": attribution.validated_by if attribution else None,
+        "validated_at": attribution.validated_at if attribution else None,
+        "signature": None
+        if signature is None
+        else {
+            "id": signature.id,
+            "exception_type": signature.exception_type,
+            "normalized_text": signature.normalized_text,
+            "occurrence_count": signature.occurrence_count,
+        },
+        "similar": similar,
+        "candidates": candidates,
+    }
+
+
+def incident_detail(session: Session, incident_id: int) -> dict | None:
+    """The per-incident detail view: streak span, signature, classification, hypothesis + form."""
+    incident = session.get(BuildIncident, incident_id)
+    if incident is None:
+        return None
+    return _incident_dict(session, incident)
+
+
+def incident_for_build(session: Session, build_id: int) -> dict | None:
+    """The incident this build opened or belongs to (for the per-build inline card), or ``None``.
+
+    A build belongs to an incident when it opened it, is the incident's most-recent non-green
+    build, or recovered it — enough to show the incident context inline on the build page.
+    """
+    incident = session.scalar(
+        select(BuildIncident)
+        .where(
+            (BuildIncident.opened_build_id == build_id)
+            | (BuildIncident.last_build_id == build_id)
+            | (BuildIncident.recovered_build_id == build_id)
+        )
+        .order_by(BuildIncident.opened_build_id.desc())
+        .limit(1)
+    )
+    if incident is None:
+        return None
+    return _incident_dict(session, incident)
 
 
 def flaky_leaderboard(

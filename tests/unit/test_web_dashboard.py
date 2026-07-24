@@ -108,7 +108,7 @@ def test_attribute_form_persists_reason(client, seeded):
     assert "frank" in page and "flaky fixture" in page
 
 
-def test_jira_ticket_persists_and_links(client, seeded):
+def test_cause_ticket_persists_and_links(client, seeded):
     ident_id = _identity_id(seeded, "alpha")
     with session_scope(seeded) as s:
         lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident_id))
@@ -116,7 +116,7 @@ def test_jira_ticket_persists_and_links(client, seeded):
     client.cookies.set("uta_actor", "erin")
     resp = client.post(
         f"/episodes/{ep_id}/attribute",
-        data={"jira_ticket": "ABC-123"},
+        data={"cause_ticket": "ABC-123"},
         headers={"referer": f"/tests/{ident_id}"},
     )
     assert resp.status_code == 303
@@ -125,7 +125,7 @@ def test_jira_ticket_persists_and_links(client, seeded):
     # An empty submission clears it (editable both ways).
     client.post(
         f"/episodes/{ep_id}/attribute",
-        data={"jira_ticket": ""},
+        data={"cause_ticket": ""},
         headers={"referer": f"/tests/{ident_id}"},
     )
     assert "browse/ABC-123" not in client.get(f"/tests/{ident_id}").text
@@ -704,7 +704,7 @@ def test_attribute_by_signature_route_attributes_matching_tests(session_factory)
             "causing_person": "frank",
             "reason_text": "shared outage",
             "triage_status": "ROOT_CAUSED",
-            "jira_ticket": "LX-42",
+            "cause_ticket": "LX-42",
         },
         headers={"referer": f"/tests/{alpha_ident_id}"},
     )
@@ -715,7 +715,7 @@ def test_attribute_by_signature_route_attributes_matching_tests(session_factory)
         for name in ("alpha", "beta"):
             ep = get_identity(s, name).lifecycle.current_episode
             assert ep.triage_status == "ROOT_CAUSED"
-            assert ep.jira_ticket == "LX-42"
+            assert ep.cause_ticket == "LX-42"
             assert ep.attribution.causing_person == "frank"
             assert ep.attribution.reason_text == "shared outage"
             assert ep.attribution.validated_by == "erin"

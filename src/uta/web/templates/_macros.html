@@ -64,6 +64,48 @@
   {%- endif -%}
 {%- endmacro %}
 
+{#- Build Incident summary (issue #171): the read-only facts of a build-level incident — kind,
+    streak span, failing-stage signature, deterministic classification and LLM hypothesis. Shared
+    by the incident detail page and the per-build inline card. `jira` is the Jira base URL and
+    `fisheye` the FishEye changelog URL for deep links. -#}
+{% macro incident_summary(inc, jira="", fisheye="") -%}
+  <p>
+    <strong>{{ inc.kind }}</strong>
+    {% for k in inc.mixed_kinds %}<span class="badge">+{{ k }}</span>{% endfor %}
+    {% if inc.is_open %}<span class="badge removed">open</span>{% else %}<span class="badge match">recovered</span>{% endif %}
+    {% if inc.reopen_count %}<span class="badge">reopened ×{{ inc.reopen_count }}</span>{% endif %}
+  </p>
+  <p class="meta">
+    Opened <a href="/builds/{{ inc.opened.number }}">#{{ inc.opened.number }}</a> · {{ inc.opened_at|reltime }}<br>
+    Most recent non-green: {% if inc.last %}<a href="/builds/{{ inc.last.number }}">#{{ inc.last.number }}</a>{% else %}—{% endif %} ({{ inc.build_count }} build{{ "s" if inc.build_count != 1 }})<br>
+    Recovered in: {% if inc.recovered %}<a href="/builds/{{ inc.recovered.number }}">#{{ inc.recovered.number }}</a> · {{ inc.recovered_at|reltime }}{% else %}<span class="empty">still open</span>{% endif %}<br>
+    {% if inc.failing_stage %}Failing stage: <code>{{ inc.failing_stage }}</code>{% endif %}
+  </p>
+  {% if inc.signature %}
+  <p class="meta">
+    Failure signature{% if inc.signature.exception_type %} ({{ inc.signature.exception_type }}){% endif %} — seen {{ inc.signature.occurrence_count }}×.
+  </p>
+  <pre class="p-2 border rounded small mb-2"><code>{{ inc.signature.normalized_text }}</code></pre>
+  {% endif %}
+  <p>
+    <strong>Predicted cause:</strong> {{ inc.predicted_cause or "—" }}
+    {% if inc.confidence is not none %} <span class="badge">confidence {{ "%.2f"|format(inc.confidence) }}</span>{% endif %}
+    {% if inc.suggested_contact %} · suggested contact {{ inc.suggested_contact }}{% endif %}
+  </p>
+  {% if inc.evidence_items %}
+  <details class="card"><summary>Why this prediction</summary>
+    <dl class="evidence">{% for label, value in inc.evidence_items %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+  </details>
+  {% endif %}
+  {% if inc.llm_hypothesis %}<p class="meta">Hypothesis: {{ inc.llm_hypothesis }}</p>{% endif %}
+  {% if inc.candidates and (inc.candidates.code or inc.candidates.data) %}
+  <p class="meta">
+    {% if inc.candidates.code %}Code changes in window: {{ inc.candidates.code|length }}{% endif %}
+    {% if inc.candidates.data %}{% if inc.candidates.code %} · {% endif %}Data changes in window: {{ inc.candidates.data|length }}{% endif %}
+  </p>
+  {% endif %}
+{%- endmacro %}
+
 {#- Server-side pager (issue #52). Rendered under a paginated table: prev/next links plus the
     page position; each link re-requests the page with ?page=N (and jumps back to `anchor`).
     Hidden entirely when everything fits on one page. -#}

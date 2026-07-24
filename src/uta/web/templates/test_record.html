@@ -93,9 +93,13 @@
     </details>
     {% endif %}
 
-    {% if ep.jira_ticket %}
-    <p>Jira ticket:
-      <a href="{{ jira_base_url }}/browse/{{ ep.jira_ticket }}">{{ ep.jira_ticket }}</a>
+    {% if ep.cause_ticket or ep.resolution_ticket or ep.assignee %}
+    <p>
+      {% if ep.assignee %}Assignee: <strong>{{ ep.assignee }}</strong>{% endif %}
+      {% if ep.cause_ticket %}{% if ep.assignee %} · {% endif %}Cause ticket:
+        <a href="{{ jira_base_url }}/browse/{{ ep.cause_ticket }}">{{ ep.cause_ticket }}</a>{% endif %}
+      {% if ep.resolution_ticket %} · Resolution ticket:
+        <a href="{{ jira_base_url }}/browse/{{ ep.resolution_ticket }}">{{ ep.resolution_ticket }}</a>{% endif %}
     </p>
     {% endif %}
 
@@ -138,8 +142,12 @@
       <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
       <label class="form-label mb-1">Reason for failure</label>
       <textarea class="form-control form-control-sm mb-2" name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
-      <label class="form-label mb-1">Jira ticket</label>
-      <input class="form-control form-control-sm mb-2" type="text" name="jira_ticket" value="{{ ep.jira_ticket or '' }}" placeholder="e.g. ABC-123">
+      <label class="form-label mb-1">Assignee <span class="meta">(the person handling the fix — distinct from the causing person above)</span></label>
+      <input class="form-control form-control-sm mb-2" type="text" name="assignee" value="{{ ep.assignee or '' }}">
+      <label class="form-label mb-1">Cause ticket</label>
+      <input class="form-control form-control-sm mb-2" type="text" name="cause_ticket" value="{{ ep.cause_ticket or '' }}" placeholder="e.g. ABC-123">
+      <label class="form-label mb-1">Resolution ticket <span class="meta">(the ticket the assignee is working on to resolve this — not a claim that it is resolved)</span></label>
+      <input class="form-control form-control-sm mb-2" type="text" name="resolution_ticket" value="{{ ep.resolution_ticket or '' }}" placeholder="e.g. ABC-124">
       <label class="form-label mb-1">Triage status</label>
       <select class="form-select form-select-sm mb-3" name="triage_status">
         {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}
@@ -153,7 +161,7 @@
               and rec and rec.open_affected > 1 %}
         <button class="btn btn-sm btn-outline-primary" type="submit"
                 formaction="/signatures/{{ rec.signature_id }}/attribute"
-                title="Apply cause / reason / Jira ticket / triage status to every open failing test sharing this failure signature (an empty Jira field leaves tickets untouched)">
+                title="Apply cause / reason / tickets / assignee / triage status to every open failing test sharing this failure signature (empty ticket / assignee fields leave those untouched)">
           Apply to all {{ rec.open_affected }} affected tests with this signature
         </button>
         {% endif %}

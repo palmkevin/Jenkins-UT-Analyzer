@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Also ingest the unittest console-log UT stages (no JUnit artifact — parsed from stage logs).
     ingest_unittest_stages: bool = True
     unittest_suites: str = "LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests"
+    # Detect **Build Incidents** (issue #171): open a build-level triage entity when a build's
+    # top-level result is FAILURE or ABORTED, folded into the ordinary ingest path. On by default.
+    ingest_build_incidents: bool = True
 
     # ── Oracle ut_ref (read-only) ────────────────────────────────────────────
     ut_ref_host: str = "lsdb04"

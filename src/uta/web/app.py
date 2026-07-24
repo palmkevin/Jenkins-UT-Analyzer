@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
+from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
 from uta.clients import build_email_sender
@@ -40,6 +41,7 @@ from uta.control.tunables import (
 )
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
 from uta.delivery.email import EmailSender
+from uta.models import Build
 from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
 from uta.web.auth import (
@@ -155,6 +157,8 @@ def nav_section(path: str) -> str | None:
     """
     if path == "/" or path.startswith("/tests"):
         return "triage"
+    if path.startswith("/incidents"):
+        return "incidents"
     if path.startswith("/builds"):
         return "builds"
     if path.startswith("/flaky"):
@@ -297,10 +301,12 @@ def create_app(
         # COUNT query, not the whole triage projection (issue #79).
         with session_scope(session_factory) as s:
             triage_new_count = views.new_failing_count(s)
+            open_incident_count = views.open_incident_count(s)
         context = {
             **context,
             "nav_active": nav_section(request.url.path),
             "triage_new_count": triage_new_count,
+            "open_incident_count": open_incident_count,
             "actor": current_actor(request),
             "auth_enabled": get_settings().auth_enabled,
             "jira_base_url": cfg.jira_base_url,
@@ -440,11 +446,16 @@ def create_app(
                 failures_only=failures_only,
                 expand=expand,
             )
+            incident = None
+            build_row = s.scalar(select(Build.id).where(Build.build_number == number))
+            if build_row is not None:
+                incident = views.incident_for_build(s, build_row)
         return render(
             request,
             "build.html",
             {
                 "build": build,
+                "incident": incident,
                 "number": number,
                 # "Show all N" links for the capped diff buckets, built in the view layer so the
                 # rest of the query string (failures_only, page) survives (issue #151).
@@ -454,6 +465,85 @@ def create_app(
             },
             cfg=cfg,
         )
+
+    # ── Build Incidents (issue #171) ─────────────────────────────────────────
+    @app.get("/incidents", response_class=HTMLResponse)
+    def incidents_view(request: Request):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+            queue = views.incidents_queue(s)
+        return render(request, "incidents.html", {"queue": queue}, cfg=cfg)
+
+    @app.get("/incidents/{incident_id}", response_class=HTMLResponse)
+    def incident_view(request: Request, incident_id: int):
+        with session_scope(session_factory) as s:
+            cfg = effective(s)
+            incident = views.incident_detail(s, incident_id)
+        return render(
+            request,
+            "incident.html",
+            {"incident": incident, "incident_id": incident_id},
+            cfg=cfg,
+        )
+
+    @app.post("/incidents/{incident_id}/acknowledge")
+    def acknowledge_incident(request: Request, incident_id: int, anchor: str = Form("")):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            ok = actions.acknowledge_incident(s, incident_id, actor)
+        resp = back(request, fallback=f"/incidents/{incident_id}", anchor=anchor)
+        set_flash(
+            resp, "Incident acknowledged" if ok else "Incident not found", "" if ok else "error"
+        )
+        return resp
+
+    @app.post("/incidents/{incident_id}/confirm")
+    def confirm_incident(request: Request, incident_id: int, anchor: str = Form("")):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            attr = actions.confirm_incident(s, incident_id, actor)
+        resp = back(request, fallback=f"/incidents/{incident_id}", anchor=anchor)
+        set_flash(
+            resp,
+            "AI suggestion confirmed" if attr is not None else "Incident not found",
+            "" if attr is not None else "error",
+        )
+        return resp
+
+    @app.post("/incidents/{incident_id}/attribute")
+    def attribute_incident(
+        request: Request,
+        incident_id: int,
+        causing_person: str = Form(""),
+        reason_text: str = Form(""),
+        problem_text: str = Form(""),
+        triage_status: str = Form(""),
+        assignee: str = Form(""),
+        cause_ticket: str = Form(""),
+        resolution_ticket: str = Form(""),
+        anchor: str = Form(""),
+    ):
+        actor = current_actor(request)
+        with session_scope(session_factory) as s:
+            incident = actions.set_incident_attribution(
+                s,
+                incident_id,
+                actor,
+                causing_person=causing_person,
+                reason_text=reason_text,
+                problem_text=problem_text,
+                triage_status=triage_status or None,
+                assignee=assignee,
+                cause_ticket=cause_ticket,
+                resolution_ticket=resolution_ticket,
+            )
+        resp = back(request, fallback=f"/incidents/{incident_id}", anchor=anchor)
+        set_flash(
+            resp,
+            "Saved" if incident is not None else "Incident not found",
+            "" if incident is not None else "error",
+        )
+        return resp
 
     @app.get("/flaky", response_class=HTMLResponse)
     def flaky_view(request: Request):
@@ -646,7 +736,9 @@ def create_app(
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         triage_status: str = Form(""),
-        jira_ticket: str = Form(""),
+        cause_ticket: str = Form(""),
+        resolution_ticket: str = Form(""),
+        assignee: str = Form(""),
         anchor: str = Form(""),
     ):
         actor = current_actor(request)
@@ -658,7 +750,9 @@ def create_app(
                 causing_person=causing_person,
                 reason_text=reason_text,
                 triage_status=triage_status or None,
-                jira_ticket=jira_ticket,
+                cause_ticket=cause_ticket,
+                resolution_ticket=resolution_ticket,
+                assignee=assignee,
             )
         resp = back(request, anchor=anchor)
         if count:
@@ -669,8 +763,8 @@ def create_app(
                 parts.append("reason updated")
             if triage_status:
                 parts.append(f"triage status → {triage_status}")
-            if jira_ticket.strip():
-                parts.append(f"Jira ticket → {jira_ticket.strip()}")
+            if cause_ticket.strip():
+                parts.append(f"cause ticket → {cause_ticket.strip()}")
             message = f"Updated {_n(count, 'test')} sharing this failure signature"
             if parts:
                 message += " — " + ", ".join(parts)
@@ -733,7 +827,9 @@ def create_app(
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         triage_status: str = Form(""),
-        jira_ticket: str = Form(""),
+        cause_ticket: str = Form(""),
+        resolution_ticket: str = Form(""),
+        assignee: str = Form(""),
         anchor: str = Form(""),
     ):
         actor = current_actor(request)
@@ -745,7 +841,9 @@ def create_app(
                 causing_person=causing_person,
                 reason_text=reason_text,
                 triage_status=triage_status or None,
-                jira_ticket=jira_ticket,
+                cause_ticket=cause_ticket,
+                resolution_ticket=resolution_ticket,
+                assignee=assignee,
             )
         resp = back(request, anchor=anchor)
         if attr is None:
@@ -758,8 +856,10 @@ def create_app(
             parts.append("reason updated")
         if triage_status:
             parts.append(f"triage status → {triage_status}")
-        if jira_ticket.strip():
-            parts.append(f"Jira ticket → {jira_ticket.strip()}")
+        if cause_ticket.strip():
+            parts.append(f"cause ticket → {cause_ticket.strip()}")
+        if assignee.strip():
+            parts.append(f"assignee → {assignee.strip()}")
         message = "Saved — " + ", ".join(parts) if parts else "Saved (no changes submitted)"
         set_flash(resp, message)
         return resp
