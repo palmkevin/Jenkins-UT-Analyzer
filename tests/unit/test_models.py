@@ -16,7 +16,7 @@ from uta.db import Base, make_session_factory, session_scope
 from uta.models import (
     Attribution,
     Build,
-    BuildShard,
+    BuildTrack,
     Classification,
     CodeChangeCandidate,
     DataChangeCandidate,
@@ -67,7 +67,7 @@ def test_full_graph_persists_and_reloads(session_factory):
         s.add(sig)
         s.flush()
 
-        build.shards.append(BuildShard(track="permanent", status="SUCCESS", started_at=_utc()))
+        build.tracks.append(BuildTrack(track="permanent", status="SUCCESS", started_at=_utc()))
         build.results.append(
             TestResult(identity=ident, track="permanent", status="FAILED", signature=sig)
         )
@@ -95,7 +95,7 @@ def test_full_graph_persists_and_reloads(session_factory):
 
     with session_scope(session_factory) as s:
         build = s.scalar(select(Build).where(Build.build_number == 1))
-        assert len(build.shards) == 1
+        assert len(build.tracks) == 1
         assert len(build.code_changes) == 1 and len(build.data_changes) == 1
         result = build.results[0]
         assert result.identity.canonical_name == "ut_acc.ac.TestC.test_x"
@@ -254,12 +254,12 @@ def test_run_cascade_deletes_children(session_factory):
         s.add_all([build, ident])
         s.flush()
         build.results.append(TestResult(identity=ident, track="permanent", status="FAILED"))
-        build.shards.append(BuildShard(track="permanent", status="SUCCESS"))
+        build.tracks.append(BuildTrack(track="permanent", status="SUCCESS"))
     with session_scope(session_factory) as s:
         build = s.scalar(select(Build))
         s.delete(build)
     with session_scope(session_factory) as s:
         assert s.scalar(select(func.count()).select_from(TestResult)) == 0
-        assert s.scalar(select(func.count()).select_from(BuildShard)) == 0
+        assert s.scalar(select(func.count()).select_from(BuildTrack)) == 0
         # The identity is independent of any single build — it survives.
         assert s.scalar(select(func.count()).select_from(TestIdentity)) == 1

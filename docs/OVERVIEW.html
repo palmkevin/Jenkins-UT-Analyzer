@@ -107,8 +107,9 @@
   <div class="card">
     <p>Integration tests run in a Jenkins job triggered by <b>every commit to the SVN trunk</b>. Before each
     build, a working <code>ut</code> database is synced from a reference database, <b>Oracle <code>ut_ref</code></b>.
-    Roughly <b>25 000 tests</b> run, split across parallel shards (the <code>permanent</code> and
-    <code>permanent_py39</code> tracks) and merged into one report.</p>
+    Roughly <b>25 000 tests</b> run in each of two parallel <b>tracks</b> (<code>permanent</code> and
+    <code>permanent_py39</code> — distinguished by execution environment, not by which tests they run) and
+    merged into one report.</p>
     <p>Historically <b>one person monitored this full-time</b>: after each build they compared failures to the
     previous build, isolated the <i>new</i> failures, and attributed each to a probable cause —
     a <b>code change</b>, a <b>data change</b> in <code>ut_ref</code>, <b>infrastructure</b>, or <b>other</b> —
@@ -132,7 +133,7 @@
         <h4>Jenkins <span class="pill">source of truth — read</span></h4>
         <p>The UT pipeline. The app reads, per build: the merged <b>test report</b>
         (<code>/testReport/api/json</code>), the <b>SVN change sets</b> (the authoritative list of code
-        changes), per-shard <b>timing</b> (<code>wfapi/describe</code>), and — for the console-log UT stages —
+        changes), per-track <b>timing</b> (<code>wfapi/describe</code>), and — for the console-log UT stages —
         the stage <b>logs</b> (<code>wfapi/log</code>). Anonymous read; token optional.</p>
       </div>
       <div class="part" style="border-color:var(--svn)">
@@ -479,15 +480,15 @@
     <li><b>Select builds.</b> <small>Everything above the highest ingested build, up to Jenkins’
       <code>lastCompletedBuild</code>, minus any <b>quarantined</b> builds. The cursor is the DB itself —
       restart-safe, no separate state.</small></li>
-    <li><b>Fetch.</b> <small>Per build: build meta, merged test report, SVN change sets, per-shard wfapi timing,
+    <li><b>Fetch.</b> <small>Per build: build meta, merged test report, SVN change sets, per-track wfapi timing,
       and (if enabled) the unittest console-log stages’ logs.</small></li>
     <li><b>Parse.</b> <small>JUnit report → per-<code>(test, track)</code> results; console-log stages parsed
       into the <i>same</i> shape behind one interface; SVN change sets → code-change candidates; timing → the
-      build window + per-shard start/finish.</small></li>
+      build window + per-track start/finish.</small></li>
     <li><b>Correlate data changes.</b> <small>Query Oracle <code>V_TRACKING</code> for changes inside a
       <i>lookback</i> window before the build (changes precede the nightly build) plus a tolerance margin for
       clock skew.</small></li>
-    <li><b>Persist.</b> <small>Bulk-insert the build, results, shards and candidates into Postgres — idempotent
+    <li><b>Persist.</b> <small>Bulk-insert the build, results, track timings and candidates into Postgres — idempotent
       on <code>build_number</code> (re-ingest replaces, never duplicates). When <code>SVN_BLAME_ENABLED</code>,
       also resolves each newly-seen failing test's <b>owner</b> (main developer) via <code>svn blame</code> of
       its source file, filling <code>TestIdentity.main_developer</code> incrementally.</small></li>
@@ -512,9 +513,9 @@
 
 <section id="analysis">
   <h2><span class="n">2</span>Analysis <span class="muted" style="font-size:14px">— complete builds only</span></h2>
-  <p class="lead">A build is analysed only when it is <b>complete</b>: all expected shards reported <i>and</i>
-  each shard's stage actually finished running its tests (an aborted/cancelled UT stage keeps the build
-  incomplete, even though its shard is present). Incomplete builds are stored and shown but skipped as a
+  <p class="lead">A build is analysed only when it is <b>complete</b>: all expected tracks reported <i>and</i>
+  each track's stage actually finished running its tests (an aborted/cancelled UT stage keeps the build
+  incomplete, even though its track is present). Incomplete builds are stored and shown but skipped as a
   baseline, so partial builds never produce phantom regressions. The lifecycle/classification/hypothesis pass
   also only ever runs for the <b>newest</b> complete build — re-ingesting an older, already-superseded build
   (e.g. the control panel's quarantine-recovery re-ingest) still persists its build, results and KB
@@ -671,9 +672,9 @@
 
   <h3>Information model — what is persisted</h3>
   <table class="kv">
-    <tr><th>Builds</th><td>Build #, links, SVN revision(s), overall + per-shard start/finish, totals, and the
+    <tr><th>Builds</th><td>Build #, links, SVN revision(s), overall + per-track start/finish, totals, and the
       completeness / baseline flag.</td></tr>
-    <tr><th>Test results per build</th><td>Identity, status, duration, track/shard, failure message, stack trace.
+    <tr><th>Test results per build</th><td>Identity, status, duration, track, failure message, stack trace.
       These rows <b>are</b> the failure-history feed (counts, last-failed, fail-rate windows) — no separate
       table. <b>Passing/skipped rows are pruned</b> once their build ages past the retention window (see
       <i>Retention</i> below); failing rows are kept forever.</td></tr>
@@ -770,9 +771,9 @@
     <tr><td><code>JENKINS_CA_BUNDLE</code></td><td>empty</td>
       <td>Path to a PEM CA bundle to verify Jenkins' cert against. Takes precedence over
       <code>JENKINS_VERIFY_TLS</code> when set (verification stays on, against this bundle).</td></tr>
-    <tr><td><code>EXPECTED_SHARDS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
-      <td>Shards (tracks) a build must report — each having actually <b>finished</b> its stage
-      (an ABORTED/cancelled shard doesn't count) — to be considered <b>complete</b>; incomplete
+    <tr><td><code>EXPECTED_TRACKS</code> <span class="pill">control panel</span></td><td><code>2</code></td>
+      <td>Tracks a build must report — each having actually <b>finished</b> its stage
+      (an ABORTED/cancelled track doesn't count) — to be considered <b>complete</b>; incomplete
       builds are stored but skipped as an analysis baseline.</td></tr>
     <tr><td><code>INGEST_UNITTEST_STAGES</code></td><td><code>true</code></td>
       <td>Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS,

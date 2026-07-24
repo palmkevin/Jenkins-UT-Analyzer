@@ -31,9 +31,9 @@ def test_live_report_has_both_tracks(client):
     assert len(parsed.cases) > 1000
 
 
-def test_live_wfapi_shards_complete(client):
+def test_live_wfapi_tracks_complete(client):
     build = parse_wfapi(client.wfapi(BUILD))
-    assert build.is_complete(expected_shards=2)
+    assert build.is_complete(expected_tracks=2)
 
 
 def test_live_unittest_console_log_stages_parse(client):

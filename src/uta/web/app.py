@@ -3,7 +3,7 @@
 Surfaces:
 - ``GET /``                         the daily triage queue, the primary landing view.
 - ``GET /tests/{identity_id}``      the per-test record with the full evidence + actions.
-- ``GET /builds/{build}``             the build-level summary: totals, shards, baseline + diff.
+- ``GET /builds/{build}``             the build-level summary: totals, tracks, baseline + diff.
 - action POSTs (acknowledge / confirm / attribute / identity) → redirect back (PRG).
 
 Route handlers stay thin: read-side projections live in :mod:`uta.web.views`, write-side mutations

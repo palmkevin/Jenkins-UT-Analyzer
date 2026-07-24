@@ -8,7 +8,7 @@ there is always a change in play. So flakiness is **not** measured as a fail-rat
   ordered by build start. Tracks are collapsed per build (FAILED in either ⇒ that build is a fail).
 - **Gaps are not transitions.** Incomplete builds and builds where the test was absent leave holes;
 they
-  are simply not in the sequence, so a never-reporting shard is never miscounted as a ``fail→pass``.
+  are simply not in the sequence, so a never-reporting track is never miscounted as a ``fail→pass``.
 - **Score = state transitions ÷ builds** over the window. A clean regression is *one* transition
   (then stays failing); a clean fix is *one* (then stays passing). Many transitions = flaky.
 - A test is **FLAKY** when it oscillates: ``score ≥ threshold`` **and** its fail-rate is strictly
@@ -30,7 +30,7 @@ from uta.ingest.ut_report import FAILED_STATUSES
 from uta.models import Build, TestLifecycle, TestResult
 
 # Statuses that count as the test having *produced a result* (a data point in the sequence).
-# SKIPPED is treated as a hole (no signal), like an absent shard.
+# SKIPPED is treated as a hole (no signal), like an absent track.
 _REPORTED = FAILED_STATUSES | frozenset({"PASSED", "FIXED"})
 
 
@@ -54,7 +54,7 @@ class FlakinessStats:
     score: float  # transitions ÷ builds_in_window
     fail_rate: float  # fails ÷ builds_in_window
     flaky: bool
-    shard_correlated: bool
+    track_correlated: bool
     pattern: str  # "consecutive" | "intermittent" | "stable" | "none"
 
 
@@ -139,7 +139,7 @@ def compute_stats(
 
     flaky = 0.0 < fail_rate < 1.0 and score >= threshold
 
-    # Shard-correlated: among the failing builds, do the failures cluster in ONE track while the
+    # Track-correlated: among the failing builds, do the failures cluster in ONE track while the
     # other
     # track passes? A consistent single-track failure is a strong infra/flaky tell. It must be the
     # *same* track every time — failures alternating between tracks are ordinary flakiness.
@@ -147,7 +147,7 @@ def compute_stats(
         p for p in window if p.failed and p.pass_tracks and len(p.fail_tracks) == 1
     ]
     failing_tracks = frozenset().union(*(p.fail_tracks for p in single_track_fails))
-    shard_correlated = (
+    track_correlated = (
         fails_in_window > 0
         and len(single_track_fails) == fails_in_window
         and len(failing_tracks) == 1
@@ -162,7 +162,7 @@ def compute_stats(
         score=round(score, 4),
         fail_rate=round(fail_rate, 4),
         flaky=flaky,
-        shard_correlated=shard_correlated,
+        track_correlated=track_correlated,
         pattern=_pattern(states),
     )
 
@@ -247,7 +247,7 @@ def leaderboard_candidates(
                 "failed_total": stats.failed_total,
                 "failed_in_window": stats.failed_in_window,
                 "last_failed_at": stats.last_failed_at,
-                "shard_correlated": stats.shard_correlated,
+                "track_correlated": stats.track_correlated,
                 "pattern": stats.pattern,
             }
         )

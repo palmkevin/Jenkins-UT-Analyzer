@@ -44,7 +44,7 @@ def make_build(
     ``error_type`` optionally maps name -> derived error type (to drive INFRA classification).
     ``errors`` optionally maps name -> (error_details, error_stack_trace) for KB signature tests.
     ``fail_tracks`` optionally restricts which tracks a failing test fails in (the rest pass) — for
-    shard-correlation tests; default is "fails in all tracks".
+    track-correlation tests; default is "fails in all tracks".
     """
     start = started_at or (_EPOCH + timedelta(hours=build))
     build = Build(

@@ -80,7 +80,7 @@ what's wrong. In priority order:
 - **A status/enum value is added, renamed or removed** — `LifecycleState`, `TriageStatus`,
   `PredictedCause`, `Provenance`, or the raw per-run result statuses — or its meaning changes.
 - **A badge or glyph changes or a new one appears** on the dashboard (flaky, track, reopened ×N,
-  shard-correlated, a flakiness pattern value, overridden, a run-state color, etc.).
+  track-correlated, a flakiness pattern value, overridden, a run-state color, etc.).
 - **The triage workflow changes**: a bucket is added/renamed/removed, what Acknowledge/Confirm/
   bulk-actions/signature-wide-actions do, the filter/sort bar, or the per-test record's layout.
 - **The LLM feedback loop changes**: what the LLM does or doesn't produce, what "Confirm AI

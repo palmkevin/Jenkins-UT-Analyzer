@@ -1,4 +1,4 @@
-"""Builds and their per-shard timing (Information model: 'Builds')."""
+"""Builds and their per-track timing (Information model: 'Builds')."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class Build(Base, TimestampMixin):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    # Completeness: finished + all expected shards reported. Incomplete builds are stored
+    # Completeness: finished + all expected tracks reported. Incomplete builds are stored
     # and shown but skipped when picking a baseline.
     complete: Mapped[bool] = mapped_column(Boolean, default=False)
     # Which complete build this build was diffed against (set by the baseline selector, M2).
@@ -36,7 +36,7 @@ class Build(Base, TimestampMixin):
     total_failed: Mapped[int] = mapped_column(Integer, default=0)
     total_skipped: Mapped[int] = mapped_column(Integer, default=0)
 
-    shards: Mapped[list[BuildShard]] = relationship(
+    tracks: Mapped[list[BuildTrack]] = relationship(
         back_populates="build", cascade="all, delete-orphan"
     )
     results: Mapped[list[TestResult]] = relationship(
@@ -51,12 +51,12 @@ class Build(Base, TimestampMixin):
     baseline_build: Mapped[Build | None] = relationship(remote_side=[id])
 
 
-class BuildShard(Base):
-    """Per-shard (track) timing & status from ``wfapi`` — drives completeness + the build
+class BuildTrack(Base):
+    """Per-track timing & status from ``wfapi`` — drives completeness + the build
     summary."""
 
-    __tablename__ = "build_shards"
-    __table_args__ = (UniqueConstraint("build_id", "track", name="uq_build_shard_track"),)
+    __tablename__ = "build_tracks"
+    __table_args__ = (UniqueConstraint("build_id", "track", name="uq_build_track"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     build_id: Mapped[int] = mapped_column(ForeignKey("builds.id"), index=True)
@@ -65,4 +65,4 @@ class BuildShard(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    build: Mapped[Build] = relationship(back_populates="shards")
+    build: Mapped[Build] = relationship(back_populates="tracks")

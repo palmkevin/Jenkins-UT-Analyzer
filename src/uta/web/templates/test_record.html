@@ -171,7 +171,7 @@
   <summary>Flakiness &amp; history</summary>
   <p>
     {% if fl.flaky %}<span class="badge flaky">flaky</span>{% endif %}
-    {% if fl.shard_correlated %}<span class="badge">shard-correlated</span>{% endif %}
+    {% if fl.track_correlated %}<span class="badge">track-correlated</span>{% endif %}
     Pattern: {{ fl.pattern }}
   </p>
   <p class="meta">

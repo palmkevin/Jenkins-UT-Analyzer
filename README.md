@@ -119,7 +119,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `JENKINS_JOB_PATH` | `job/Development/job/lsdevbuild-build-release-permanent` | Path to the nightly job. |
 | `JENKINS_USER` | *(empty)* | Optional — anonymous read works on the target job. |
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
-| `EXPECTED_SHARDS` | `2` | Shards a build must report to count as **complete** (the 2 tracks). |
+| `EXPECTED_TRACKS` | `2` | Tracks a build must report to count as **complete**. |
 
 ### Oracle `ut_ref` (reference-data change feed, read-only)
 | Variable | Default | Purpose |
@@ -212,7 +212,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 - `/` — triage queue (New / Still-failing / Recently-fixed).
 - `/tests/{id}` — per-test record: lifecycle, episodes, latest error, candidate changes,
   flakiness & history, KB matches, and the predicted cause + LLM hypothesis.
-- `/builds/{number}` — build summary: totals, per-shard timing, baseline diff, results. (Old
+- `/builds/{number}` — build summary: totals, per-track timing, baseline diff, results. (Old
   `/runs`/`/runs/{number}` links still work — they 301-redirect, so deep links in already-sent
   alert emails keep working.)
 - `/flaky` — flaky leaderboard. `/kb?q=` — knowledge-base search.

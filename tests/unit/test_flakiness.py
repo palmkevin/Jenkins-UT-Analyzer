@@ -89,8 +89,8 @@ def test_incomplete_runs_excluded(session_factory):
     assert st.transitions == 0
 
 
-def test_shard_correlation(session_factory):
-    """Failures concentrated in one track (other passes) are flagged shard-correlated."""
+def test_track_correlation(session_factory):
+    """Failures concentrated in one track (other passes) are flagged track-correlated."""
     with session_factory() as s:
         make_build(s, 1, {T: "PASSED"})
         make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
@@ -98,13 +98,13 @@ def test_shard_correlation(session_factory):
         make_build(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
         s.commit()
         st = _stats(s)
-    assert st.shard_correlated is True
+    assert st.track_correlated is True
     assert st.flaky is True
 
 
-def test_alternating_track_failures_are_not_shard_correlated(session_factory):
+def test_alternating_track_failures_are_not_track_correlated(session_factory):
     """Failures flip-flopping between tracks across builds are ordinary flakiness, not
-    shard-tied."""
+    track-tied."""
     with session_factory() as s:
         make_build(s, 1, {T: "PASSED"})
         make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent",)})
@@ -112,18 +112,18 @@ def test_alternating_track_failures_are_not_shard_correlated(session_factory):
         make_build(s, 4, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
         s.commit()
         st = _stats(s)
-    assert st.shard_correlated is False
+    assert st.track_correlated is False
     assert st.flaky is True
 
 
-def test_single_run_single_track_failure_is_shard_correlated(session_factory):
+def test_single_run_single_track_failure_is_track_correlated(session_factory):
     """One failing build confined to one track (the other passing) already sets the flag."""
     with session_factory() as s:
         make_build(s, 1, {T: "PASSED"})
         make_build(s, 2, {T: "FAILED"}, fail_tracks={T: ("permanent_py39",)})
         s.commit()
         st = _stats(s)
-    assert st.shard_correlated is True
+    assert st.track_correlated is True
 
 
 def test_history_counts(session_factory):

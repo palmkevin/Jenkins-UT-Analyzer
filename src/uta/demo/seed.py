@@ -164,7 +164,7 @@ def seed_demo_data(
             client,
             session_factory,
             build,
-            expected_shards=2,
+            expected_tracks=2,
             feed=feed,
             flaky_window_days=flaky_window_days,
             flaky_threshold=flaky_threshold,

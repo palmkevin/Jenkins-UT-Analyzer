@@ -2,7 +2,7 @@
 
 **Baseline = the most recent *complete* build before this one** — never blindly the previous build,
 because diffing against a partial/aborted build invents phantom regressions and fixes (a test looks
-"missing" only because a shard never ran). Incomplete builds are still stored and shown (the
+"missing" only because a track never ran). Incomplete builds are still stored and shown (the
 pipeline persists them) but skipped here; the chosen baseline id is recorded on the build so the
 diff is never ambiguous.
 

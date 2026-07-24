@@ -150,10 +150,10 @@ Two tiers — offline (the gate) and `live` (local-only):
 
 ## Reference: the build #1702 facts the fixtures came from
 - Job `Development/lsdevbuild-build-release-permanent`, anonymous read works (token optional).
-- Endpoints: report `/<n>/testReport/api/json`; SVN `/<n>/api/json?tree=changeSets[...]`; per-shard
+- Endpoints: report `/<n>/testReport/api/json`; SVN `/<n>/api/json?tree=changeSets[...]`; per-track
   timing `/<n>/wfapi/describe` (UT stages `devUTs: Execute - permanent[_py39]`).
 - Oracle: service `lsdb04pdb` @ `lsdb04:1521`, user `utestref01` (read-only), `oracledb` thin mode.
-- Expected shards = the 2 tracks (`EXPECTED_SHARDS`, configurable).
+- Expected tracks = 2 (`EXPECTED_TRACKS`, configurable).
 
 ## Conventions
 - Python **3.12** (Docker image pin; host also has `python3.12`). Package root `src/uta/`.

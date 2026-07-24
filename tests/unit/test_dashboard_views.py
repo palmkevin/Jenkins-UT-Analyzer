@@ -421,7 +421,7 @@ def test_build_summary_diff_against_baseline(session_factory):
         assert "b" in regressed and "a" in fixed
         assert summary["diff"]["regressions"]["total"] == 1
         assert summary["diff"]["newly_fixed"]["total"] == 1
-        assert "totals" in summary and "shards" in summary
+        assert "totals" in summary and "tracks" in summary
 
 
 def test_build_summary_caps_diff_buckets_unless_expanded(session_factory):

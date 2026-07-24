@@ -1112,7 +1112,7 @@ def build_summary(
     failures_only: bool = False,
     expand: Collection[str] = (),
 ) -> dict | None:
-    """The build summary: build/timing/totals, per-shard timing, baseline + diff, and results.
+    """The build summary: build/timing/totals, per-track timing, baseline + diff, and results.
 
     The results table is the ~25k-row surface behind issues #19/#52: it is **paginated in SQL**
     (``limit`` rows per page, LIMIT/OFFSET) — never loaded whole, replacing the all-or-nothing
@@ -1181,14 +1181,14 @@ def build_summary(
             "failed": build.total_failed,
             "skipped": build.total_skipped,
         },
-        "shards": [
+        "tracks": [
             {
                 "track": s.track,
                 "status": s.status,
                 "started_at": s.started_at,
                 "finished_at": s.finished_at,
             }
-            for s in sorted(build.shards, key=lambda s: s.track)
+            for s in sorted(build.tracks, key=lambda s: s.track)
         ],
         "baseline": _build_ref(session, baseline.id) if baseline is not None else None,
         "diff": {

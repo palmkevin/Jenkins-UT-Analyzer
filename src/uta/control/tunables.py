@@ -112,13 +112,13 @@ TUNABLES: tuple[Tunable, ...] = (
         "Max rows a section renders before a 'Load all' link (0 disables the cap).",
     ),
     Tunable(
-        "expected_shards",
-        "Expected shards",
+        "expected_tracks",
+        "Expected tracks",
         "Ingest",
         "int",
         1,
         10,
-        "Shards a build must report to be considered complete.",
+        "Tracks a build must report to be considered complete.",
     ),
     Tunable(
         "data_change_lookback_hours",

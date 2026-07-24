@@ -1,4 +1,4 @@
-"""Golden tests for the per-shard timing parser + completeness."""
+"""Golden tests for the per-track timing parser + completeness."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from uta.ingest.wfapi import find_log_step_node, find_unittest_stages, parse_wfa
 
 
 def _with_ut_stage_status(payload: dict, track: str, status: str) -> dict:
-    """The fixture payload with one UT shard stage's status replaced."""
+    """The fixture payload with one UT track stage's status replaced."""
     payload = copy.deepcopy(payload)
     for stage in payload["stages"]:
         if stage["name"] == f"devUTs: Execute - {track}":
@@ -20,29 +20,29 @@ def _with_ut_stage_status(payload: dict, track: str, status: str) -> dict:
     raise AssertionError(f"no UT stage for track {track!r} in fixture")
 
 
-def test_both_ut_shards_parsed(wfapi_1702):
+def test_both_ut_tracks_parsed(wfapi_1702):
     build = parse_wfapi(wfapi_1702)
-    assert set(build.shards) == {"permanent", "permanent_py39"}
+    assert set(build.tracks) == {"permanent", "permanent_py39"}
 
 
-def test_shard_timings_are_utc(wfapi_1702):
+def test_track_timings_are_utc(wfapi_1702):
     build = parse_wfapi(wfapi_1702)
-    for shard in build.shards.values():
-        assert shard.start.tzinfo == UTC
-        assert shard.end > shard.start
+    for track in build.tracks.values():
+        assert track.start.tzinfo == UTC
+        assert track.end > track.start
 
 
-def test_completeness_uses_expected_shard_count(wfapi_1702):
+def test_completeness_uses_expected_track_count(wfapi_1702):
     build = parse_wfapi(wfapi_1702)
-    assert build.is_complete(expected_shards=2)
-    assert not build.is_complete(expected_shards=3)
+    assert build.is_complete(expected_tracks=2)
+    assert not build.is_complete(expected_tracks=3)
 
 
 @pytest.mark.parametrize("status", ["SUCCESS", "UNSTABLE", "FAILED"])
 def test_completeness_accepts_finished_stage_statuses(wfapi_1702, status):
-    """UNSTABLE/FAILED are test outcomes, not truncation — the shard still ran to the end."""
+    """UNSTABLE/FAILED are test outcomes, not truncation — the track still ran to the end."""
     build = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
-    assert build.is_complete(expected_shards=2)
+    assert build.is_complete(expected_tracks=2)
 
 
 @pytest.mark.parametrize(
@@ -50,18 +50,18 @@ def test_completeness_accepts_finished_stage_statuses(wfapi_1702, status):
     ["ABORTED", "IN_PROGRESS", "PAUSED", "PAUSED_PENDING_INPUT", "NOT_EXECUTED", "SOME_NEW_STATUS"],
 )
 def test_completeness_rejects_unfinished_stage_statuses(wfapi_1702, status):
-    """An aborted build still lists both UT stages, so the shard count alone lies (issue #83);
+    """An aborted build still lists both UT stages, so the track count alone lies (issue #83);
     unknown statuses fail safe to incomplete."""
     build = parse_wfapi(_with_ut_stage_status(wfapi_1702, "permanent_py39", status))
-    assert set(build.shards) == {"permanent", "permanent_py39"}  # both stages present…
-    assert not build.is_complete(expected_shards=2)  # …yet the build is not complete
+    assert set(build.tracks) == {"permanent", "permanent_py39"}  # both stages present…
+    assert not build.is_complete(expected_tracks=2)  # …yet the build is not complete
 
 
-def test_window_spans_all_shards(wfapi_1702):
+def test_window_spans_all_tracks(wfapi_1702):
     build = parse_wfapi(wfapi_1702)
     start, end = build.window
-    assert start == min(s.start for s in build.shards.values())
-    assert end == max(s.end for s in build.shards.values())
+    assert start == min(s.start for s in build.tracks.values())
+    assert end == max(s.end for s in build.tracks.values())
 
 
 def test_find_unittest_stages_picks_named_suites_both_tracks(wfapi_1702):

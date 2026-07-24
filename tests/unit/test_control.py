@@ -95,7 +95,7 @@ def test_set_override_rejects_non_whitelisted_key(session_factory):
 def test_set_override_validates_bounds(session_factory):
     with session_scope(session_factory) as s:
         with pytest.raises(ValueError):
-            set_override(s, "expected_shards", "99")
+            set_override(s, "expected_tracks", "99")
         # A rejected override is never persisted.
         assert s.scalar(select(func.count()).select_from(SettingOverride)) == 0
 
@@ -111,13 +111,13 @@ def test_effective_settings_applies_and_reverts():
 
 
 def test_effective_settings_skips_unknown_and_corrupt_overrides():
-    base = Settings(flaky_window_days=30, expected_shards=2)
+    base = Settings(flaky_window_days=30, expected_tracks=2)
     # An unknown key and an out-of-bounds/garbage value are both ignored — the default stands.
     merged = effective_settings(
         base,
-        {"not_a_setting": "1", "expected_shards": "999", "flaky_window_days": "12"},
+        {"not_a_setting": "1", "expected_tracks": "999", "flaky_window_days": "12"},
     )
-    assert merged.expected_shards == 2  # corrupt value skipped
+    assert merged.expected_tracks == 2  # corrupt value skipped
     assert merged.flaky_window_days == 12  # valid one applied
 
 
