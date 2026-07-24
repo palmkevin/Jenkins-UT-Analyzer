@@ -1,5 +1,8 @@
 # One term for the parallel lanes: Track (no Shard)
 
+> _(Superseded on the "nightly" point by [ADR-0003](0003-permanent-pipeline-not-nightly.md): the
+> analyzed pipeline runs per commit, not on a schedule.)_
+
 The nightly build runs the full test suite in parallel lanes (`permanent`, `permanent_py39`; more
 will follow, differing by interpreter, OS, or other execution environment). The code and docs had
 grown two words for this: **track** (the lane, on test identity and results) and **shard** (the

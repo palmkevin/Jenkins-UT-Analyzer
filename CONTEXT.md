@@ -1,6 +1,6 @@
 # Jenkins UT Analyzer
 
-Triage support for the nightly LIMS unit-test builds: the tool ingests every build's test results
+Triage support for the LIMS unit-test builds from the Permanent Pipeline: the tool ingests every build's test results
 from Jenkins, correlates new failures with code and data changes, and drives a human triage
 workflow enriched by a learning knowledge base. This file is the **ubiquitous-language catalogue**
 — the single authority for what domain terms mean. (Architecture and workflows live in
@@ -8,12 +8,17 @@ workflow enriched by a learning knowledge base. This file is the **ubiquitous-la
 
 ## Language
 
-### The nightly build
+### The Permanent Pipeline
+
+**Permanent Pipeline**:
+The continuously-running Jenkins job we analyze (`…build-release-permanent`); it runs one Build
+**per commit**, not on a schedule. "Permanent" is its identity and cadence.
+_Avoid_: Nightly pipeline (that names a separate pipeline not yet monitored by this app)
 
 **Build**:
-One nightly execution of the Jenkins job, identified by its Jenkins build number; the unit of
+One execution of the Permanent Pipeline, identified by its Jenkins build number; the unit of
 ingest and analysis.
-_Avoid_: Run, job, nightly (as a noun)
+_Avoid_: Run, job
 
 ### Tests & results
 
@@ -27,10 +32,11 @@ The raw outcome of one test in one build and track, exactly as Jenkins reported 
 _Avoid_: TestCaseResult, outcome
 
 **Track**:
-A parallel lane in which the nightly build executes the test suite, each lane distinguished by its
-execution environment — e.g. interpreter version or operating system (currently `permanent` and
-`permanent_py39`). An attribute of a Test Result — the same test can run, and fail independently,
-in several tracks; a Test's identity and lifecycle span all tracks.
+A parallel lane in which the Permanent Pipeline executes the test suite, each lane distinguished by
+its execution environment — e.g. interpreter version or operating system (currently `permanent` and
+`permanent_py39`; the `permanent` prefix just echoes the pipeline name — the distinguishing
+attribute is the environment). An attribute of a Test Result — the same test can run, and fail
+independently, in several tracks; a Test's identity and lifecycle span all tracks.
 _Avoid_: Shard, lane, stage
 
 ### Failure lifecycle

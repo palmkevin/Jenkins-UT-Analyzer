@@ -458,8 +458,7 @@ def data_change_window(
 ) -> tuple:
     """The UTC window for candidate data changes: a lookback before the build through its end.
 
-    Data changes precede the nightly build (confirmed empirically on #1702 — the build's own
-    window had
+    Data changes precede the build (confirmed empirically on #1702 — the build's own window had
     no tracked changes), so we look back from the build start. The ``tolerance`` margin (B1) widens
     both ends to absorb residual clock skew between the Jenkins and Oracle ``ut_ref`` clocks.
     ``lookback`` is a provisional default, tuned on real data later.

@@ -124,8 +124,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o"
 
     # ── Ingest / correlation windows ───────────────────────────────────────────
-    # Data changes precede the nightly build (the build's own window had none on #1702), so look
-    # back
+    # Data changes precede the build (the build's own window had none on #1702), so look back
     # before the build start; the tolerance margin (B1) absorbs residual clock skew between Jenkins
     # and the Oracle ut_ref clock.
     data_change_lookback_hours: int = 12
