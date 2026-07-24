@@ -1,16 +1,23 @@
 """Data retention: prune old raw *passing* results and finished ingest jobs (issue #52).
 
-Nothing else in the store ever deletes, so at ~25k :class:`~uta.models.TestResult` rows per build
-the results table grows by roughly 9M rows/year — almost all of them passing rows whose only
-long-term value is already captured elsewhere (the build's stored totals, the lifecycle/episode
-history, and the KB aggregates). The policy is therefore:
+Nothing else in the store ever deletes, and the analyzed Permanent Pipeline runs **one build per
+commit** (ADR-0003), so the raw results table grows fast: at ~25k :class:`~uta.models.TestResult`
+rows per build and ~15-20 builds per active weekday (~4-5k builds/year), that is ~110M rows/year of
+gross inserts — almost all of them passing rows whose only long-term value is already captured
+elsewhere (the build's stored totals, the lifecycle/episode history, and the KB aggregates). That
+volume is *why* pruning earns its keep: dropping passing/skipped rows past the retention window
+holds the raw table to a bounded working set (~28M rows for the default 90-day window at this
+cadence) instead of letting it grow without limit. The policy is therefore:
 
 - **Drop passing/skipped results** from builds older than ``RESULT_RETENTION_DAYS``. **Failing
   results are kept forever** — they are the failure-history evidence: episodes' failure detail,
   the KB signature links (``kb/store.py`` recomputes ``occurrence_count`` from linked results, so
   deleting a linked row would corrupt the count), and the all-time failure counts all read them.
   Only rows with ``signature_id IS NULL`` are ever deleted (belt and braces: a signed row is never
-  in scope even if a failing status were mis-classified).
+  in scope even if a failing status were mis-classified). At per-commit cadence the kept-forever
+  failing rows accumulate ~12x faster than the old once-a-night reasoning assumed, but they remain
+  a small fraction of inserts (~0.5-1M/year at a ~0.5-1% fail rate) and are the one term that grows
+  unbounded; capping *very old* failure evidence is a possible future refinement, out of scope here.
 - **Builds, episodes, lifecycles, attributions and KB signatures/aggregates are kept forever** —
   they carry the long-term value and are tiny next to the raw results.
 - **Finished ingest jobs** (DONE/ERROR) older than ``INGEST_JOB_RETENTION_DAYS`` are dropped;

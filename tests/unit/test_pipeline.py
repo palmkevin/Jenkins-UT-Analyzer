@@ -310,15 +310,56 @@ def test_ingest_with_data_feed_persists_data_candidates(session_factory):
         assert causes == {PredictedCause.UNKNOWN}
 
 
-def test_data_change_window_looks_back_with_tolerance():
+def test_data_change_window_lower_bound_is_previous_build_start():
+    """The normal case: the window looks back only to the previous build's start (ADR-0004),
+    self-adapting to cadence rather than a fixed hour count."""
+    from datetime import UTC, datetime
+
+    prev_start = datetime(2026, 6, 26, 16, 30, tzinfo=UTC)
+    start = datetime(2026, 6, 26, 17, 0, tzinfo=UTC)
+    end = datetime(2026, 6, 26, 19, 0, tzinfo=UTC)
+    lo, hi = data_change_window(
+        (start, end),
+        previous_build_start=prev_start,
+        max_lookback=timedelta(days=30),
+        tolerance=timedelta(minutes=5),
+    )
+    # Lower bound = previous build's start, widened by the tolerance for clock skew — NOT the cap.
+    assert lo == prev_start - timedelta(minutes=5)
+    assert hi == end + timedelta(minutes=5)
+
+
+def test_data_change_window_falls_back_to_cap_without_previous_build():
+    """First-ever build / cold start: no predecessor, so the window falls back to the cap."""
     from datetime import UTC, datetime
 
     start = datetime(2026, 6, 26, 17, 0, tzinfo=UTC)
     end = datetime(2026, 6, 26, 19, 0, tzinfo=UTC)
     lo, hi = data_change_window(
-        (start, end), lookback=timedelta(hours=12), tolerance=timedelta(minutes=5)
+        (start, end),
+        previous_build_start=None,
+        max_lookback=timedelta(days=30),
+        tolerance=timedelta(minutes=5),
     )
-    assert lo == start - timedelta(hours=12) - timedelta(minutes=5)
+    assert lo == start - timedelta(days=30) - timedelta(minutes=5)
+    assert hi == end + timedelta(minutes=5)
+
+
+def test_data_change_window_caps_a_long_gap():
+    """A pathological gap (pipeline down for months) never reaches back past the cap, even though
+    the previous build's start is older still."""
+    from datetime import UTC, datetime
+
+    prev_start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)  # ~6 months before
+    start = datetime(2026, 6, 26, 17, 0, tzinfo=UTC)
+    end = datetime(2026, 6, 26, 19, 0, tzinfo=UTC)
+    lo, hi = data_change_window(
+        (start, end),
+        previous_build_start=prev_start,
+        max_lookback=timedelta(days=30),
+        tolerance=timedelta(minutes=5),
+    )
+    assert lo == start - timedelta(days=30) - timedelta(minutes=5)  # capped, not prev_start
     assert hi == end + timedelta(minutes=5)
 
 

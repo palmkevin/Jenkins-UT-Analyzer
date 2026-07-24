@@ -14,7 +14,7 @@ import json
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import insert, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -152,7 +152,7 @@ def ingest_build(
     *,
     expected_tracks: int = 2,
     feed: TrackingFeed | None = None,
-    data_change_lookback: timedelta = timedelta(hours=12),
+    data_change_max_lookback: timedelta = timedelta(days=30),
     data_change_tolerance: timedelta = timedelta(minutes=5),
     flaky_window_days: int = 30,
     flaky_threshold: float = 0.3,
@@ -343,8 +343,20 @@ def ingest_build(
             )
 
         if feed is not None:
+            # Previous build's start = lower bound of the correlation window (ADR-0004). The highest
+            # build number below this one with a recorded start; None ⇒ first-ever build / cold
+            # start, and data_change_window falls back to the max-lookback cap.
+            previous_build_start = session.scalar(
+                select(Build.started_at)
+                .where(Build.build_number < number, Build.started_at.is_not(None))
+                .order_by(Build.build_number.desc())
+                .limit(1)
+            )
             lo, hi = data_change_window(
-                timing.window, lookback=data_change_lookback, tolerance=data_change_tolerance
+                timing.window,
+                previous_build_start=previous_build_start,
+                max_lookback=data_change_max_lookback,
+                tolerance=data_change_tolerance,
             )
             for dc in feed.changes_in_window(lo, hi):
                 build.data_changes.append(
@@ -453,15 +465,37 @@ def ingest_build(
 
 def data_change_window(
     timing_window: tuple,
-    lookback: timedelta = timedelta(hours=12),
+    *,
+    previous_build_start: datetime | None = None,
+    max_lookback: timedelta = timedelta(days=30),
     tolerance: timedelta = timedelta(minutes=5),
 ) -> tuple:
-    """The UTC window for candidate data changes: a lookback before the build through its end.
+    """The UTC window for candidate data changes: from the previous build's start through this end.
 
-    Data changes precede the build (confirmed empirically on #1702 — the build's own window had
-    no tracked changes), so we look back from the build start. The ``tolerance`` margin (B1) widens
-    both ends to absorb residual clock skew between the Jenkins and Oracle ``ut_ref`` clocks.
-    ``lookback`` is a provisional default, tuned on real data later.
+    Data changes precede the build (confirmed empirically on #1702 — the build's own window had no
+    tracked changes), so the window looks back from the build start. At per-commit cadence
+    (ADR-0003) a fixed hour count would overlap ~20 neighbouring builds and over-attribute changes,
+    so the lower bound is the **previous build's start**: each change is a candidate for the first
+    build that ran after it, which self-adapts to cadence (ADR-0004).
+
+    We anchor at the previous build's *start*, not its end, because ``ut_ref`` data can change
+    *during* a build's run — a test that already ran in the previous build would miss it, so the
+    change must remain a candidate for this build too. Consequently a change during build N-1's run
+    is (by design) a candidate for both N-1 and N: for a triage-support tool a spurious candidate is
+    cheap, a missing cause is not.
+
+    ``max_lookback`` caps how far back the lower bound reaches (and is the fallback when
+    ``previous_build_start`` is unknown — the first-ever build / cold start, or a predecessor with
+    no recorded start). The ``tolerance`` margin (B1) widens both ends to absorb residual clock skew
+    between the Jenkins and Oracle ``ut_ref`` clocks.
     """
     start, end = timing_window
-    return start - lookback - tolerance, end + tolerance
+    floor = start - max_lookback
+    if previous_build_start is not None:
+        # started_at is stored UTC; SQLite hands it back tz-naive, so normalize before comparing.
+        if previous_build_start.tzinfo is None:
+            previous_build_start = previous_build_start.replace(tzinfo=UTC)
+        lower = max(previous_build_start, floor)
+    else:
+        lower = floor
+    return lower - tolerance, end + tolerance

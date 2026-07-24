@@ -124,10 +124,18 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o"
 
     # ── Ingest / correlation windows ───────────────────────────────────────────
-    # Data changes precede the build (the build's own window had none on #1702), so look back
-    # before the build start; the tolerance margin (B1) absorbs residual clock skew between Jenkins
-    # and the Oracle ut_ref clock.
-    data_change_lookback_hours: int = 12
+    # Data changes precede the build (the build's own window had none on #1702), so the correlation
+    # window looks back from the build start. At per-commit cadence (ADR-0003) a fixed hour count
+    # would overlap ~20 neighbouring builds' windows and over-attribute ut_ref changes, so the
+    # lower bound is instead the **previous build's start** — each change lands on the first build
+    # that ran after it, self-adapting to cadence (see ADR-0004). We anchor at the previous build's
+    # *start*, not its end, because ut_ref data can change *during* a build's run: a test that
+    # already ran in that build misses the change, so the change must stay a candidate for this one.
+    # data_change_max_lookback_days caps how far back that reaches and is the fallback when there is
+    # no previous build (first-ever build / cold start); 30d comfortably covers any weekend/holiday
+    # gap while bounding a pathological outage. The tolerance margin (B1) absorbs residual clock
+    # skew between Jenkins and the Oracle ut_ref clock at both ends.
+    data_change_max_lookback_days: int = 30
     data_change_tolerance_minutes: int = 5
     # Scheduled poll cadence (seconds) for `uta poll`.
     poll_interval_seconds: int = 300

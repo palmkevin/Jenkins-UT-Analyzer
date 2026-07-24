@@ -23,6 +23,10 @@ shows both verdict kinds. Because the *real* classifier builds during seeding, t
 episode
 also carries the fullest evidence payload (both top matches, the tie-break, the confidence inputs),
 so its record page showcases the collapsed "Why this prediction" block (issue #159).
+``test_status_transition`` adds the intra-build data-change edge case (ADR-0004): its breaking
+``ut_ref`` change lands *during the previous build's run*, so the correlation window — anchored at
+the previous build's start, not its end — still attributes it to the failing build, and the
+candidate's timestamp visibly sits inside the prior build's execution window.
 
 :class:`SyntheticJenkins` implements the same duck-typed interface as
 :class:`tests.fakes.jenkins.FakeJenkinsClient` (``build_meta`` / ``test_report`` / ``change_sets``
@@ -128,6 +132,22 @@ _SPECS: tuple[TestSpec, ...] = (
         line=88,
         owner="tha",
         deep_frames=7,
+    ),
+    # Intra-build data change (ADR-0004): the ut_ref change that breaks this test lands *during the
+    # previous build's run* (build 606), not before it. Build 606's copy of this test had already
+    # run and passed against the old data; build 607 ran fully against the changed data and failed.
+    # The correlation window's lower bound is the *previous build's start* (not its end) precisely
+    # so this change stays a candidate for 607 — and, by design, it also shows against 606. 607 has
+    # no code candidate, so the classifier reads it as DATA_CHANGE. The one example whose data
+    # change's timestamp visibly sits inside the prior build's execution window.
+    TestSpec(
+        "ut_order.or_lifecycle.TestClass",
+        "test_status_transition",
+        "PPPPPPFFFFFFFF",  # first F at index 6 (build 607) -> still-failing DATA episode
+        exc_type="AssertionError",
+        message="row count mismatch after refresh: expected 5 got 4",
+        line=73,
+        owner="mel",
     ),
     # Infrastructure cause: an Oracle/TNS fault outranks any coincidental change -> INFRASTRUCTURE.
     TestSpec(
@@ -247,6 +267,10 @@ TRACKS = ("permanent", "permanent_py39")
 # number.
 _CODE_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (5, 8, 9, 11, 12)})
 _DATA_CHANGE_BUILDS = frozenset({FIRST_BUILD + i for i in (4, 11)})
+# A data-change build whose change lands *during the previous build's run* rather than a couple of
+# hours before its own start — the intra-build-change edge case (ADR-0004). Kept separate from
+# _DATA_CHANGE_BUILDS because its timestamp is computed against the previous build, not this one.
+_INTRA_PREV_RUN_DATA_BUILD = FIRST_BUILD + 6
 
 # Synthetic commit authors / data-change users — invented initials, never real people. Each
 # candidate build carries a single author, so its CODE/DATA-classified episodes surface that
@@ -488,10 +512,16 @@ class SyntheticTrackingFeed:
         if anchor.tzinfo is None:
             anchor = anchor.replace(tzinfo=UTC)
         self._rows: list[dict] = []
-        for build in sorted(_DATA_CHANGE_BUILDS):
+        for build in sorted(_DATA_CHANGE_BUILDS | {_INTRA_PREV_RUN_DATA_BUILD}):
             index = build - FIRST_BUILD
             build_start = _build_start(index, anchor)
-            changed_at_local = to_ut_ref_local(build_start - timedelta(hours=2))
+            if build == _INTRA_PREV_RUN_DATA_BUILD:
+                # 30 min into the *previous* build's run — mid-execution, so that build's copy of
+                # the affected test may already have run and passed (ADR-0004).
+                changed_at = _build_start(index - 1, anchor) + timedelta(minutes=30)
+            else:
+                changed_at = build_start - timedelta(hours=2)
+            changed_at_local = to_ut_ref_local(changed_at)
             user = _DATA_USERS[index % len(_DATA_USERS)]
             for n, (entity, comp, ctype) in enumerate(
                 (("LORDER", "LORDER_CSVC", "U"), ("ACINVORD", "AC_CSVC2", "C"))
