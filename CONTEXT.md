@@ -17,8 +17,10 @@ _Avoid_: Nightly pipeline (that names a separate pipeline not yet monitored by t
 
 **Build**:
 One execution of the Permanent Pipeline, identified by its Jenkins build number; the unit of
-ingest and analysis.
-_Avoid_: Run, job
+ingest and analysis. In prose, "Jenkins run" and "pipeline run" are accepted synonyms (Jenkins's
+own API calls builds *runs* — e.g. `wfapi/runs` — translated to Build at the ingest boundary);
+identifiers, schema, routes, and UI labels always say Build.
+_Avoid_: Run (standalone — ambiguous with a single test's execution), job
 
 ### Tests & results
 
