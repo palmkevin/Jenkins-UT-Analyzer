@@ -596,7 +596,9 @@
       provider, a hypothesis — against an <b>incident-namespaced</b> failure signature (drawn from the
       failing stage's log) that shares the KB table with test signatures but never cross-matches them. An
       <code>aborted</code> incident gets none of that: straight to human documentation, nothing
-      fabricated. Gated by <code>INGEST_BUILD_INCIDENTS</code> (default on).</p>
+      fabricated. Gated by <code>INGEST_BUILD_INCIDENTS</code> (default on). See
+      <a href="adr/0005-build-incident-build-level-triage.md">ADR-0005</a> for why this is a distinct
+      build-level entity rather than a stretched Failure Episode.</p>
     </div>
   </div>
 </section>
