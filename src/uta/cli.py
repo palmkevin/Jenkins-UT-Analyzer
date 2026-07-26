@@ -7,8 +7,8 @@ from pathlib import Path
 
 import typer
 
+from uta.clients import build_channels as _build_channels
 from uta.clients import build_client as _build_client
-from uta.clients import build_email_sender as _build_email_sender
 from uta.clients import build_feed as _build_feed
 from uta.clients import build_hypothesis_provider as _build_hypothesis_provider
 from uta.clients import build_svn_blame_client as _build_svn_blame_client
@@ -124,7 +124,7 @@ def poll() -> None:
     session_factory = make_session_factory(engine)
     client = _build_client(settings)
     feed = _build_feed(settings)
-    email_sender = _build_email_sender(settings)
+    channels = _build_channels(settings)
     hypothesis_provider = _build_hypothesis_provider(settings)
     svn_blame_client = _build_svn_blame_client(settings)
     typer.echo(f"polling every {settings.poll_interval_seconds}s …")
@@ -135,8 +135,7 @@ def poll() -> None:
         session_factory,
         settings,
         feed=feed,
-        email_sender=email_sender,
-        email_recipients=settings.email_recipients,
+        channels=channels,
         hypothesis_provider=hypothesis_provider,
         svn_blame_client=svn_blame_client,
     )

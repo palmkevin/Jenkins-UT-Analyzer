@@ -9,9 +9,9 @@ the scheduler converge on the same state.
 Resilience (issue #51): a **transient** error (network, HTTP 5xx/429, DB connection blip) is
 retried with exponential backoff inside the tick. A build that still fails counts one attempt on
 its :class:`~uta.models.BuildQuarantine` row and ends the tick (later builds wait, preserving
-lifecycle order) — until the attempt limit, when the build is **quarantined**: recorded, alerted by
-email, and skipped so ingest advances past it. A 404-rotated build is quarantined immediately (the
-explicit form of the old silent skip).
+lifecycle order) — until the attempt limit, when the build is **quarantined**: recorded, alerted via
+the Alert Channels, and skipped so ingest advances past it. A 404-rotated build is quarantined
+immediately (the explicit form of the old silent skip).
 """
 
 from __future__ import annotations
@@ -38,7 +38,8 @@ from uta.control.quarantine import (
 )
 from uta.control.tunables import effective_settings, load_overrides
 from uta.db import session_scope
-from uta.delivery.email import EmailSender, build_overrun_alert, send_alert, send_ops_alert
+from uta.delivery.alert import AlertChannel, dispatch
+from uta.delivery.email import build_ops_alert, build_overrun_alert
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
@@ -152,9 +153,7 @@ def poll_once(
     data_change_tolerance: timedelta = timedelta(minutes=5),
     flaky_window_days: int = 30,
     flaky_threshold: float = 0.3,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
-    email_recovery_notice: bool = False,
+    channels: list[AlertChannel] | None = None,
     app_base_url: str = "",
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
@@ -171,10 +170,10 @@ def poll_once(
 ) -> list[int]:
     """Ingest every new completed build once. Returns the build numbers processed.
 
-    The poller is the **live** path, so it forwards the email sender and the LLM hypothesis provider
-    — each newly-processed build that introduces a regression triggers the email alert and (with a
-    real provider) the LLM hypothesis. Each build is ingested at most once (the high-water mark), so
-    neither is re-done.
+    The poller is the **live** path, so it forwards the Alert Channels and the LLM hypothesis
+    provider — each newly-processed build that introduces a regression triggers the alert dispatch
+    and (with a real provider) the LLM hypothesis. Each build is ingested at most once (the
+    high-water mark), so neither is re-done.
 
     Failure handling per build: transient errors retry in-tick (``retry_attempts`` ×
     ``retry_base_seconds`` backoff); a build that still fails records one attempt and raises
@@ -203,9 +202,7 @@ def poll_once(
                     data_change_tolerance=data_change_tolerance,
                     flaky_window_days=flaky_window_days,
                     flaky_threshold=flaky_threshold,
-                    email_sender=email_sender,
-                    email_recipients=email_recipients,
-                    email_recovery_notice=email_recovery_notice,
+                    channels=channels,
                     app_base_url=app_base_url,
                     hypothesis_provider=hypothesis_provider,
                     kb_top_k=kb_top_k,
@@ -229,14 +226,15 @@ def poll_once(
                 reason = f"detail endpoint returned 404 ({exc.request.url})"
                 logger.warning("quarantining build #%d: %s", build, reason)
                 quarantine_immediately(session_factory, build, reason)
-                send_ops_alert(
-                    email_sender,
-                    email_recipients,
-                    subject=f"build #{build} skipped (rotated out of Jenkins retention)",
-                    body=(
-                        f"Build #{build} was skipped: {reason}.\n"
-                        f"The build left no data in the store and will not be retried.\n"
+                dispatch(
+                    build_ops_alert(
+                        subject=f"build #{build} skipped (rotated out of Jenkins retention)",
+                        body=(
+                            f"Build #{build} was skipped: {reason}.\n"
+                            f"The build left no data in the store and will not be retried.\n"
+                        ),
                     ),
+                    channels,
                 )
                 continue
             row = record_failure(
@@ -249,16 +247,17 @@ def poll_once(
                     row.attempts,
                     exc,
                 )
-                send_ops_alert(
-                    email_sender,
-                    email_recipients,
-                    subject=f"build #{build} quarantined after {row.attempts} attempts",
-                    body=(
-                        f"Build #{build} failed ingest on {row.attempts} consecutive polls and "
-                        f"has been quarantined — the poller advances past it.\n"
-                        f"Last error: {exc!r}\n"
-                        f"Re-ingest it from the control panel once the cause is fixed.\n"
+                dispatch(
+                    build_ops_alert(
+                        subject=f"build #{build} quarantined after {row.attempts} attempts",
+                        body=(
+                            f"Build #{build} failed ingest on {row.attempts} consecutive polls and "
+                            f"has been quarantined — the poller advances past it.\n"
+                            f"Last error: {exc!r}\n"
+                            f"Re-ingest it from the control panel once the cause is fixed.\n"
+                        ),
                     ),
+                    channels,
                 )
                 continue
             # Not yet at the limit: end the tick so lifecycle order is preserved and the build is
@@ -274,8 +273,7 @@ def observe_overrunning_tick(
     session_factory: sessionmaker[Session],
     cfg: Settings,
     *,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
+    channels: list[AlertChannel] | None = None,
     now: datetime | None = None,
 ) -> None:
     """Observe the current in-progress build, persist the overrunning snapshot, alert once (#184).
@@ -283,8 +281,8 @@ def observe_overrunning_tick(
     Best-effort and self-contained: a failure to fetch ``lastBuild`` or write the snapshot is
     logged and swallowed so it can never kill the tick — the overrunning banner is a live signal,
     not part of the ingest gate. With detection off the snapshot is cleared (no Jenkins call), so
-    toggling the feature off makes the banner disappear on the next tick. One email per overrunning
-    build, composed from the returned alert and delivered after the write commits.
+    toggling the feature off makes the banner disappear on the next tick. One alert per overrunning
+    build, composed from the returned snapshot and dispatched after the write commits.
     """
     try:
         last = client.last_build() if cfg.detect_overrunning_builds else None
@@ -303,17 +301,18 @@ def observe_overrunning_tick(
     except Exception:  # noqa: BLE001 — best-effort; the snapshot write must not break the tick
         logger.warning("overrunning: snapshot write failed", exc_info=True)
         return
-    if alert is None or email_sender is None or not email_recipients:
+    if alert is None:
         return
-    message = build_overrun_alert(
-        alert.build_number,
-        email_recipients,
-        elapsed_seconds=alert.elapsed_seconds,
-        expected_seconds=alert.expected_seconds,
-        jenkins_build_url=f"{cfg.jenkins_job_url}/{alert.build_number}/",
-        app_base_url=cfg.app_base_url,
+    dispatch(
+        build_overrun_alert(
+            alert.build_number,
+            elapsed_seconds=alert.elapsed_seconds,
+            expected_seconds=alert.expected_seconds,
+            jenkins_build_url=f"{cfg.jenkins_job_url}/{alert.build_number}/",
+            app_base_url=cfg.app_base_url,
+        ),
+        channels,
     )
-    send_alert(email_sender, message)
 
 
 def poll_tick(
@@ -322,8 +321,7 @@ def poll_tick(
     base_settings: Settings,
     *,
     feed: TrackingFeed | None = None,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
+    channels: list[AlertChannel] | None = None,
     hypothesis_provider: HypothesisProvider | None = None,
     svn_blame_client: SvnBlameClient | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -332,7 +330,7 @@ def poll_tick(
 
     The tunable thresholds are re-read from the DB **every tick** (merged onto the env settings), so
     a control-panel override takes effect on the next poll with no restart (issue #16). Secrets and
-    URLs are not tunable, so the pre-built ``client`` / ``feed`` / ``email_sender`` /
+    URLs are not tunable, so the pre-built ``client`` / ``feed`` / ``channels`` /
     ``hypothesis_provider`` are reused. Any failure is caught, recorded on the heartbeat, and
     swallowed so a single bad tick never kills the long-lived scheduler; a per-build failure
     (:class:`BuildIngestError`) still reports the builds the tick did process.
@@ -348,9 +346,7 @@ def poll_tick(
     # Overrunning-build observation (issue #184): a live signal independent of ingest, so it runs
     # every tick *before* the ingest work — which may end the tick early on a build failure — and
     # is self-guarded so it can never break the tick.
-    observe_overrunning_tick(
-        client, session_factory, cfg, email_sender=email_sender, email_recipients=email_recipients
-    )
+    observe_overrunning_tick(client, session_factory, cfg, channels=channels)
 
     try:
         processed = poll_once(
@@ -362,9 +358,7 @@ def poll_tick(
             data_change_tolerance=timedelta(minutes=cfg.data_change_tolerance_minutes),
             flaky_window_days=cfg.flaky_window_days,
             flaky_threshold=cfg.flaky_transition_threshold,
-            email_sender=email_sender,
-            email_recipients=email_recipients,
-            email_recovery_notice=cfg.email_recovery_notice,
+            channels=channels,
             app_base_url=cfg.app_base_url,
             hypothesis_provider=hypothesis_provider,
             kb_top_k=cfg.kb_top_k,
@@ -403,8 +397,7 @@ def run_scheduler(
     base_settings: Settings,
     *,
     feed: TrackingFeed | None = None,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
+    channels: list[AlertChannel] | None = None,
     hypothesis_provider: HypothesisProvider | None = None,
     svn_blame_client: SvnBlameClient | None = None,
 ) -> None:
@@ -420,8 +413,7 @@ def run_scheduler(
             session_factory,
             base_settings,
             feed=feed,
-            email_sender=email_sender,
-            email_recipients=email_recipients,
+            channels=channels,
             hypothesis_provider=hypothesis_provider,
             svn_blame_client=svn_blame_client,
         )

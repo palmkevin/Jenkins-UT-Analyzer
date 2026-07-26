@@ -10,6 +10,7 @@ from uta.analyze.duration import expected_duration_seconds
 from uta.control.heartbeat import read_heartbeat
 from uta.control.overrunning import observe_overrunning
 from uta.db import session_scope
+from uta.delivery.alert import AlertKind
 from uta.delivery.email import build_overrun_alert
 from uta.ingest.jenkins import LastBuild
 from uta.models import Build
@@ -229,28 +230,25 @@ def test_banner_reflects_stored_snapshot_with_jenkins_link(session_factory):
 # ── The alert email builder ──────────────────────────────────────────────────
 
 
-def test_overrun_alert_email_contents():
-    msg = build_overrun_alert(
+def test_overrun_alert_contents():
+    alert = build_overrun_alert(
         1100,
-        ("ops@example.invalid",),
         elapsed_seconds=9000,
         expected_seconds=3600,
         jenkins_build_url="https://jenkins.example/job/x/1100/",
         app_base_url="http://uta.example",
     )
-    assert msg.recipients == ("ops@example.invalid",)
-    assert "#1100" in msg.subject
-    assert "2h 30m" in msg.body  # 9000s elapsed
-    assert "1h" in msg.body  # 3600s expected
-    assert "https://jenkins.example/job/x/1100/" in msg.body
-    assert "Dashboard: http://uta.example/" in msg.body
+    assert alert.kind is AlertKind.overrun
+    assert "#1100" in alert.title
+    assert "2h 30m" in alert.body  # 9000s elapsed
+    assert "1h" in alert.body  # 3600s expected
+    assert "https://jenkins.example/job/x/1100/" in alert.body
+    assert "Dashboard: http://uta.example/" in alert.body
 
 
-def test_overrun_alert_email_without_baseline_says_unknown():
-    msg = build_overrun_alert(
-        1100, ("ops@example.invalid",), elapsed_seconds=9000, expected_seconds=None
-    )
-    assert "unknown" in msg.body  # expected omitted → "unknown"
+def test_overrun_alert_without_baseline_says_unknown():
+    alert = build_overrun_alert(1100, elapsed_seconds=9000, expected_seconds=None)
+    assert "unknown" in alert.body  # expected omitted → "unknown"
 
 
 # ── The poller tick wiring (fetch lastBuild → observe → email once) ──────────
@@ -267,34 +265,20 @@ class _InProgressJenkins:
         return _last_build(self._number, building=True, started_at=self._started_at)
 
 
-def test_observe_overrunning_tick_emails_once(session_factory):
-    from tests.fakes.email import RecordingEmailSender
+def test_observe_overrunning_tick_alerts_once(session_factory):
+    from tests.fakes.alert import RecordingAlertChannel
     from uta.config import Settings
     from uta.poller import observe_overrunning_tick
 
     _seed_green_builds(session_factory, 20, duration_minutes=60)
     client = _InProgressJenkins(1100, _ANCHOR)
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
     cfg = Settings(detect_overrunning_builds=True, overrun_ratio=1.0)
     now = _ANCHOR + timedelta(minutes=150)
 
-    observe_overrunning_tick(
-        client,
-        session_factory,
-        cfg,
-        email_sender=sender,
-        email_recipients=("ops@example.invalid",),
-        now=now,
-    )
-    observe_overrunning_tick(
-        client,
-        session_factory,
-        cfg,
-        email_sender=sender,
-        email_recipients=("ops@example.invalid",),
-        now=now,
-    )
-    overrun_mails = [m for m in sender.sent if "overrunning build" in m.subject]
-    assert len(overrun_mails) == 1  # de-duped across ticks
+    observe_overrunning_tick(client, session_factory, cfg, channels=[channel], now=now)
+    observe_overrunning_tick(client, session_factory, cfg, channels=[channel], now=now)
+    overrun_alerts = [a for a in channel.sent if "overrunning build" in a.title]
+    assert len(overrun_alerts) == 1  # de-duped across ticks
     with session_scope(session_factory) as s:
         assert read_heartbeat(s).overrunning is True

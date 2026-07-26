@@ -4,10 +4,10 @@ The monitor kicks off an ingest of a build (or range) from the dashboard; this m
 :class:`~uta.models.IngestJob` row and runs it, advancing its status queued → running → done/error
 so the UI can poll progress.
 
-**Back-fill semantics, always.** A job passes *no* email sender and *no* LLM hypothesis provider to
-:func:`~uta.ingest.pipeline.ingest_build` — a re-ingest must never re-mail a historical regression
-or re-spend on hypotheses (identical to ``uta backfill`` / ``bootstrap``). Flaky flags are display-
-only, so they are recomputed once after the range rather than per build.
+**Back-fill semantics, always.** A job passes *no* Alert Channels and *no* LLM hypothesis provider
+to :func:`~uta.ingest.pipeline.ingest_build` — a re-ingest must never re-alert a historical
+regression or re-spend on hypotheses (identical to ``uta backfill`` / ``bootstrap``). Flaky flags
+are display-only, so they are recomputed once after the range rather than per build.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def run_ingest_job(
 
     try:
         for n in range(start, end + 1):
-            # No email sender, no hypothesis provider ⇒ back-fill semantics (never re-mail history).
+            # No channels, no hypothesis provider ⇒ back-fill semantics (never re-alert history).
             ingest_build(
                 client,
                 session_factory,

@@ -1,15 +1,19 @@
-"""Build Incident feature (issue #171): streak lifecycle, enrichment, namespacing, ingest, email."""
+"""Build Incident feature (#171): streak lifecycle, enrichment, namespacing, ingest, alerts."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
+import httpx
 from sqlalchemy import select
 
 from tests.builders import make_build
-from tests.fakes.email import RecordingEmailSender
+from tests.fakes.alert import RecordingAlertChannel
 from uta.analyze.incident import apply_build_incident
 from uta.db import session_scope
+from uta.delivery.alert import AlertKind
+from uta.delivery.teams import TeamsAlertChannel
 from uta.ingest.pipeline import ingest_build
 from uta.kb.retrieval import similar_cases
 from uta.kb.signature import compute_hash, normalize, normalize_incident
@@ -330,28 +334,72 @@ def test_ingest_recovery_seen_after_failed_build(session_factory):
         assert inc.is_open is False and inc.recovered_build_id is not None
 
 
-def test_incident_email_only_on_new_pipeline_failure(session_factory):
+def test_incident_alert_only_on_new_pipeline_failure(session_factory):
     client = _IncidentJenkins(
         {
             1: {"result": "FAILURE", "stage": "Compile", "log": _LOG},
-            2: {"result": "FAILURE", "stage": "Compile", "log": _LOG},  # extend -> no email
-            3: {"result": "SUCCESS"},  # recovery -> no email
-            4: {"result": "ABORTED", "stage": "Deploy"},  # aborted -> no email
+            2: {"result": "FAILURE", "stage": "Compile", "log": _LOG},  # extend -> no alert
+            3: {"result": "SUCCESS"},  # recovery -> no incident alert
+            4: {"result": "ABORTED", "stage": "Deploy"},  # aborted -> no alert
         }
     )
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
     for n in (1, 2, 3, 4):
-        _ingest(
-            client,
-            session_factory,
-            n,
-            ingest_build_incidents=True,
-            email_sender=sender,
-            email_recipients=("team@x",),
-        )
-    incident_alerts = [m for m in sender.sent if "incident opened" in m.subject]
+        _ingest(client, session_factory, n, ingest_build_incidents=True, channels=[channel])
+    incident_alerts = [a for a in channel.sent if a.kind is AlertKind.incident]
     assert len(incident_alerts) == 1
-    assert "#1" in incident_alerts[0].subject
+    assert "#1" in incident_alerts[0].title
+
+
+def _teams_capture() -> tuple[TeamsAlertChannel, list[httpx.Request]]:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(202)
+
+    channel = TeamsAlertChannel(
+        "https://hook.example/x",
+        subscriptions={AlertKind.incident},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    return channel, seen
+
+
+def test_incident_posts_teams_card_with_dashboard_link(session_factory):
+    """Acceptance (#181): a new pipeline_failure incident posts a card linking to its record."""
+    channel, seen = _teams_capture()
+    client = _IncidentJenkins({1: {"result": "FAILURE", "stage": "Compile", "log": _LOG}})
+    _ingest(
+        client,
+        session_factory,
+        1,
+        ingest_build_incidents=True,
+        channels=[channel],
+        app_base_url="http://uta.example:8000",
+    )
+    assert len(seen) == 1  # exactly one card posted
+    card = json.loads(seen[0].content)["attachments"][0]["content"]
+    action = next(a for a in card["actions"] if a["title"] == "Open in dashboard")
+    assert action["url"] == "http://uta.example:8000/builds/1"
+
+
+def test_no_teams_post_when_incident_kind_not_subscribed(session_factory):
+    """Configured webhook but ``incident`` not in TEAMS_EVENTS ⇒ no POST (unsubscribed kind)."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(202)
+
+    channel = TeamsAlertChannel(
+        "https://hook.example/x",
+        subscriptions={AlertKind.regression},  # subscribes, but not to incident
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    client = _IncidentJenkins({1: {"result": "FAILURE", "stage": "Compile", "log": _LOG}})
+    _ingest(client, session_factory, 1, ingest_build_incidents=True, channels=[channel])
+    assert seen == []
 
 
 # ── Incident triage actions + generalized episode fields ─────────────────────────────────────────

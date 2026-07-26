@@ -28,13 +28,8 @@ from uta.analyze.incident import IncidentKind, apply_build_incident
 from uta.analyze.lifecycle import apply_build
 from uta.analyze.ownership import resolve_for_cases
 from uta.db import session_scope
-from uta.delivery.email import (
-    EmailMessage,
-    EmailSender,
-    build_incident_alert,
-    build_regression_report,
-    send_alert,
-)
+from uta.delivery.alert import Alert, AlertChannel, AlertKind, dispatch, wants
+from uta.delivery.email import build_incident_alert, build_regression_report
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.svn_update import parse_change_sets
 from uta.ingest.unittest_log import parse_unittest_log
@@ -188,9 +183,7 @@ def ingest_build(
     data_change_tolerance: timedelta = timedelta(minutes=5),
     flaky_window_days: int = 30,
     flaky_threshold: float = 0.3,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
-    email_recovery_notice: bool = False,
+    channels: list[AlertChannel] | None = None,
     app_base_url: str = "",
     hypothesis_provider: HypothesisProvider | None = None,
     kb_top_k: int = 5,
@@ -209,12 +202,15 @@ def ingest_build(
     and records a normalized **failure signature** per failing result (the KB recurrence key).
     For a
     **complete** build it then drives the lifecycle/episodes, the baseline diff, the deterministic
-    classification of new regressions, refreshes the oscillation **flaky** flags, and — when an
-    ``email_sender`` is supplied — sends the regression-only alert **after the transaction
-    commits** (a send failure is logged and dropped, never failing the ingest). When a real
-    ``hypothesis_provider`` is supplied it also fills the LLM root-cause hypothesis per new episode;
-    the default Noop provider makes that a no-op. Idempotent on re-ingest; back-fill passes no
-    sender and no provider, so history is never re-mailed or re-hypothesised.
+    classification of new regressions, refreshes the oscillation **flaky** flags, and — when
+    ``channels`` are supplied — composes the regression/recovery and incident **Alerts** and
+    dispatches them to every subscribing Alert Channel **after the transaction commits** (a channel
+    send failure is logged and dropped, never failing the ingest; ADR-0007). An Alert is composed
+    only when *some* channel subscribes to its kind, so a fully-unsubscribed kind pays no
+    composition cost. When a real ``hypothesis_provider`` is supplied it also fills the LLM
+    root-cause hypothesis per new episode; the default Noop provider makes that a no-op. Idempotent
+    on re-ingest; back-fill passes no channels and no provider, so history is never re-alerted or
+    re-hypothesised.
 
     The lifecycle/classification/notify pass only runs when the build is (still) the **newest**
     complete build. Re-ingesting an older build — the quarantine-recovery path (issue #82) — keeps
@@ -276,8 +272,8 @@ def ingest_build(
     t_parse = time.perf_counter() - t
 
     t_persist = t_signatures = t_lifecycle = t_classify = t_flaky = 0.0
-    pending_alert: EmailMessage | None = None
-    pending_incident_alert: EmailMessage | None = None
+    pending_alert: Alert | None = None
+    pending_incident_alert: Alert | None = None
     with session_scope(session_factory) as session:
         t = time.perf_counter()
         build = session.scalar(select(Build).where(Build.build_number == number))
@@ -446,14 +442,12 @@ def ingest_build(
                 outcome.opened
                 and outcome.incident is not None
                 and outcome.incident.kind == IncidentKind.PIPELINE_FAILURE
-                and email_sender is not None
-                and email_recipients
+                and wants(channels, AlertKind.incident)
             ):
                 pending_incident_alert = build_incident_alert(
                     session,
                     outcome.incident,
                     build,
-                    email_recipients,
                     app_base_url=app_base_url,
                 )
 
@@ -499,29 +493,31 @@ def ingest_build(
                     session, window_days=flaky_window_days, threshold=flaky_threshold
                 )
                 t_flaky = time.perf_counter() - t
-            # Compose (not send) the regression alert here — it needs the session — and carry it
-            # past the commit below. Sending inside the transaction let an SMTP outage roll back
-            # a healthy ingest, and a post-send commit failure re-mailed the identical alert on
-            # the poller's retry (issue #81). A historical re-ingest never alerts: its diff
-            # describes old facts (issue #82).
-            if not historical and email_sender is not None and email_recipients:
+            # Compose (not dispatch) the regression/recovery alert here — it needs the session — and
+            # carry it past the commit below. Sending inside the transaction let a channel outage
+            # roll back a healthy ingest, and a post-send commit failure re-alerted the identical
+            # event on the poller's retry (issue #81). A historical re-ingest never alerts: its diff
+            # describes old facts (issue #82). Composed only when some channel subscribes to a
+            # regression or recovery kind (recovery is also gated so it is computed only if wanted).
+            if not historical and (
+                wants(channels, AlertKind.regression) or wants(channels, AlertKind.recovery)
+            ):
                 pending_alert = build_regression_report(
                     session,
                     build,
-                    email_recipients,
-                    recovery_notice=email_recovery_notice,
+                    recovery_notice=wants(channels, AlertKind.recovery),
                     app_base_url=app_base_url,
                 )
 
-    # The alert goes out only once the build is durably committed, and a send failure is swallowed
-    # (logged) by ``send_alert`` — mail can never fail the ingest. At-most-once per build: a commit
-    # failure raises out of the ``with`` above before anything is sent (the poller's retry
-    # recomputes and sends once), the poller never re-ingests below its high-water mark, and the
-    # re-ingest paths (CLI back-fill, on-demand job) pass no sender by contract.
-    if pending_alert is not None and email_sender is not None:
-        send_alert(email_sender, pending_alert)
-    if pending_incident_alert is not None and email_sender is not None:
-        send_alert(email_sender, pending_incident_alert)
+    # The alerts go out only once the build is durably committed, and each channel send failure is
+    # swallowed (logged) by ``dispatch`` — no channel can fail the ingest. At-most-once per build: a
+    # commit failure raises out of the ``with`` above before anything is sent (the poller's retry
+    # recomputes and dispatches once), the poller never re-ingests below its high-water mark, and
+    # the re-ingest paths (CLI back-fill, on-demand job) pass no channels by contract.
+    if pending_incident_alert is not None:
+        dispatch(pending_incident_alert, channels)
+    if pending_alert is not None:
+        dispatch(pending_alert, channels)
 
     total = time.perf_counter() - t_total
     logger.info(

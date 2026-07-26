@@ -81,6 +81,33 @@ def build_email_sender(settings: Settings):
     )
 
 
+def build_channels(settings: Settings) -> list:
+    """The enabled Alert Channels (issue #181), shared by the ingest pipeline and the poller.
+
+    Same "no credential ⇒ skip that channel" rule email already followed: the **Email** channel is
+    built iff SMTP is configured (host + recipients), the **Teams** channel iff
+    ``TEAMS_WEBHOOK_URL`` is set. Each carries its own subscription set (``EMAIL_EVENTS`` /
+    ``TEAMS_EVENTS``); a channel that subscribes to nothing is still returned (it simply never
+    receives an Alert). Back-fill and the on-demand re-ingest job pass no channels at all, so
+    history is never re-alerted.
+    """
+    channels: list = []
+    sender = build_email_sender(settings)
+    if sender is not None:
+        from uta.delivery.email import EmailAlertChannel
+
+        channels.append(
+            EmailAlertChannel(sender, settings.email_recipients, settings.email_event_set)
+        )
+    if settings.teams_webhook_url:
+        from uta.delivery.teams import TeamsAlertChannel
+
+        channels.append(
+            TeamsAlertChannel(settings.teams_webhook_url, subscriptions=settings.teams_event_set)
+        )
+    return channels
+
+
 def build_hypothesis_provider(settings: Settings):
     """The configured LLM provider (Anthropic or OpenAI), or Noop when no key is set.
 

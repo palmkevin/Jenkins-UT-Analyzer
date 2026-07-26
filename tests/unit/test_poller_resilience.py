@@ -6,7 +6,6 @@ recorder instead of real backoff waits.
 
 from __future__ import annotations
 
-import smtplib
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -16,7 +15,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
 from tests.fakes import FakeJenkinsClient
-from tests.fakes.email import RecordingEmailSender
+from tests.fakes.alert import RaisingAlertChannel, RecordingAlertChannel
 from uta.config import Settings
 from uta.control.health import check_health
 from uta.control.heartbeat import read_heartbeat, record_heartbeat
@@ -27,8 +26,6 @@ from uta.models import Build, BuildQuarantine, IngestJob
 from uta.models.enums import IngestJobStatus
 from uta.poller import BuildIngestError, builds_to_ingest, poll_once, poll_tick
 from uta.web.app import create_app
-
-_RECIPIENTS = ("ops@example.test",)
 
 
 class _MultiBuildFake(FakeJenkinsClient):
@@ -94,13 +91,6 @@ class _Rotated404Fake(_MultiBuildFake):
         return super().build_meta(build)
 
 
-class _RaisingEmailSender:
-    """Implements the ``EmailSender`` protocol, but the relay is down — every send raises."""
-
-    def send(self, message) -> None:
-        raise smtplib.SMTPException("relay down")
-
-
 class _SleepRecorder:
     def __init__(self) -> None:
         self.delays: list[float] = []
@@ -122,9 +112,9 @@ def _quarantine_row(session_factory, build: int) -> BuildQuarantine | None:
         return row
 
 
-def _ops_mails(sender: RecordingEmailSender) -> list:
-    """Only the operational alerts — the sender also receives ordinary regression reports."""
-    return [m for m in sender.sent if m.subject.startswith("UT Analyzer ops")]
+def _ops_alerts(channel: RecordingAlertChannel) -> list:
+    """Only the operational alerts — the channel also receives ordinary regression reports."""
+    return [a for a in channel.sent if a.title.startswith("UT Analyzer ops")]
 
 
 # ── In-tick retry with exponential backoff ───────────────────────────────────
@@ -180,7 +170,7 @@ def test_success_after_earlier_failing_tick_clears_the_failure_record(session_fa
 
 def test_persistent_failure_quarantines_advances_and_alerts(session_factory):
     client = _MalformedBuildFake(last_completed=2, failing=1)
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
 
     # Ticks 1 and 2: the malformed build blocks the tick and accrues attempts.
     for expected_attempts in (1, 2):
@@ -189,29 +179,27 @@ def test_persistent_failure_quarantines_advances_and_alerts(session_factory):
                 client,
                 session_factory,
                 quarantine_attempts=3,
-                email_sender=sender,
-                email_recipients=_RECIPIENTS,
+                channels=[channel],
                 sleep=_SleepRecorder(),
             )
         assert _quarantine_row(session_factory, 1).attempts == expected_attempts
-        assert _ops_mails(sender) == []
+        assert _ops_alerts(channel) == []
 
     # Tick 3: attempts reach the limit — quarantined, alerted, and the tick continues past it.
     processed = poll_once(
         client,
         session_factory,
         quarantine_attempts=3,
-        email_sender=sender,
-        email_recipients=_RECIPIENTS,
+        channels=[channel],
         sleep=_SleepRecorder(),
     )
     assert processed == [2]
     row = _quarantine_row(session_factory, 1)
     assert row.quarantined_at is not None and row.attempts == 3
-    ops = _ops_mails(sender)
+    ops = _ops_alerts(channel)
     assert len(ops) == 1
-    assert "quarantined" in ops[0].subject
-    assert "#1" in ops[0].subject
+    assert "quarantined" in ops[0].title
+    assert "#1" in ops[0].title
     # The high-water mark advanced past the quarantined build …
     with session_scope(session_factory) as s:
         assert s.scalar(select(func.max(Build.build_number))) == 2
@@ -233,23 +221,22 @@ def test_builds_to_ingest_excludes_quarantined_builds(session_factory):
 
 def test_404_build_is_quarantined_immediately_and_alerted(session_factory):
     client = _Rotated404Fake(last_completed=3, missing=2)
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
     processed = poll_once(
         client,
         session_factory,
-        email_sender=sender,
-        email_recipients=_RECIPIENTS,
+        channels=[channel],
         sleep=_SleepRecorder(),
     )
     assert processed == [1, 3]  # the rotated build is skipped, later builds still ingest
     row = _quarantine_row(session_factory, 2)
     assert row.quarantined_at is not None
     assert "404" in row.last_error
-    ops = _ops_mails(sender)
-    assert len(ops) == 1 and "skipped" in ops[0].subject
+    ops = _ops_alerts(channel)
+    assert len(ops) == 1 and "skipped" in ops[0].title
     # Never re-selected, never re-alerted.
-    assert poll_once(client, session_factory, email_sender=sender, sleep=_SleepRecorder()) == []
-    assert len(_ops_mails(sender)) == 1
+    assert poll_once(client, session_factory, channels=[channel], sleep=_SleepRecorder()) == []
+    assert len(_ops_alerts(channel)) == 1
 
 
 def test_failing_ops_alert_does_not_lose_the_tick_record(session_factory):
@@ -260,8 +247,7 @@ def test_failing_ops_alert_does_not_lose_the_tick_record(session_factory):
         client,
         session_factory,
         Settings(),
-        email_sender=_RaisingEmailSender(),
-        email_recipients=_RECIPIENTS,
+        channels=[RaisingAlertChannel()],
         sleep=_SleepRecorder(),
     )
     assert processed == [1, 3]  # the ingested builds are reported despite the failed alert
@@ -278,8 +264,7 @@ def test_failing_quarantine_alert_does_not_end_the_tick(session_factory):
         client,
         session_factory,
         quarantine_attempts=1,
-        email_sender=_RaisingEmailSender(),
-        email_recipients=_RECIPIENTS,
+        channels=[RaisingAlertChannel()],
         sleep=_SleepRecorder(),
     )
     assert processed == [2]  # the tick advanced past the quarantined build despite the raise
@@ -360,32 +345,20 @@ def test_health_ok_with_fresh_heartbeat(session_factory):
 
 def test_health_stale_heartbeat_is_degraded_and_alerts_once(session_factory):
     record_heartbeat(session_factory, processed=[1], error=None)
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
     late = datetime.now(UTC) + timedelta(hours=2)  # 2h ≫ 3 × 300s
 
-    for _ in range(2):  # a monitor probing repeatedly must not re-mail
-        report = check_health(
-            session_factory,
-            _client_settings(),
-            email_sender=sender,
-            email_recipients=_RECIPIENTS,
-            now=late,
-        )
+    for _ in range(2):  # a monitor probing repeatedly must not re-alert
+        report = check_health(session_factory, _client_settings(), channels=[channel], now=late)
         assert not report.ok and report.poller == "stale"
-    assert len(sender.sent) == 1
-    assert "stale" in sender.sent[0].subject
+    assert len(channel.sent) == 1
+    assert "stale" in channel.sent[0].title
 
-    # Recovery re-arms the alert: a fresh success clears the latch, a later staleness re-mails.
+    # Recovery re-arms the alert: a fresh success clears the latch, a later staleness re-alerts.
     record_heartbeat(session_factory, processed=[2], error=None)
     assert check_health(session_factory, _client_settings(), now=datetime.now(UTC)).ok
-    check_health(
-        session_factory,
-        _client_settings(),
-        email_sender=sender,
-        email_recipients=_RECIPIENTS,
-        now=late,
-    )
-    assert len(sender.sent) == 2
+    check_health(session_factory, _client_settings(), channels=[channel], now=late)
+    assert len(channel.sent) == 2
 
 
 def test_health_stale_with_failing_smtp_still_reports_and_realerts_later(session_factory):
@@ -397,24 +370,17 @@ def test_health_stale_with_failing_smtp_still_reports_and_realerts_later(session
     report = check_health(
         session_factory,
         _client_settings(),
-        email_sender=_RaisingEmailSender(),
-        email_recipients=_RECIPIENTS,
+        channels=[RaisingAlertChannel()],
         now=late,
     )
     assert not report.ok and report.db == "ok" and report.poller == "stale"
     with session_scope(session_factory) as s:
         assert read_heartbeat(s).stale_alerted_at is None  # unlatched — nothing was delivered
 
-    # The relay comes back: the (single) alert still goes out and latches.
-    sender = RecordingEmailSender()
-    check_health(
-        session_factory,
-        _client_settings(),
-        email_sender=sender,
-        email_recipients=_RECIPIENTS,
-        now=late,
-    )
-    assert len(sender.sent) == 1 and "stale" in sender.sent[0].subject
+    # The channel comes back: the (single) alert still goes out and latches.
+    channel = RecordingAlertChannel()
+    check_health(session_factory, _client_settings(), channels=[channel], now=late)
+    assert len(channel.sent) == 1 and "stale" in channel.sent[0].title
     with session_scope(session_factory) as s:
         assert read_heartbeat(s).stale_alerted_at is not None
 
