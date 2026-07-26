@@ -224,8 +224,9 @@
       <div class="part" style="border-color:var(--app)">
         <h4><code>poller</code> container <span class="pill">ingest</span></h4>
         <p>Runs <code>uta poll</code>: on a fixed interval, detects new completed builds above the DB
-        high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also sends email
-        and fills LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
+        high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also dispatches
+        Alerts (email and/or Microsoft Teams, per each channel's <code>*_EVENTS</code> allowlist) and fills
+        LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
         (so a tuning change applies with no restart), ends with a <b>retention/pruning pass</b> (old passing
         results, finished ingest jobs), and stamps a heartbeat row with the tick time, build count and last
         error. <b>Resilience:</b> transient faults (network, HTTP 5xx/429, DB connection
@@ -266,7 +267,7 @@
         ingest/retention knobs — never secrets or URLs), an <b>AI-suggestion accuracy</b> table (confirmed vs
         corrected triage verdicts per conclusion field — cause / reason — all-time and over a 30-day window,
         with a precision figure), trigger an <b>on-demand ingest</b> of a build or
-        range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM; also the recovery
+        range directly against Jenkins/Oracle (back-fill semantics — no alerts (email/Teams), no LLM; also the recovery
         path for a quarantined build — a successful re-ingest clears its record), and view poller health
         (last poll, last <b>successful</b> poll, high-water mark, last error) plus a <b>build quarantine</b>
         table (failing/quarantined builds with attempts and last error). At startup it also flips any
@@ -324,7 +325,7 @@
   live <b>overrunning-build snapshot</b> to Postgres (never a Build Incident — issue #184; ADR-0006), which
   <code>web</code> reflects as the triage-queue banner. The <code>web</code> app's <b>control panel</b> also
   has a direct, on-demand path to Jenkins/Oracle for manual ingest — always with back-fill semantics (no
-  email, no LLM). Three producers compose an Alert: the <code>poller</code> for the regression report, a new
+  alerts, no LLM). Two producers compose an Alert: the <code>poller</code> for the regression report, a new
   <b>pipeline-failure Build Incident</b> alert, an <b>overrunning-build</b> alert (once per build), and
   <b>ops alerts</b> (a quarantined/skipped build), and <code>web</code>'s
   <code>/health</code> check for a <b>latched</b> ops alert when the poller goes stale — each Alert is then
@@ -502,7 +503,7 @@
       <path class="edgeW" d="M330,408 C270,408 235,340 235,260 C235,220 215,205 202,198" marker-end="url(#arrW)"/>
       <text class="etxt" x="204" y="270" style="fill:#f0774b">on-demand ingest</text>
       <text class="etxt" x="204" y="283" style="fill:#f0774b">(control panel,</text>
-      <text class="etxt" x="204" y="296" style="fill:#f0774b">no email/LLM)</text>
+      <text class="etxt" x="204" y="296" style="fill:#f0774b">no alerts/LLM)</text>
       <!-- web <-> Keycloak (flag-gated login redirect / RP-initiated logout) -->
       <path class="edgeK" d="M330,420 C260,420 200,400 200,360" marker-end="url(#arrK)"/>
       <path class="edgeK" d="M200,340 C230,370 280,405 328,428" marker-end="url(#arrK)"/>
@@ -531,8 +532,8 @@
   it back-fills the last <code>BACKFILL_DEPTH</code> builds oldest-first; then it runs purely incrementally
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
-  thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
-  so a re-ingest never re-mails a historical regression. If the re-ingested build is older than the
+  thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no alerts (email/Teams), no
+  LLM hypothesis, so a re-ingest never re-alerts a historical regression. If the re-ingested build is older than the
   current newest complete build, the lifecycle/classification pass itself is skipped too (see
   <a href="#analysis">Analysis</a>) — only the build/results/KB signatures are persisted.</p>
   <ol class="flow">
