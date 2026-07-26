@@ -771,7 +771,7 @@
 <section id="email">
   <h2><span class="n">5</span>Alerting <span class="muted" style="font-size:14px">— email &amp; Microsoft Teams</span></h2>
   <div class="card">
-    <p>Alerting is a <b>multi-channel</b> layer (<a href="adr/0007-multi-channel-alerting.md">ADR-0007</a>):
+    <p>Alerting is a <b>multi-channel</b> layer (<a href="adr/0007-alerts-multi-channel-teams-webhook.md">ADR-0007</a>):
     the poller (or <code>web</code>'s <code>/health</code> check) composes a single, channel-neutral
     <code>Alert</code> value from already-persisted facts, tagged with one of five <b>Alert Kinds</b> —
     <code>incident</code>, <code>regression</code>, <code>recovery</code>, <code>overrun</code>,
@@ -1188,7 +1188,7 @@
     <tr><th>Service</th><th>Command</th><th>Role</th></tr>
     <tr><td><code>db</code></td><td>postgres:16</td><td>The app’s store (dev only; prod uses an external server via <code>DATABASE_URL</code>).</td></tr>
     <tr><td><code>migrate</code></td><td><code>uta migrate</code></td><td>One-shot: brings the schema to head before the app services start (avoids a migration race).</td></tr>
-    <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for email &amp; LLM.</td></tr>
+    <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for alerts (email/Teams) &amp; LLM.</td></tr>
     <tr><td><code>web</code></td><td><code>uvicorn …</code></td><td>The FastAPI/HTMX dashboard on port 8000.
       <code>GET /health</code> pings the DB and the poller heartbeat — 503 if the DB is down or no
       successful poll landed within the staleness window; a poller-less deployment (e.g. the public demo)
@@ -1212,7 +1212,7 @@
   <div class="card">
     <p>A second, parallel deployment — <code>uta.demo.app:app</code> — hosts a <b>fully synthetic, offline</b>
     copy of the dashboard for anyone to try, with <b>no connection to Jenkins, Oracle <code>ut_ref</code>,
-    FishEye/Jira, SMTP or an LLM</b>. A fake Jenkins/tracking-feed pair (<code>uta.demo.dataset</code>) is fed
+    FishEye/Jira, SMTP/Teams or an LLM</b>. A fake Jenkins/tracking-feed pair (<code>uta.demo.dataset</code>) is fed
     through the <i>real</i> ingest + analysis pipeline (<code>uta.demo.seed</code>) into an ephemeral,
     in-process SQLite store — same code paths, invented data. <code>uta demo</code> serves it locally;
     <code>uta seed-demo</code> seeds a persistent store instead. <a href="../render.yaml">render.yaml</a>
