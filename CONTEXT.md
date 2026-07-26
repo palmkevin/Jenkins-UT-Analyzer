@@ -77,8 +77,24 @@ plain "incident" is also the word to avoid when talking about a Failure Episode,
 **Incident Kind**:
 What opened a Build Incident: `pipeline_failure` (the build itself failed — gets the full
 predicted-cause/hypothesis treatment, same as a Failure Episode) or `aborted` (the build was
-aborted — human-documented only, no prediction). `hung` and `slow` are reserved for a future
-in-progress-build detector, not yet implemented.
+aborted — human-documented only, no prediction). `slow` is reserved for a future duration-regression
+detector (a *completed* build slower than its Expected Duration). A build that is still running too
+long is **not** a Build Incident — it is surfaced live as an Overrunning Build (see Build duration).
+
+### Build duration
+
+**Expected Duration**:
+The reference wall-clock a Build is expected to take: the **median** end-to-end duration of the last
+20 `SUCCESS`/`UNSTABLE` builds. Undefined until 20 such builds exist. The yardstick for both
+overrunning (in-progress) and slow (completed) detection.
+_Avoid_: Average duration, estimated duration
+
+**Overrunning Build**:
+An **in-progress** Build whose elapsed time has exceeded its Expected Duration by a configured
+multiple. Surfaced live as a banner on the triage dashboard so a human can stop it — it is **not** a
+Build Incident and is never persisted as one; if the build is then aborted, the ordinary `aborted`
+Build Incident records it.
+_Avoid_: Hung, never-ending, stuck, long-running build
 
 ### Triage & causes
 
