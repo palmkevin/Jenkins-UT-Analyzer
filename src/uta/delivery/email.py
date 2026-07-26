@@ -267,6 +267,60 @@ def build_incident_alert(
     )
 
 
+def _compact_duration(seconds: float | None) -> str:
+    """``3900`` → ``1h 5m``; sub-minute → ``Ns``; ``None`` → ``unknown`` (link-free plain text)."""
+    if seconds is None:
+        return "unknown"
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def build_overrun_alert(
+    build_number: int,
+    recipients: tuple[str, ...],
+    *,
+    elapsed_seconds: float,
+    expected_seconds: float | None,
+    jenkins_build_url: str | None = None,
+    app_base_url: str = "",
+) -> EmailMessage:
+    """The one-per-build alert for an **overrunning** in-progress build (issue #184).
+
+    Fired on the first tick the poller sets the ``overrunning`` flag (the caller de-dups by the
+    persisted marker), so a human can go stop the build. Leads with how long it has been running
+    versus the Expected Duration and links straight to the build in Jenkins; unlike the aborted
+    Build Incident that opens if someone acts on it, this is the *only* notification for an
+    overrunning build.
+    """
+    lines = [
+        f"Build #{build_number} is still running and has overrun its expected duration.",
+        "",
+        f"Elapsed: {_compact_duration(elapsed_seconds)}",
+        f"Expected (median of recent builds): {_compact_duration(expected_seconds)}",
+        "",
+        "It may be stuck — check it and stop it in Jenkins if so.",
+    ]
+    if jenkins_build_url:
+        lines.append(jenkins_build_url)
+    dashboard = _dashboard_url(app_base_url, "/")
+    if dashboard:
+        lines.append(f"Dashboard: {dashboard}")
+    return EmailMessage(
+        subject=f"UT overrunning build — #{build_number} still running past expected duration",
+        body="\n".join(lines) + "\n",
+        recipients=recipients,
+    )
+
+
 def send_ops_alert(
     sender: EmailSender | None,
     recipients: tuple[str, ...],

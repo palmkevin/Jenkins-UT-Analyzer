@@ -11,7 +11,35 @@ import httpx
 
 from uta.clients import build_client
 from uta.config import Settings
-from uta.ingest.jenkins import HttpJenkinsClient
+from uta.ingest.jenkins import HttpJenkinsClient, LastBuild
+
+
+def _client_with_response(payload: dict) -> HttpJenkinsClient:
+    """An HttpJenkinsClient whose transport returns ``payload`` for any GET (no real network)."""
+    client = HttpJenkinsClient("https://jenkins.example/job")
+    client._client = httpx.Client(
+        transport=httpx.MockTransport(lambda _req: httpx.Response(200, json=payload))
+    )
+    return client
+
+
+def test_last_build_parses_in_progress_build():
+    client = _client_with_response(
+        {"lastBuild": {"number": 1710, "building": True, "timestamp": 1712000000000}}
+    )
+    assert client.last_build() == LastBuild(number=1710, building=True, timestamp=1712000000000)
+
+
+def test_last_build_parses_completed_build():
+    client = _client_with_response(
+        {"lastBuild": {"number": 1710, "building": False, "timestamp": 1712000000000}}
+    )
+    assert client.last_build() == LastBuild(number=1710, building=False, timestamp=1712000000000)
+
+
+def test_last_build_none_when_no_build_yet():
+    assert _client_with_response({"lastBuild": None}).last_build() is None
+    assert _client_with_response({}).last_build() is None
 
 
 def _captured_verify(monkeypatch) -> dict:

@@ -123,6 +123,8 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `INGEST_UNITTEST_STAGES` | `true` | Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS, Uniface), parsed from each stage's `wfapi/log` behind the same interface as the JUnit report. |
 | `UNITTEST_SUITES` | `LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests` | Allowlist of stage names (a `"<suite> - <track>"` stage → suite) treated as test stages. |
 | `INGEST_BUILD_INCIDENTS` | `true` | Detect **Build Incidents** (issue #171): open/extend/recover a build-level triage entity when a build's own result is `FAILURE`/`ABORTED` (recovers on `SUCCESS`/`UNSTABLE`), folded into the same ingest pass. Off skips build-level incident detection entirely. |
+| `DETECT_OVERRUNNING_BUILDS` | `true` | Detect **Overrunning Builds** (issue #184): each poll tick, read Jenkins' `lastBuild` and flag it once elapsed time runs past the Expected Duration by more than `OVERRUN_RATIO` — a live, poller-observed banner on the triage dashboard, never a persisted Build Incident. Off ⇒ no `lastBuild` call, no banner. |
+| `OVERRUN_RATIO` | `1.0` | An in-progress build is flagged **overrunning** once its elapsed time exceeds `expected × (1 + OVERRUN_RATIO)` — the default means 2× the Expected Duration (median of the last 20 `SUCCESS`/`UNSTABLE` builds). |
 
 ### Oracle `ut_ref` (reference-data change feed, read-only)
 | Variable | Default | Purpose |
@@ -200,7 +202,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 |---|---|---|
 | `DATA_CHANGE_MAX_LOOKBACK_DAYS` | `30` | Cap on how far **before** a build's start to look for `ut_ref` changes; the window's lower bound is normally the previous build's start, and this cap is also the fallback when there is no previous build (first-ever build / cold start). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
-| `POLL_INTERVAL_SECONDS` | `300` | Cadence of the `uta poll` scheduler. |
+| `POLL_INTERVAL_SECONDS` | `60` | Cadence of the `uta poll` scheduler. Dropped from `300` (issue #184) for a near-real-time overrunning-build banner; an idle tick stays cheap. Since `POLLER_STALE_AFTER_INTERVALS` counts in intervals, `/health` now flags a stale poller after ~5 minutes rather than ~25. |
 
 ### Compose-only
 | Variable | Default | Purpose |

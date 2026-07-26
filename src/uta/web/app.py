@@ -144,9 +144,27 @@ def format_reltime(value: object) -> str:
     return Markup(f'<span title="{escape(_ts_text(value))}">{escape(_relative_text(age))}</span>')
 
 
+def format_elapsed(value: object) -> str:
+    """Render the time elapsed from a start timestamp until *now* as compact ``Hh Mm Ss`` text.
+
+    The overrunning-build banner's one live value (issue #184): ``elapsed = now − started_at``,
+    recomputed on every render so the banner ticks up between polls while the rest of it stays a
+    pure reflection of the poller's stored snapshot. ``None`` renders as ``"—"``; a future start
+    (clock skew) clamps to ``0s``.
+    """
+    if value is None:
+        return "—"
+    if not isinstance(value, datetime):
+        return str(value)
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    seconds = max(0.0, (datetime.now(UTC) - aware).total_seconds())
+    return format_duration(seconds)
+
+
 _TEMPLATES.env.filters["ts"] = format_ts
 _TEMPLATES.env.filters["duration"] = format_duration
 _TEMPLATES.env.filters["reltime"] = format_reltime
+_TEMPLATES.env.filters["elapsed"] = format_elapsed
 
 
 def nav_section(path: str) -> str | None:
@@ -362,6 +380,7 @@ def create_app(
             )
             options = views.triage_filter_options(s)
             last_build = views.latest_build(s)
+            overrunning = views.overrunning_banner(s, jenkins_job_url=cfg.jenkins_job_url)
         options["tracks"] = ["permanent", "permanent_py39"]
         options["causes"] = list(PredictedCause)
         options["triage_statuses"] = list(TriageStatus)
@@ -379,6 +398,7 @@ def create_app(
                 "expand": expand,
                 "options": options,
                 "last_build": last_build,
+                "overrunning": overrunning,
                 "chips": views.triage_filter_chips(filters, sort or None, expand),
                 "sort_links": views.triage_sort_links(filters, sort or None, expand),
                 "expand_urls": views.triage_expand_urls(filters, sort or None, expand),

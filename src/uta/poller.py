@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import httpx
@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from uta.config import Settings
 from uta.control.heartbeat import record_heartbeat
+from uta.control.overrunning import observe_overrunning
 from uta.control.quarantine import (
     clear_failure,
     quarantine_immediately,
@@ -37,7 +38,7 @@ from uta.control.quarantine import (
 )
 from uta.control.tunables import effective_settings, load_overrides
 from uta.db import session_scope
-from uta.delivery.email import EmailSender, send_ops_alert
+from uta.delivery.email import EmailSender, build_overrun_alert, send_alert, send_ops_alert
 from uta.ingest.jenkins import JenkinsClient
 from uta.ingest.pipeline import ingest_build
 from uta.llm import HypothesisProvider
@@ -268,6 +269,53 @@ def poll_once(
     return processed
 
 
+def observe_overrunning_tick(
+    client: JenkinsClient,
+    session_factory: sessionmaker[Session],
+    cfg: Settings,
+    *,
+    email_sender: EmailSender | None = None,
+    email_recipients: tuple[str, ...] = (),
+    now: datetime | None = None,
+) -> None:
+    """Observe the current in-progress build, persist the overrunning snapshot, alert once (#184).
+
+    Best-effort and self-contained: a failure to fetch ``lastBuild`` or write the snapshot is
+    logged and swallowed so it can never kill the tick — the overrunning banner is a live signal,
+    not part of the ingest gate. With detection off the snapshot is cleared (no Jenkins call), so
+    toggling the feature off makes the banner disappear on the next tick. One email per overrunning
+    build, composed from the returned alert and delivered after the write commits.
+    """
+    try:
+        last = client.last_build() if cfg.detect_overrunning_builds else None
+    except Exception:  # noqa: BLE001 — a live-signal fetch must never break the poll tick
+        logger.warning("overrunning: lastBuild fetch failed — skipping this tick", exc_info=True)
+        return
+    try:
+        with session_scope(session_factory) as session:
+            alert = observe_overrunning(
+                session,
+                last,
+                overrun_ratio=cfg.overrun_ratio,
+                detect=cfg.detect_overrunning_builds,
+                now=now,
+            )
+    except Exception:  # noqa: BLE001 — best-effort; the snapshot write must not break the tick
+        logger.warning("overrunning: snapshot write failed", exc_info=True)
+        return
+    if alert is None or email_sender is None or not email_recipients:
+        return
+    message = build_overrun_alert(
+        alert.build_number,
+        email_recipients,
+        elapsed_seconds=alert.elapsed_seconds,
+        expected_seconds=alert.expected_seconds,
+        jenkins_build_url=f"{cfg.jenkins_job_url}/{alert.build_number}/",
+        app_base_url=cfg.app_base_url,
+    )
+    send_alert(email_sender, message)
+
+
 def poll_tick(
     client: JenkinsClient,
     session_factory: sessionmaker[Session],
@@ -296,6 +344,13 @@ def poll_tick(
     """
     with session_scope(session_factory) as session:
         cfg = effective_settings(base_settings, load_overrides(session))
+
+    # Overrunning-build observation (issue #184): a live signal independent of ingest, so it runs
+    # every tick *before* the ingest work — which may end the tick early on a build failure — and
+    # is self-guarded so it can never break the tick.
+    observe_overrunning_tick(
+        client, session_factory, cfg, email_sender=email_sender, email_recipients=email_recipients
+    )
 
     try:
         processed = poll_once(

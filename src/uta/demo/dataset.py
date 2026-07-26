@@ -611,6 +611,17 @@ class SyntheticJenkins:
     def last_completed_build(self) -> int | None:
         return max(build_numbers())
 
+    def last_build(self):
+        """The newest build, completed (not building) — the demo has no live in-progress build.
+
+        The demo's overrunning banner is seeded directly onto the poller heartbeat snapshot (see
+        :func:`uta.demo.seed._seed_control_state`), since the demo runs no poller.
+        """
+        from uta.ingest.jenkins import LastBuild
+
+        last = max(build_numbers())
+        return LastBuild(number=last, building=False, timestamp=_millis(self.anchor))
+
 
 class SyntheticTrackingFeed:
     """A synthetic :class:`uta.refdb.oracle.TrackingFeed` (the ``ut_ref`` data-change candidates).

@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     # Detect **Build Incidents** (issue #171): open a build-level triage entity when a build's
     # top-level result is FAILURE or ABORTED, folded into the ordinary ingest path. On by default.
     ingest_build_incidents: bool = True
+    # Detect **Overrunning Builds** (issue #184): each poll tick observe the current in-progress
+    # build and flag it when its elapsed time has run past the Expected Duration (median wall-clock
+    # of the last 20 SUCCESS/UNSTABLE builds) by more than `overrun_ratio`. A live, poller-observed
+    # banner on the triage dashboard — never a persisted Build Incident. On by default.
+    detect_overrunning_builds: bool = True
+    # Overrun multiple: an in-progress build is overrunning once its elapsed exceeds
+    # `expected × (1 + overrun_ratio)`. Default 1.0 ⇒ 2× the median. Live-tunable via the control
+    # panel like the other thresholds.
+    overrun_ratio: float = 1.0
 
     # ── Oracle ut_ref (read-only) ────────────────────────────────────────────
     ut_ref_host: str = "lsdb04"
@@ -140,8 +149,9 @@ class Settings(BaseSettings):
     # skew between Jenkins and the Oracle ut_ref clock at both ends.
     data_change_max_lookback_days: int = 30
     data_change_tolerance_minutes: int = 5
-    # Scheduled poll cadence (seconds) for `uta poll`.
-    poll_interval_seconds: int = 300
+    # Scheduled poll cadence (seconds) for `uta poll`. Dropped 300 → 60 for a near-real-time
+    # overrunning-build banner (issue #184); an idle tick stays cheap (a couple of Jenkins calls).
+    poll_interval_seconds: int = 60
 
     # ── Poller resilience (issue #51) ──────────────────────────────────────────
     # In-tick attempts per build for *transient* errors (network/5xx/DB blips) — exponential

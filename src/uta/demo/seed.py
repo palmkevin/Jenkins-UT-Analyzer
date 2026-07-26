@@ -84,6 +84,16 @@ def _seed_control_state(
                 last_processed_count=1,
                 last_processed=str(last),
                 last_error=None,
+                # An un-flagged in-progress build (issue #184) so the demo shows the banner's
+                # normal state: elapsed ticks up live, "expected" reflects the ~1h synthetic
+                # builds, and it stays un-highlighted (20 min < 2× the median). Numbered just
+                # above the newest ingested build — the poller's live view, not a stored Build.
+                overrunning_build_number=last + 1,
+                overrunning_started_at=anchor - timedelta(minutes=20),
+                overrunning_expected_seconds=3600.0,
+                overrunning_building=True,
+                overrunning=False,
+                overrunning_alerted_build_number=None,
             )
         )
         # A build the poller gave up on: malformed JUnit payload, quarantined after 3 failing

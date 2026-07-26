@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from uta.db import Base
@@ -79,6 +79,13 @@ class PollerHeartbeat(Base, TimestampMixin):
     staleness ("no successful poll in N intervals"), while ``last_poll_at`` moves on every tick.
     ``stale_alerted_at`` latches the ops staleness alert so repeated health probes don't re-mail;
     it is cleared when the poller is fresh again (issue #51).
+
+    The ``overrunning_*`` columns are the **single-row overrunning-build snapshot** (issue #184),
+    overwritten each tick: the current in-progress build's number, start, the stored Expected
+    Duration median (seconds), whether a build is building at all, and the poller-computed
+    ``overrunning`` flag the dashboard banner reflects (the UI computes only ``elapsed`` live at
+    render). ``overrunning_alerted_build_number`` de-dups the one-email-per-overrunning-build alert
+    across ticks and poller restarts. All cleared when nothing is building.
     """
 
     __tablename__ = "poller_heartbeats"
@@ -93,6 +100,16 @@ class PollerHeartbeat(Base, TimestampMixin):
     stale_alerted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # ── Overrunning-build snapshot (issue #184) ──────────────────────────────
+    overrunning_build_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overrunning_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    overrunning_expected_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overrunning_building: Mapped[bool] = mapped_column(Boolean, default=False)
+    overrunning: Mapped[bool] = mapped_column(Boolean, default=False)
+    overrunning_alerted_build_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class BuildQuarantine(Base, TimestampMixin):

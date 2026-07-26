@@ -7,6 +7,7 @@ boundary — parsing lives in :mod:`uta.ingest.ut_report` / ``svn_update`` / ``w
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -14,6 +15,20 @@ import httpx
 _CHANGESETS_TREE = (
     "changeSets[kind,items[commitId,timestamp,author[fullName],msg,paths[editType,file]]]"
 )
+
+
+@dataclass(frozen=True)
+class LastBuild:
+    """The job's most recent build — completed *or* still running (issue #184).
+
+    ``building`` is Jenkins' own in-progress flag; when it is ``True`` this is the current
+    in-progress build the overrunning detector observes. ``timestamp`` is the build's start
+    (epoch millis, UTC — the same clock as :meth:`build_meta`'s ``timestamp``).
+    """
+
+    number: int
+    building: bool
+    timestamp: int
 
 
 class JenkinsClient(Protocol):
@@ -24,6 +39,7 @@ class JenkinsClient(Protocol):
     def stage_describe(self, build: int, node_id: str) -> dict: ...
     def stage_log(self, build: int, node_id: str) -> dict: ...
     def last_completed_build(self) -> int | None: ...
+    def last_build(self) -> LastBuild | None: ...
 
 
 class HttpJenkinsClient:
@@ -79,6 +95,18 @@ class HttpJenkinsClient:
         payload = self._get_json("api/json", {"tree": "lastCompletedBuild[number]"})
         last = payload.get("lastCompletedBuild") or {}
         return last.get("number")
+
+    def last_build(self) -> LastBuild | None:
+        """The job's most recent build — running or completed — for overrunning detection (#184)."""
+        payload = self._get_json("api/json", {"tree": "lastBuild[number,building,timestamp]"})
+        last = payload.get("lastBuild") or {}
+        if last.get("number") is None or last.get("timestamp") is None:
+            return None
+        return LastBuild(
+            number=last["number"],
+            building=bool(last.get("building")),
+            timestamp=last["timestamp"],
+        )
 
     def close(self) -> None:
         self._client.close()

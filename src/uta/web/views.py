@@ -152,6 +152,30 @@ def latest_build(session: Session) -> dict | None:
     return {"number": build.build_number, "url": build.url, "started_at": build.started_at}
 
 
+def overrunning_banner(session: Session, *, jenkins_job_url: str = "") -> dict | None:
+    """The in-progress-build banner state for the triage dashboard (issue #184), or ``None``.
+
+    A pure reflection of the poller's stored snapshot (ADR-0006): ``None`` when nothing is
+    building, else ``build_number`` / ``started_at`` (the UI computes ``elapsed = now − started_at``
+    live at render, the only live value) / ``expected_seconds`` (the stored Expected Duration
+    median, ``None`` with fewer than 20 green builds so the banner omits "expected") / the stored
+    ``overrunning`` flag that drives the highlight / a Jenkins deep link to the build. Computes
+    nothing about overrunning-ness itself — that is the poller's job.
+    """
+    hb = read_heartbeat(session)
+    if hb is None or not hb.overrunning_building or hb.overrunning_build_number is None:
+        return None
+    number = hb.overrunning_build_number
+    jenkins_url = f"{jenkins_job_url.rstrip('/')}/{number}/" if jenkins_job_url else None
+    return {
+        "build_number": number,
+        "started_at": hb.overrunning_started_at,
+        "expected_seconds": hb.overrunning_expected_seconds,
+        "overrunning": hb.overrunning,
+        "jenkins_url": jenkins_url,
+    }
+
+
 def _failure_infos(
     session: Session, episodes: Collection[FailureEpisode]
 ) -> dict[int, dict | None]:
