@@ -9,7 +9,7 @@
     --bg:#0f1420; --panel:#161d2e; --panel2:#1c2740; --ink:#e8edf6; --muted:#9fb0cc;
     --line:#2c3a57; --accent:#5aa0ff; --accent2:#7ee0c0;
     --jenkins:#d33833; --oracle:#f28c1e; --pg:#4a90d9; --llm:#a97bf0; --mail:#4bbf73;
-    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b; --auth:#e05fa0; --svn:#c9a13c;
+    --app:#5aa0ff; --human:#f5c451; --warn:#f0774b; --auth:#e05fa0; --svn:#c9a13c; --teams:#6264a7;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -125,7 +125,7 @@
 
 <section id="parts">
   <h2>The parts involved</h2>
-  <p class="lead">Four external systems the app reads or notifies (two more — Keycloak and SVN
+  <p class="lead">Five external systems the app reads or notifies (two more — Keycloak and SVN
   blame — are flag-gated; see below), its own store, and the app’s own containers.</p>
 
   <div class="grid g2">
@@ -169,16 +169,29 @@
         works.</p>
       </div>
       <div class="part" style="border-color:var(--mail)">
-        <h4>SMTP <span class="pill">outbound</span></h4>
-        <p>Three distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a build
-        worsens</b> (≥1 new failing test vs the baseline) — silence means “no worse than before.” A
-        separate <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) fires when the poller
-        quarantines/skips a build, or (once, latched) when <code>/health</code> finds the poller stale —
-        operational noise about the pipeline itself, not about test results. A third,
-        <b>overrunning-build alert</b> fires once per build the first tick it crosses the overrunning
-        threshold (issue #184) — de-duped by a persisted marker so it never repeats, and reset once that
-        build finishes or a different build starts. All three are disabled when no recipients are
-        configured.</p>
+        <h4>Email (SMTP) <span class="pill">outbound</span></h4>
+        <p>One of two <b>Alert Channels</b> (ADR-0007 — see the Teams entry below). Five distinct
+        <b>Alert Kinds</b> ride this seam, gated by <code>EMAIL_EVENTS</code> (default
+        <code>incident,regression,overrun,ops</code> — everything except <code>recovery</code>, which is
+        opt-in): a <b>regression</b> alert sent <b>only when a build worsens</b> (≥1 new failing test vs
+        the baseline) — silence means “no worse than before”; an optional <b>recovery</b> (“back to
+        green”) notice; an <b>ops</b> alert when the poller quarantines/skips a build or (once, latched)
+        when <code>/health</code> finds the poller stale; an <b>incident</b> alert when a new
+        <code>pipeline_failure</code> Build Incident opens; and an <b>overrun</b> alert once per build
+        the first tick it crosses the overrunning threshold (issue #184), de-duped by a persisted marker.
+        Disabled entirely when no recipients are configured.</p>
+      </div>
+      <div class="part" style="border-color:var(--teams)">
+        <h4>Microsoft Teams <span class="pill">optional</span> <span class="pill">outbound</span></h4>
+        <p>The second Alert Channel (issue #181, ADR-0007). The same channel-neutral <code>Alert</code>
+        is rendered by <code>TeamsAlertChannel</code> as an <b>Adaptive Card</b> (title, a fact table, and
+        “Open in dashboard” / “Open in Jenkins” buttons) and POSTed via <code>httpx</code> to a single
+        configured incoming-webhook URL, wrapped in the Power Automate <b>Workflows</b>
+        <code>attachments</code> envelope. Gated by <code>TEAMS_WEBHOOK_URL</code> (a secret; empty
+        disables the channel entirely) and its own <code>TEAMS_EVENTS</code> allowlist (empty by
+        default — opt-in per kind, same five kinds as email). Delivery is best-effort: a webhook outage
+        is logged and swallowed, never blocking the email channel or the ingest that composed the
+        alert.</p>
       </div>
       <div class="part" style="border-color:var(--auth)">
         <h4>Keycloak (IAM) <span class="pill">optional · flag-gated</span></h4>
@@ -211,8 +224,9 @@
       <div class="part" style="border-color:var(--app)">
         <h4><code>poller</code> container <span class="pill">ingest</span></h4>
         <p>Runs <code>uta poll</code>: on a fixed interval, detects new completed builds above the DB
-        high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also sends email
-        and fills LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
+        high-water mark and drives the ingest + analysis pipeline. The <b>live</b> path — it also dispatches
+        Alerts (email and/or Microsoft Teams, per each channel's <code>*_EVENTS</code> allowlist) and fills
+        LLM hypotheses. Each tick re-reads any control-panel threshold overrides from Postgres
         (so a tuning change applies with no restart), ends with a <b>retention/pruning pass</b> (old passing
         results, finished ingest jobs), and stamps a heartbeat row with the tick time, build count and last
         error. <b>Resilience:</b> transient faults (network, HTTP 5xx/429, DB connection
@@ -253,7 +267,7 @@
         ingest/retention knobs — never secrets or URLs), an <b>AI-suggestion accuracy</b> table (confirmed vs
         corrected triage verdicts per conclusion field — cause / reason — all-time and over a 30-day window,
         with a precision figure), trigger an <b>on-demand ingest</b> of a build or
-        range directly against Jenkins/Oracle (back-fill semantics — no email, no LLM; also the recovery
+        range directly against Jenkins/Oracle (back-fill semantics — no alerts (email/Teams), no LLM; also the recovery
         path for a quarantined build — a successful re-ingest clears its record), and view poller health
         (last poll, last <b>successful</b> poll, high-water mark, last error) plus a <b>build quarantine</b>
         table (failing/quarantined builds with attempts and last error). At startup it also flips any
@@ -305,19 +319,24 @@
   <h2>System map</h2>
   <p class="lead">How data and notifications flow between the parts. The <code>poller</code> pulls from Jenkins
   and Oracle, writes to Postgres, prunes old passing results / finished ingest jobs from Postgres at the end
-  of every tick, and fans out to email + LLM; the <code>web</code> app reads Postgres and the human writes
+  of every tick, and fans out to the LLM and, via the channel-neutral <b>Alert</b> dispatcher (ADR-0007), to
+  every enabled <b>Alert Channel</b>; the <code>web</code> app reads Postgres and the human writes
   back through it. Every tick the <code>poller</code> also reads Jenkins' <code>lastBuild</code> and writes a
   live <b>overrunning-build snapshot</b> to Postgres (never a Build Incident — issue #184; ADR-0006), which
   <code>web</code> reflects as the triage-queue banner. The <code>web</code> app's <b>control panel</b> also
   has a direct, on-demand path to Jenkins/Oracle for manual ingest — always with back-fill semantics (no
-  email, no LLM). Two producers reach email: the <code>poller</code> for the regression report, a new
+  alerts, no LLM). Two producers compose an Alert: the <code>poller</code> for the regression report, a new
   <b>pipeline-failure Build Incident</b> alert, an <b>overrunning-build</b> alert (once per build), and
   <b>ops alerts</b> (a quarantined/skipped build), and <code>web</code>'s
-  <code>/health</code> check for a <b>latched</b> ops alert when the poller goes stale. A fifth external
-  system, <b>Keycloak</b>, appears only when
+  <code>/health</code> check for a <b>latched</b> ops alert when the poller goes stale — each Alert is then
+  dispatched, independently and best-effort, to the <b>Email</b> and <b>Microsoft Teams</b> channels, gated by
+  each channel's own <code>*_EVENTS</code> kind allowlist. A fifth external
+  system, <b>Microsoft Teams</b>, is the newer channel (issue #181): the <code>poller</code> POSTs an
+  Adaptive Card to a configured incoming-webhook URL — absent from the map (no edge drawn) when
+  <code>TEAMS_WEBHOOK_URL</code> is empty (the default). A sixth, <b>Keycloak</b>, appears only when
   <code>AUTH_ENABLED=true</code> (pink, dashed — off by default, so it is absent from the map in local
   dev, the public demo and CI): the browser is redirected to it to sign in, and <code>web</code> ends the
-  central SSO session on logout. A sixth, <b>SVN (blame)</b>, similarly appears only when
+  central SSO session on logout. A seventh, <b>SVN (blame)</b>, similarly appears only when
   <code>SVN_BLAME_ENABLED=true</code> (amber, dashed): the <code>poller</code> shells out to
   <code>svn blame</code> per failing test's source file to resolve that test's <b>main developer</b> —
   the dashboard's Owner — a separate use of SVN from the change-set candidates Jenkins already
@@ -330,6 +349,7 @@
     <span><i class="dot" style="background:var(--pg)"></i> PostgreSQL</span>
     <span><i class="dot" style="background:var(--llm)"></i> LLM</span>
     <span><i class="dot" style="background:var(--mail)"></i> Email</span>
+    <span><i class="dot" style="background:var(--teams)"></i> Microsoft Teams</span>
     <span><i class="dot" style="background:var(--human)"></i> Human</span>
     <span><i class="dot" style="background:var(--warn)"></i> Control panel (on-demand)</span>
     <span><i class="dot" style="background:var(--auth)"></i> Keycloak (flag-gated)</span>
@@ -337,7 +357,7 @@
   </div>
 
   <div class="diagram">
-    <svg viewBox="0 0 900 470" role="img" aria-label="System architecture data-flow diagram">
+    <svg viewBox="0 0 900 580" role="img" aria-label="System architecture data-flow diagram">
       <defs>
         <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
           <path d="M0,0 L8,3 L0,6 Z" fill="#9fb0cc"/>
@@ -402,10 +422,17 @@
 
       <!-- Email -->
       <rect class="box" x="690" y="140" width="190" height="96" fill="#122a1c" stroke="#4bbf73"/>
-      <text class="lbl" x="710" y="166">SMTP → recipients</text>
-      <text class="sub" x="710" y="183">regression / incident /</text>
-      <text class="sub" x="710" y="198">overrun alert, or an ops</text>
-      <text class="sub" x="710" y="213">alert (quarantine / stale)</text>
+      <text class="lbl" x="710" y="166">Email (SMTP)</text>
+      <text class="sub" x="710" y="183">incident / regression /</text>
+      <text class="sub" x="710" y="198">overrun / ops (recovery</text>
+      <text class="sub" x="710" y="213">opt-in) — EMAIL_EVENTS</text>
+
+      <!-- Microsoft Teams (optional — empty webhook disables it) -->
+      <rect class="box" x="690" y="250" width="190" height="90" fill="#1c1d3a" stroke="#6264a7"/>
+      <text class="lbl" x="706" y="278">Microsoft Teams</text>
+      <text class="sub" x="706" y="298">Adaptive Card via webhook</text>
+      <text class="sub" x="706" y="313">TEAMS_WEBHOOK_URL / _EVENTS</text>
+      <text class="sub" x="706" y="328">(issue #181)</text>
 
       <!-- Web -->
       <rect class="box" x="330" y="380" width="200" height="70" fill="#12233d" stroke="#5aa0ff"/>
@@ -414,9 +441,9 @@
       <text class="sub" x="352" y="443">triage · records · KB</text>
 
       <!-- Human -->
-      <rect class="box" x="690" y="384" width="190" height="62" fill="#2a2410" stroke="#f5c451"/>
-      <text class="lbl" x="710" y="412">Monitor (human)</text>
-      <text class="sub" x="710" y="432">ack · confirm · reason</text>
+      <rect class="box" x="690" y="488" width="190" height="62" fill="#2a2410" stroke="#f5c451"/>
+      <text class="lbl" x="710" y="516">Monitor (human)</text>
+      <text class="sub" x="710" y="536">ack · confirm · reason</text>
 
       <!-- Keycloak (flag-gated) -->
       <rect class="box" x="20" y="270" width="180" height="90" fill="#2a1424" stroke="#e05fa0" stroke-dasharray="6,4"/>
@@ -426,11 +453,11 @@
       <text class="sub" x="36" y="350">(off by default)</text>
 
       <!-- SVN blame (flag-gated) -->
-      <rect class="box" x="690" y="250" width="190" height="90" fill="#241d0d" stroke="#c9a13c" stroke-dasharray="6,4"/>
-      <text class="lbl" x="706" y="278">SVN (blame)</text>
-      <text class="sub" x="706" y="298">svn blame — test owner</text>
-      <text class="sub" x="706" y="314">SVN_BLAME_ENABLED=true only</text>
-      <text class="sub" x="706" y="330">(off by default)</text>
+      <rect class="box" x="690" y="354" width="190" height="90" fill="#241d0d" stroke="#c9a13c" stroke-dasharray="6,4"/>
+      <text class="lbl" x="706" y="382">SVN (blame)</text>
+      <text class="sub" x="706" y="402">svn blame — test owner</text>
+      <text class="sub" x="706" y="418">SVN_BLAME_ENABLED=true only</text>
+      <text class="sub" x="706" y="434">(off by default)</text>
 
       <!-- edges: Jenkins -> poller -->
       <path class="edge" d="M200,83 C260,83 280,110 328,110" marker-end="url(#arr)"/>
@@ -448,10 +475,14 @@
       <!-- LLM -> poller (hypothesis back) -->
       <path class="edgeA" d="M688,96 C620,120 600,120 532,120" marker-end="url(#arrA)"/>
       <text class="etxt" x="560" y="138" style="fill:#7ee0c0">hypothesis</text>
-      <!-- poller -> email (regression report, new pipeline-failure incident, overrunning build, or quarantine/skip ops alert) -->
+      <!-- poller -> email (Alert dispatch: regression, incident, overrun, or ops — per EMAIL_EVENTS) -->
       <path class="edge" d="M530,150 C600,160 640,168 688,170" marker-end="url(#arr)"/>
       <text class="etxt" x="558" y="163">regression / incident /</text>
-      <text class="etxt" x="558" y="176">overrun / quarantine</text>
+      <text class="etxt" x="558" y="176">overrun / ops</text>
+      <!-- poller -> Microsoft Teams (same Alert dispatch, gated by TEAMS_EVENTS; no edge when TEAMS_WEBHOOK_URL empty) -->
+      <path class="edge" d="M530,172 C600,215 645,245 688,272" marker-end="url(#arr)"/>
+      <text class="etxt" x="556" y="224">alert (Teams,</text>
+      <text class="etxt" x="556" y="237">opt-in per kind)</text>
       <!-- web /health -> email (latched ops alert on staleness) -->
       <path class="edge" d="M530,392 C630,392 660,300 700,234" marker-end="url(#arr)"/>
       <text class="etxt" x="560" y="300">/health stale</text>
@@ -460,27 +491,28 @@
       <path class="edge" d="M450,346 L440,378" marker-end="url(#arr)"/>
       <text class="etxt" x="456" y="368">read</text>
       <!-- web <-> human -->
-      <path class="edge" d="M530,415 L688,415" marker-end="url(#arr)"/>
-      <path class="edgeA" d="M688,432 L532,432" marker-end="url(#arrA)"/>
-      <text class="etxt" x="560" y="452" style="fill:#7ee0c0">writes back (ack/reason)</text>
-      <!-- email -> human (dashed feel) -->
-      <path class="edge" d="M785,236 L785,382" marker-end="url(#arr)"/>
-      <text class="etxt" x="792" y="330">alert</text>
+      <path class="edge" d="M530,415 C610,430 655,462 688,492" marker-end="url(#arr)"/>
+      <path class="edgeA" d="M688,512 C640,490 590,460 532,432" marker-end="url(#arrA)"/>
+      <text class="etxt" x="556" y="470" style="fill:#7ee0c0">writes back</text>
+      <text class="etxt" x="556" y="483" style="fill:#7ee0c0">(ack/reason)</text>
+      <!-- alert channels -> human (email + Teams both notify the monitor) -->
+      <path class="edge" d="M783,236 C895,270 895,450 783,488" marker-end="url(#arr)"/>
+      <text class="etxt" x="800" y="358">alert</text>
       <!-- web control panel -> Jenkins / Oracle (on-demand ingest, bypasses poller) -->
       <path class="edgeW" d="M330,392 C270,392 240,300 240,180 C240,140 220,110 202,100" marker-end="url(#arrW)"/>
       <path class="edgeW" d="M330,408 C270,408 235,340 235,260 C235,220 215,205 202,198" marker-end="url(#arrW)"/>
       <text class="etxt" x="204" y="270" style="fill:#f0774b">on-demand ingest</text>
       <text class="etxt" x="204" y="283" style="fill:#f0774b">(control panel,</text>
-      <text class="etxt" x="204" y="296" style="fill:#f0774b">no email/LLM)</text>
+      <text class="etxt" x="204" y="296" style="fill:#f0774b">no alerts/LLM)</text>
       <!-- web <-> Keycloak (flag-gated login redirect / RP-initiated logout) -->
       <path class="edgeK" d="M330,420 C260,420 200,400 200,360" marker-end="url(#arrK)"/>
       <path class="edgeK" d="M200,340 C230,370 280,405 328,428" marker-end="url(#arrK)"/>
       <text class="etxt" x="204" y="378" style="fill:#e05fa0">login /</text>
       <text class="etxt" x="204" y="391" style="fill:#e05fa0">logout</text>
       <!-- SVN blame -> poller (resolved test owner, flag-gated) -->
-      <path class="edgeS" d="M688,278 C645,235 610,205 530,168" marker-end="url(#arrS)"/>
-      <text class="etxt" x="560" y="243" style="fill:#c9a13c">owner (blame)</text>
-      <text class="etxt" x="560" y="256" style="fill:#c9a13c">(flag-gated)</text>
+      <path class="edgeS" d="M688,382 C640,320 605,240 530,168" marker-end="url(#arrS)"/>
+      <text class="etxt" x="560" y="290" style="fill:#c9a13c">owner (blame)</text>
+      <text class="etxt" x="560" y="303" style="fill:#c9a13c">(flag-gated)</text>
     </svg>
   </div>
   <p class="muted" style="font-size:13px">Green arrows are write-backs / results returning to a producer.
@@ -489,18 +521,19 @@
   Keycloak login/logout redirects, present only when <code>AUTH_ENABLED=true</code>; dashed amber
   arrows are the <code>svn blame</code> ownership lookup, present only when
   <code>SVN_BLAME_ENABLED=true</code> — with either flag off (both default) that box and its edges
-  don't exist in the running system. The same Docker image runs as both <code>poller</code> and
-  <code>web</code>; only the command differs.</p>
+  don't exist in the running system. The Microsoft Teams box and its edge likewise exist only once
+  <code>TEAMS_WEBHOOK_URL</code> is configured (empty by default). The same Docker image runs as both
+  <code>poller</code> and <code>web</code>; only the command differs.</p>
 </section>
 
 <section id="ingest">
   <h2><span class="n">1</span>Ingest loop <span class="muted" style="font-size:14px">— poller</span></h2>
-  <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 300 s). On an empty store
+  <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 60 s). On an empty store
   it back-fills the last <code>BACKFILL_DEPTH</code> builds oldest-first; then it runs purely incrementally
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
-  thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no email, no LLM hypothesis,
-  so a re-ingest never re-mails a historical regression. If the re-ingested build is older than the
+  thread) — every on-demand path shares the poller's <b>back-fill semantics</b>: no alerts (email/Teams), no
+  LLM hypothesis, so a re-ingest never re-alerts a historical regression. If the re-ingested build is older than the
   current newest complete build, the lifecycle/classification pass itself is skipped too (see
   <a href="#analysis">Analysis</a>) — only the build/results/KB signatures are persisted.</p>
   <ol class="flow">
@@ -736,31 +769,44 @@
 </section>
 
 <section id="email">
-  <h2><span class="n">5</span>Alerting <span class="muted" style="font-size:14px">— email</span></h2>
+  <h2><span class="n">5</span>Alerting <span class="muted" style="font-size:14px">— email &amp; Microsoft Teams</span></h2>
   <div class="card">
-    <p>Because every commit triggers a build, a per-build digest would be constant noise. The tool emails <b>only
-    when a processed build introduces ≥1 new failing test</b> (a regression vs the baseline). Builds with no new
-    failures send nothing — <b>silence means “no worse than before.”</b> The email leads with the new failures
-    (predicted cause + suggested contact each) and includes still-failing / newly-fixed counts as context. When
-    <code>APP_BASE_URL</code> is set, each new failure is followed by a deep link to its per-test record and the
-    message ends with a link to the build's dashboard summary alongside the Jenkins URL; unset (the default), the
-    email stays exactly as before, link-free. A recovery notice (“back to green”) is a separate, optional toggle
-    and gets the same dashboard build link when configured. Everything else stays in the dashboard.</p>
-    <p>A second, distinct <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) rides the same
-    SMTP seam but is about the pipeline itself, not test results: the poller sends one when a build is
-    <b>quarantined or skipped</b> (retention 404), and the <code>web</code> app's <code>/health</code> check
-    sends one — <b>latched</b> so repeat probes don't re-mail, and cleared on recovery — when no successful
-    poll has landed within the configured staleness window. These are operational noise, unconditional on
-    test outcomes, so they don't affect the regression-only policy above.</p>
-    <p>A third alert fires when a <b>new</b> <code>pipeline_failure</code> Build Incident opens — the
-    streak's first build — leading with the failing stage and the deterministic prediction (+ suggested
-    contact); an <code>aborted</code> incident and a streak's recovery are silent, and this alert is
-    subject to the same <code>SMTP_RECIPIENTS</code>-configured gate as the others.</p>
-    <p>A fourth, <b>overrunning-build</b> alert (issue #184) fires the first poll tick an in-progress
-    build crosses the Expected-Duration threshold — leading with elapsed vs. expected and a Jenkins
-    link, so a human can go check/stop it. Exactly one email per overrunning build (a persisted marker
-    de-dups across ticks and survives a poller restart); the eventual <code>aborted</code> incident, if
-    the human does stop it, stays silent — no double alert.</p>
+    <p>Alerting is a <b>multi-channel</b> layer (<a href="adr/0007-alerts-multi-channel-teams-webhook.md">ADR-0007</a>):
+    the poller (or <code>web</code>'s <code>/health</code> check) composes a single, channel-neutral
+    <code>Alert</code> value from already-persisted facts, tagged with one of five <b>Alert Kinds</b> —
+    <code>incident</code>, <code>regression</code>, <code>recovery</code>, <code>overrun</code>,
+    <code>ops</code> — and hands it to <code>dispatch()</code>, which sends it, independently and
+    <b>best-effort</b>, to every enabled <b>Alert Channel</b> whose own allowlist (<code>EMAIL_EVENTS</code> /
+    <code>TEAMS_EVENTS</code>) subscribes to that kind. One channel failing (an SMTP relay down, a webhook
+    5xx) is logged and swallowed — it can neither block the other channel nor roll back the ingest that
+    composed the Alert.</p>
+    <p>Because every commit triggers a build, a per-build digest would be constant noise, so a
+    <b>regression</b> Alert composes <b>only when a processed build introduces ≥1 new failing test</b>
+    vs the baseline — silence means “no worse than before.” It leads with the new failures (predicted
+    cause + suggested contact each) and still-failing / newly-fixed counts as context. A <b>recovery</b>
+    Alert (“back to green”) composes when a build has zero new failures after a prior regression — off by
+    default in both channels' allowlists (email's default keeps today's behaviour: <code>recovery</code> is
+    the one kind not in <code>EMAIL_EVENTS</code> unless added back). An <b>ops</b> Alert fires when the
+    poller quarantines/skips a build (retention 404), or (once, <b>latched</b>, cleared on recovery) when
+    <code>/health</code> finds the poller stale — operational noise about the pipeline itself, unconditional
+    on test outcomes. An <b>incident</b> Alert fires when a <b>new</b> <code>pipeline_failure</code> Build
+    Incident opens — leading with the failing stage and the deterministic prediction (+ suggested contact);
+    an <code>aborted</code> incident and a streak's recovery are silent. An <b>overrun</b> Alert (issue #184)
+    fires the first poll tick an in-progress build crosses the Expected-Duration threshold — leading with
+    elapsed vs. expected and a Jenkins link — exactly once per build (a persisted marker de-dups across
+    ticks and survives a poller restart); the eventual <code>aborted</code> incident, if the human does stop
+    it, stays silent.</p>
+    <p>The <b>Email</b> channel renders the Alert as the plain-text message the tool has always sent, gated
+    by <code>SMTP_RECIPIENTS</code> (empty disables it) and its <code>EMAIL_EVENTS</code> allowlist (default
+    <code>incident,regression,overrun,ops</code> — everything but <code>recovery</code>, preserving
+    pre-multi-channel behaviour exactly). When <code>APP_BASE_URL</code> is set, a new failure gets a deep
+    link to its per-test record and the message ends with a build-summary link alongside the Jenkins URL;
+    unset (the default) keeps the email link-free.</p>
+    <p>The <b>Microsoft Teams</b> channel (new, issue #181) renders the same Alert as an <b>Adaptive Card</b>
+    (title, a fact table, and “Open in dashboard” / “Open in Jenkins” buttons) and POSTs it to a single
+    configured incoming-webhook URL. Gated by <code>TEAMS_WEBHOOK_URL</code> (empty disables the channel
+    entirely) and its own <code>TEAMS_EVENTS</code> allowlist — empty by default, so a configured webhook is
+    <b>opt-in per kind</b> until kinds are listed.</p>
   </div>
 </section>
 
@@ -969,26 +1015,41 @@
       the Postgres container on first start; keep in sync with <code>DATABASE_URL</code>.</td></tr>
   </table>
 
-  <h3>Email — regression &amp; ops alerts (SMTP)</h3>
+  <h3>Email — regression, incident, overrun, ops &amp; recovery alerts (SMTP)</h3>
   <table class="kv">
     <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
     <tr><td><code>SMTP_HOST</code> / <code>SMTP_PORT</code></td><td>empty / <code>25</code></td>
       <td>Outbound mail relay.</td></tr>
-    <tr><td><code>SMTP_FROM</code></td><td>empty</td><td>Envelope/From address for both the
-      regression report and ops alerts.</td></tr>
+    <tr><td><code>SMTP_FROM</code></td><td>empty</td><td>Envelope/From address for all five
+      alert kinds.</td></tr>
     <tr><td><code>SMTP_RECIPIENTS</code></td><td>empty</td>
-      <td>Comma-separated recipient list. <b>Empty disables email entirely</b> — both the
-      regression report and ops alerts.</td></tr>
+      <td>Comma-separated recipient list. <b>Empty disables the email channel entirely</b>.</td></tr>
     <tr><td><code>SMTP_USER</code> / <code>SMTP_PASSWORD</code></td><td>empty <span class="pill">secret</span></td>
       <td>Optional SMTP auth, if the relay requires it.</td></tr>
-    <tr><td><code>EMAIL_RECOVERY_NOTICE</code></td><td><code>false</code></td>
-      <td>Also send a "back to green" notice when a build has zero new failures after a prior
-      regression; off by default (silence already means "no worse than before").</td></tr>
+    <tr><td><code>EMAIL_EVENTS</code></td><td><code>incident,regression,overrun,ops</code></td>
+      <td>Comma-separated allowlist of alert kinds (<code>incident</code>/<code>regression</code>/
+      <code>recovery</code>/<code>overrun</code>/<code>ops</code>) the email channel delivers. The
+      default preserves the pre-multi-channel behaviour exactly (<code>recovery</code> off); add
+      <code>recovery</code> to also get "back-to-green" emails. Replaces the retired
+      <code>EMAIL_RECOVERY_NOTICE</code> flag.</td></tr>
     <tr><td><code>APP_BASE_URL</code></td><td>empty</td>
-      <td>Externally reachable base URL of the dashboard. When set, regression (and recovery)
-      emails carry dashboard deep links — a per-test record link beside each new failure, and a
-      build summary link beside the Jenkins URL. Empty (the default) keeps emails link-free, exactly
-      as before.</td></tr>
+      <td>Externally reachable base URL of the dashboard. When set, alert emails (and the Teams
+      card's "Open in dashboard" button) carry dashboard deep links — a per-test record link beside
+      each new failure, and a build summary link beside the Jenkins URL. Empty (the default) keeps
+      emails link-free, exactly as before.</td></tr>
+  </table>
+
+  <h3>Microsoft Teams — incoming webhook (ADR-0007)</h3>
+  <table class="kv">
+    <tr><th>Key</th><th>Default</th><th>What it controls</th></tr>
+    <tr><td><code>TEAMS_WEBHOOK_URL</code></td><td>empty <span class="pill">secret</span></td>
+      <td>Incoming-webhook URL (Power Automate Workflows). <b>Enables the Teams channel when set</b>
+      — empty disables it entirely. Embeds an auth token, held for the POST only and never logged,
+      same discipline as <code>SMTP_PASSWORD</code>.</td></tr>
+    <tr><td><code>TEAMS_EVENTS</code></td><td>empty</td>
+      <td>Comma-separated allowlist of alert kinds the Teams channel delivers (same grammar as
+      <code>EMAIL_EVENTS</code>). Empty (the default) means opt-in: a configured webhook subscribed
+      to nothing until kinds are listed here.</td></tr>
   </table>
 
   <h3>Auth / Keycloak OIDC — optional, flag-gated (Phase 2)</h3>
@@ -1127,7 +1188,7 @@
     <tr><th>Service</th><th>Command</th><th>Role</th></tr>
     <tr><td><code>db</code></td><td>postgres:16</td><td>The app’s store (dev only; prod uses an external server via <code>DATABASE_URL</code>).</td></tr>
     <tr><td><code>migrate</code></td><td><code>uta migrate</code></td><td>One-shot: brings the schema to head before the app services start (avoids a migration race).</td></tr>
-    <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for email &amp; LLM.</td></tr>
+    <tr><td><code>poller</code></td><td><code>uta poll</code></td><td>The scheduled ingest + analysis loop; the live path for alerts (email/Teams) &amp; LLM.</td></tr>
     <tr><td><code>web</code></td><td><code>uvicorn …</code></td><td>The FastAPI/HTMX dashboard on port 8000.
       <code>GET /health</code> pings the DB and the poller heartbeat — 503 if the DB is down or no
       successful poll landed within the staleness window; a poller-less deployment (e.g. the public demo)
@@ -1151,7 +1212,7 @@
   <div class="card">
     <p>A second, parallel deployment — <code>uta.demo.app:app</code> — hosts a <b>fully synthetic, offline</b>
     copy of the dashboard for anyone to try, with <b>no connection to Jenkins, Oracle <code>ut_ref</code>,
-    FishEye/Jira, SMTP or an LLM</b>. A fake Jenkins/tracking-feed pair (<code>uta.demo.dataset</code>) is fed
+    FishEye/Jira, SMTP/Teams or an LLM</b>. A fake Jenkins/tracking-feed pair (<code>uta.demo.dataset</code>) is fed
     through the <i>real</i> ingest + analysis pipeline (<code>uta.demo.seed</code>) into an ephemeral,
     in-process SQLite store — same code paths, invented data. <code>uta demo</code> serves it locally;
     <code>uta seed-demo</code> seeds a persistent store instead. <a href="../render.yaml">render.yaml</a>

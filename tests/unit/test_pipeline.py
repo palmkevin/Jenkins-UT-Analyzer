@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import smtplib
 import threading
 import time
 from datetime import timedelta
@@ -14,9 +13,10 @@ from sqlalchemy import func, select
 
 from tests.builders import make_build
 from tests.fakes import FakeJenkinsClient, FakeTrackingFeed
-from tests.fakes.email import RecordingEmailSender
+from tests.fakes.alert import RaisingAlertChannel, RecordingAlertChannel
 from uta.analyze.baseline import select_baseline
 from uta.db import session_scope
+from uta.delivery.alert import AlertKind
 from uta.ingest.pipeline import _dedupe_cases, data_change_window, ingest_build
 from uta.ingest.ut_report import FAILED_STATUSES, TestCaseResult
 from uta.models import (
@@ -380,59 +380,37 @@ def test_ingest_records_failure_signatures(session_factory):
         assert after == before  # recomputed from live links, not inflated
 
 
-def test_ingest_emails_on_regression_only_via_sender(session_factory):
-    """A sender + recipients ⇒ regression email; back-fill (no sender) stays silent."""
-    sender = RecordingEmailSender()
-    ingest_build(
-        FakeJenkinsClient(),
-        session_factory,
-        1702,
-        email_sender=sender,
-        email_recipients=("team@example.com",),
-    )
-    # First build with failures vs an empty baseline ⇒ new failures ⇒ one email.
-    assert len(sender.sent) == 1
-    assert "new failing" in sender.sent[0].subject
+def test_ingest_alerts_on_regression_only_via_channels(session_factory):
+    """Channels ⇒ regression Alert dispatched; back-fill (no channels) stays silent."""
+    channel = RecordingAlertChannel()
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, channels=[channel])
+    # First build with failures vs an empty baseline ⇒ new failures ⇒ one alert.
+    assert len(channel.sent) == 1
+    assert channel.sent[0].kind is AlertKind.regression
+    assert "new failing" in channel.sent[0].title
 
-    # Re-ingest with no sender (the back-fill path) sends nothing more.
+    # Re-ingest with no channels (the back-fill path) sends nothing more.
     ingest_build(FakeJenkinsClient(), session_factory, 1702)
-    assert len(sender.sent) == 1
+    assert len(channel.sent) == 1
 
 
-def test_ingest_sends_nothing_without_recipients(session_factory):
-    """A sender with no recipients means email isn't configured — no report is even composed."""
-    sender = RecordingEmailSender()
-    ingest_build(FakeJenkinsClient(), session_factory, 1702, email_sender=sender)
-    assert sender.sent == []
+def test_ingest_composes_nothing_when_no_channel_subscribes(session_factory):
+    """A channel subscribing to nothing means the report is never even composed."""
+    channel = RecordingAlertChannel(subscriptions=frozenset())
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, channels=[channel])
+    assert channel.sent == []
 
 
-class _RaisingEmailSender:
-    """An :class:`~uta.delivery.email.EmailSender` whose relay is down — every send raises."""
+def test_alert_failure_does_not_fail_or_roll_back_ingest(session_factory):
+    """A channel outage must never destroy an ingest (issue #81).
 
-    def __init__(self) -> None:
-        self.attempts = 0
-
-    def send(self, message) -> None:
-        self.attempts += 1
-        raise smtplib.SMTPException("relay down")
-
-
-def test_email_failure_does_not_fail_or_roll_back_ingest(session_factory):
-    """An SMTP outage must never destroy an ingest (issue #81).
-
-    The alert is sent only after the build's transaction commits, and a send failure is swallowed —
-    so the build and its results are persisted regardless, and ``ingest_build`` returns normally
-    (no quarantine attempt is ever recorded for a mail outage).
+    The alert is dispatched only after the build's transaction commits, and a send failure is
+    swallowed — so the build and its results are persisted regardless, and ``ingest_build`` returns
+    normally (no quarantine attempt is ever recorded for an alert-delivery outage).
     """
-    sender = _RaisingEmailSender()
-    ingest_build(
-        FakeJenkinsClient(),
-        session_factory,
-        1702,
-        email_sender=sender,
-        email_recipients=("team@example.com",),
-    )
-    assert sender.attempts == 1  # the send was attempted (post-commit) and its failure swallowed
+    channel = RaisingAlertChannel()
+    ingest_build(FakeJenkinsClient(), session_factory, 1702, channels=[channel])
+    assert channel.attempts == 1  # the send was attempted (post-commit) and its failure swallowed
     with session_scope(session_factory) as s:
         build = s.scalar(select(Build).where(Build.build_number == 1702))
         assert build is not None and build.complete is True
@@ -469,27 +447,15 @@ def test_alert_sent_once_when_retry_follows_commit_failure(session_factory):
     The send happens only after a successful commit, so the failed first attempt mails nothing;
     the retry recomputes the identical diff and sends the alert exactly once.
     """
-    sender = RecordingEmailSender()
+    channel = RecordingAlertChannel()
     factory = _CommitFailsOnce(session_factory)
     with pytest.raises(sa_exc.OperationalError):
-        ingest_build(
-            FakeJenkinsClient(),
-            factory,
-            1702,
-            email_sender=sender,
-            email_recipients=("team@example.com",),
-        )
-    assert sender.sent == []  # nothing committed ⇒ nothing mailed
+        ingest_build(FakeJenkinsClient(), factory, 1702, channels=[channel])
+    assert channel.sent == []  # nothing committed ⇒ nothing dispatched
 
     # The poller retries the transient failure with the same arguments (its live path).
-    ingest_build(
-        FakeJenkinsClient(),
-        factory,
-        1702,
-        email_sender=sender,
-        email_recipients=("team@example.com",),
-    )
-    assert len(sender.sent) == 1  # exactly one alert across the failed attempt + retry
+    ingest_build(FakeJenkinsClient(), factory, 1702, channels=[channel])
+    assert len(channel.sent) == 1  # exactly one alert across the failed attempt + retry
     with session_scope(session_factory) as s:
         assert s.scalar(select(func.count()).select_from(TestResult)) == 14
 
@@ -838,12 +804,10 @@ def test_historical_reingest_skips_lifecycle(session_factory):
         before = _lifecycle_snapshot(s)
         classifications_before = s.scalar(select(func.count()).select_from(Classification))
 
-    # The recovery re-ingest — with a sender wired, to prove the notify step is skipped too.
-    sender = RecordingEmailSender()
-    ingest_build(
-        fake, session_factory, 103, email_sender=sender, email_recipients=("team@example.com",)
-    )
-    assert sender.sent == []  # a historical diff is never mailed
+    # The recovery re-ingest — with channels wired, to prove the notify step is skipped too.
+    channel = RecordingAlertChannel()
+    ingest_build(fake, session_factory, 103, channels=[channel])
+    assert channel.sent == []  # a historical diff is never alerted
 
     with session_scope(session_factory) as s:
         # Lifecycle states, episodes, episode numbers and acknowledgements: all untouched —

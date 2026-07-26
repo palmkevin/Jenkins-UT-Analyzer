@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from uta.delivery.alert import AlertKind
 
 
 class Settings(BaseSettings):
@@ -60,7 +65,7 @@ class Settings(BaseSettings):
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+psycopg://uta:uta@db:5432/uta"
 
-    # ── Email (regression-only alert) ────────────────────────────────────
+    # ── Alerting: Email (SMTP) channel ───────────────────────────────────
     smtp_host: str = ""
     smtp_port: int = 25
     smtp_from: str = ""
@@ -70,7 +75,19 @@ class Settings(BaseSettings):
     # STARTTLS before sending. Unset (None) defaults to on exactly when smtp_user is set —
     # credentials should not cross the wire in the clear. Set explicitly to force it either way.
     smtp_starttls: bool | None = None
-    email_recovery_notice: bool = False
+    # Which alert kinds the email channel delivers (comma-separated allowlist of
+    # incident/regression/recovery/overrun/ops — validated at startup). The default preserves the
+    # pre-multi-channel behaviour exactly: everything except recovery (which was opt-in, formerly
+    # the retired EMAIL_RECOVERY_NOTICE flag). Empty ⇒ email configured but subscribed to nothing.
+    email_events: str = "incident,regression,overrun,ops"
+
+    # ── Alerting: Microsoft Teams channel (incoming webhook, issue #181) ──
+    # Teams incoming-webhook URL. SECRET — it embeds an auth token, held for the POST only and
+    # never logged (like SMTP_PASSWORD). Empty (default) disables the Teams channel entirely.
+    teams_webhook_url: str = ""
+    # Which alert kinds the Teams channel delivers (same allowlist grammar as EMAIL_EVENTS).
+    # Empty (default) ⇒ opt-in: a configured webhook that subscribes to nothing until listed here.
+    teams_events: str = ""
 
     # ── Auth / Keycloak OIDC (Phase-2, off by default; see .env.example) ──────
     # With the flag off the app is the Phase-1 honesty-system app (self-declared actor cookie) and
@@ -170,6 +187,33 @@ class Settings(BaseSettings):
         # .env.example lists every key, so a copied `SMTP_STARTTLS=` (empty) must mean "unset"
         # (credential-derived default), not a boolean parse error at startup.
         return None if v == "" else v
+
+    @field_validator("email_events", "teams_events")
+    @classmethod
+    def _known_alert_kinds(cls, v: str) -> str:
+        # Fail fast at startup on a typo'd/unknown alert kind rather than silently subscribing a
+        # channel to nothing (mirrors the SMTP_STARTTLS validator's boot-time rejection).
+        from uta.delivery.alert import AlertKind
+
+        known = {kind.value for kind in AlertKind}
+        for token in v.split(","):
+            token = token.strip()
+            if token and token not in known:
+                raise ValueError(f"unknown alert kind {token!r}; known kinds: {sorted(known)}")
+        return v
+
+    def _alert_event_set(self, raw: str) -> frozenset[AlertKind]:
+        from uta.delivery.alert import AlertKind
+
+        return frozenset(AlertKind(token.strip()) for token in raw.split(",") if token.strip())
+
+    @property
+    def email_event_set(self) -> frozenset[AlertKind]:
+        return self._alert_event_set(self.email_events)
+
+    @property
+    def teams_event_set(self) -> frozenset[AlertKind]:
+        return self._alert_event_set(self.teams_events)
 
     @property
     def jenkins_job_url(self) -> str:

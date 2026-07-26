@@ -150,3 +150,27 @@ Build Incident. The two live side by side but never cross-match.
 **Knowledge Base**:
 The accumulated record of confirmed causes, retrieved by failure signature to inform the triage of
 new failures.
+
+### Alerting
+
+**Alert**:
+A single message the tool pushes to humans when a noteworthy build condition occurs — composed once,
+channel-neutrally, then delivered to every enabled Alert Channel. Distinct from a Build Incident or
+Failure Episode (those are the persisted *conditions*; an Alert is the outbound *notification* about
+one).
+_Avoid_: Notification (as the canonical noun — accepted in prose, but the code, config, and this
+glossary say Alert)
+
+**Alert Kind**:
+Which condition an Alert announces — one of `incident` (a `pipeline_failure` Build Incident opened),
+`regression` (a build introduced ≥1 new failing test), `recovery` (the suite went back to green),
+`overrun` (an in-progress build exceeded its Expected Duration), or `ops` (a poller-health/quarantine
+condition). The unit an Alert Channel subscribes to.
+_Avoid_: Alert type, event type
+
+**Alert Channel**:
+A destination an Alert is delivered to — currently **Email** (SMTP) or **Teams** (a Microsoft Teams
+incoming webhook). Each channel is enabled independently by its own configuration and subscribes to
+its own set of Alert Kinds, so the same Alert can reach one channel, both, or neither. Delivery is
+best-effort and independent per channel: one channel failing never blocks another or the ingest.
+_Avoid_: Transport, notifier, sink

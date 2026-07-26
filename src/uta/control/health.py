@@ -6,9 +6,9 @@ heartbeat the poller writes: **stale** means no *successful* tick (``last_succes
 public demo, a web-only stack) has no heartbeat row and reports ``poller: "never"`` while staying
 healthy — absence is a topology, staleness is a fault.
 
-Going stale also sends **one** ops alert email through the same :class:`~uta.delivery.email
-.EmailSender` seam as the regression report, latched on the heartbeat row (``stale_alerted_at``) so
-a monitor probing ``/health`` every few seconds doesn't re-mail; recovery clears the latch.
+Going stale also dispatches **one** ops Alert through the same Alert Channels as every other alert
+(ADR-0007), latched on the heartbeat row (``stale_alerted_at``) so a monitor probing ``/health``
+every few seconds doesn't re-alert; recovery clears the latch.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from uta.config import Settings
 from uta.control.heartbeat import read_heartbeat
 from uta.db import session_scope
-from uta.delivery.email import EmailSender, send_ops_alert
+from uta.delivery.alert import AlertChannel, dispatch
+from uta.delivery.email import build_ops_alert
 
 
 @dataclass(frozen=True)
@@ -54,8 +55,7 @@ def check_health(
     session_factory: sessionmaker[Session],
     settings: Settings,
     *,
-    email_sender: EmailSender | None = None,
-    email_recipients: tuple[str, ...] = (),
+    channels: list[AlertChannel] | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
     """Evaluate DB reachability and heartbeat freshness; alert (once) on a stale poller.
@@ -95,9 +95,7 @@ def check_health(
         f"{settings.poll_interval_seconds}s intervals)"
     )
     if stale_alerted is None:
-        sent = send_ops_alert(
-            email_sender,
-            email_recipients,
+        alert = build_ops_alert(
             subject="poller is stale",
             body=(
                 f"The scheduled poller has not completed a successful tick since "
@@ -105,7 +103,9 @@ def check_health(
                 f"Check the poller service/container and its last error on the control panel.\n"
             ),
         )
-        if sent is not None:
+        # Latch only when the alert actually went out (≥1 channel delivered); an outage or no
+        # subscribed channel leaves it unlatched so the next probe re-tries (issue #121).
+        if dispatch(alert, channels) > 0:
             _set_stale_alerted(session_factory, now)
     return HealthReport(
         ok=False, db="ok", poller="stale", last_success_at=last_success, detail=detail

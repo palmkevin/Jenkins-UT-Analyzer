@@ -28,7 +28,7 @@ from markupsafe import Markup, escape
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
-from uta.clients import build_email_sender
+from uta.clients import build_channels
 from uta.config import Settings, get_settings
 from uta.control import jobs
 from uta.control.health import check_health
@@ -40,7 +40,7 @@ from uta.control.tunables import (
     set_override,
 )
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
-from uta.delivery.email import EmailSender
+from uta.delivery.alert import AlertChannel
 from uta.models import Build
 from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
@@ -255,16 +255,16 @@ def _triage_filters(request: Request) -> dict[str, str]:
 
 
 def create_app(
-    session_factory=None, *, email_sender: EmailSender | None = None, demo_mode: bool = False
+    session_factory=None, *, channels: list[AlertChannel] | None = None, demo_mode: bool = False
 ) -> FastAPI:
     startup_engine = None
     if session_factory is None:
         settings = get_settings()
         startup_engine = make_engine(settings.database_url)
         session_factory = make_session_factory(startup_engine)
-        # Ops alerts (/health staleness, issue #51) ride the same SMTP seam as the regression
-        # report; ``None`` when email isn't configured. Tests inject a recording sender instead.
-        email_sender = build_email_sender(settings)
+        # Ops alerts (/health staleness, issue #51) go out over the enabled Alert Channels
+        # (ADR-0007); empty when nothing is configured. Tests inject recording channels instead.
+        channels = build_channels(settings)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -356,12 +356,7 @@ def create_app(
         # monitor page on a dead DB or a poller with no successful tick in N intervals; a
         # deployment that runs no poller (demo, web-only) reports poller "never" and stays 200.
         cfg = get_settings()
-        report = check_health(
-            session_factory,
-            cfg,
-            email_sender=email_sender,
-            email_recipients=cfg.email_recipients,
-        )
+        report = check_health(session_factory, cfg, channels=channels)
         return JSONResponse(report.payload(), status_code=200 if report.ok else 503)
 
     @app.get("/", response_class=HTMLResponse)

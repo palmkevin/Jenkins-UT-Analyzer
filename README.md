@@ -142,16 +142,28 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `DATABASE_URL` | `postgresql+psycopg://uta:uta@db:5432/uta` | The **only** way the app reaches Postgres. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `uta` / `uta` / `uta` | **Compose-only** — initialise the `db` container (not read by the app). |
 
-### Email (regression-only alert)
+Alerting is a **multi-channel** layer (ADR-0007): a single channel-neutral `Alert` (one of 5
+**kinds** — `incident` / `regression` / `recovery` / `overrun` / `ops`) is composed once and
+dispatched, best-effort and independently, to every enabled channel whose subscription includes
+that kind. There are two channels today, Email and Microsoft Teams, each gated by its own
+`*_EVENTS` allowlist below (an unknown kind in either fails fast at startup).
+
+### Alerting: Email (SMTP) channel
 | Variable | Default | Purpose |
 |---|---|---|
-| `SMTP_HOST` | *(empty)* | SMTP server. **Email is enabled only when host *and* recipients are set.** |
+| `SMTP_HOST` | *(empty)* | SMTP server. **The email channel is enabled only when host *and* recipients are set.** |
 | `SMTP_PORT` | `25` | SMTP port. |
 | `SMTP_FROM` | *(empty)* | From address. |
 | `SMTP_RECIPIENTS` | *(empty)* | Comma-separated recipients; empty disables email. |
 | `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Relay credentials; when set, `SmtpEmailSender` negotiates STARTTLS and logs in. Empty ⇒ plain unauthenticated send. |
 | `SMTP_STARTTLS` | *(empty)* | Force STARTTLS on/off. Empty defaults it from the credentials (on when `SMTP_USER` is set). |
-| `EMAIL_RECOVERY_NOTICE` | `false` | Also send a "back-to-green" notice when a build recovers. |
+| `EMAIL_EVENTS` | `incident,regression,overrun,ops` | Comma-separated allowlist of alert kinds the email channel delivers (`incident`/`regression`/`recovery`/`overrun`/`ops`). The default preserves pre-multi-channel behaviour exactly (`recovery` off); add `recovery` to also get "back-to-green" emails. Replaces the retired `EMAIL_RECOVERY_NOTICE` flag. |
+
+### Alerting: Microsoft Teams channel (incoming webhook)
+| Variable | Default | Purpose |
+|---|---|---|
+| `TEAMS_WEBHOOK_URL` | *(empty)* **secret** | Incoming-webhook URL (Power Automate Workflows). **Enables the Teams channel when set.** Embeds an auth token — held for the POST only, never logged, same discipline as `SMTP_PASSWORD`. |
+| `TEAMS_EVENTS` | *(empty)* | Comma-separated allowlist of alert kinds the Teams channel delivers (same grammar as `EMAIL_EVENTS`). Empty ⇒ opt-in: a configured webhook subscribed to nothing until kinds are listed here. |
 
 ### LLM hypothesis (optional)
 | Variable | Default | Purpose |

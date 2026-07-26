@@ -1,7 +1,10 @@
-"""Regression-only email.
+"""The email Alert Channel and the ``build_*`` Alert composers.
 
-The contract: a message goes out **only** when a processed build introduces ≥1 new failing test;
-otherwise silence (unless the recovery-notice toggle is on and the build is back to green).
+The composers return channel-neutral :class:`~uta.delivery.alert.Alert` values; the
+:class:`~uta.delivery.email.EmailAlertChannel` renders them back to the exact plain-text email the
+tool always sent (subject = title, body = the Alert body). The contract is unchanged: a regression
+Alert only when a processed build introduces ≥1 new failing test; otherwise silence (unless the
+recovery kind is subscribed and the build is back to green).
 """
 
 from __future__ import annotations
@@ -16,12 +19,13 @@ from uta.analyze.classify import classify_build
 from uta.analyze.lifecycle import apply_build
 from uta.clients import build_email_sender
 from uta.config import Settings
+from uta.delivery.alert import Alert, AlertKind
 from uta.delivery.email import (
+    EmailAlertChannel,
     EmailMessage,
     SmtpEmailSender,
+    build_ops_alert,
     build_regression_report,
-    send_alert,
-    send_ops_alert,
 )
 from uta.models import CodeChangeCandidate, TestIdentity
 
@@ -36,12 +40,20 @@ def _process(session, build, statuses, **kw):
     return build
 
 
+def _email_of(alert: Alert, recipients: tuple[str, ...] = RCPT) -> EmailMessage:
+    """The EmailMessage the email channel renders for ``alert`` (byte-for-byte the old output)."""
+    sender = RecordingEmailSender()
+    EmailAlertChannel(sender, recipients, frozenset(AlertKind)).send(alert)
+    assert len(sender.sent) == 1
+    return sender.sent[0]
+
+
 def test_no_email_when_no_new_failures(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "PASSED"})
         build = _process(s, 2, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, build, RCPT) is None
+        assert build_regression_report(s, build) is None
 
 
 def test_email_on_regression_leads_with_new_failures(session_factory):
@@ -49,11 +61,16 @@ def test_email_on_regression_leads_with_new_failures(session_factory):
         _process(s, 1, {"a.test": "PASSED", "b.test": "PASSED"})
         build = _process(s, 2, {"a.test": "FAILED", "b.test": "PASSED"})
         s.commit()
-        msg = build_regression_report(s, build, RCPT)
-    assert msg is not None
-    assert "1 new failing" in msg.subject
-    assert "a.test" in msg.body
-    assert "NEW FAILURES" in msg.body
+        alert = build_regression_report(s, build)
+    assert alert is not None
+    assert alert.kind is AlertKind.regression
+    assert "1 new failing" in alert.title
+    assert "a.test" in alert.body
+    assert "NEW FAILURES" in alert.body
+    # The email channel renders it to the exact message, addressed to its recipients.
+    msg = _email_of(alert)
+    assert msg.subject == alert.title
+    assert msg.body == alert.body
     assert msg.recipients == RCPT
 
 
@@ -69,21 +86,22 @@ def test_email_shows_suggested_contact_for_new_failure(session_factory):
         s.flush()
         classify_build(s, build, analysis.opened_episodes)
         s.commit()
-        msg = build_regression_report(s, build, RCPT)
-    assert msg is not None
-    assert "cause: CODE_CHANGE" in msg.body
-    assert "contact: R. Devlin" in msg.body
+        alert = build_regression_report(s, build)
+    assert alert is not None
+    assert "cause: CODE_CHANGE" in alert.body
+    assert "contact: R. Devlin" in alert.body
 
 
-def test_recovery_notice_only_when_toggled_and_green(session_factory):
+def test_recovery_notice_only_when_subscribed_and_green(session_factory):
     with session_factory() as s:
         _process(s, 1, {"a.test": "FAILED"})
         build = _process(s, 2, {"a.test": "FIXED"})  # back to green
         s.commit()
-        assert build_regression_report(s, build, RCPT) is None  # off by default
-        msg = build_regression_report(s, build, RCPT, recovery_notice=True)
-    assert msg is not None
-    assert "back to green" in msg.subject
+        assert build_regression_report(s, build) is None  # recovery off by default
+        alert = build_regression_report(s, build, recovery_notice=True)
+    assert alert is not None
+    assert alert.kind is AlertKind.recovery
+    assert "back to green" in alert.title
 
 
 def test_no_recovery_notice_when_already_green(session_factory):
@@ -92,7 +110,7 @@ def test_no_recovery_notice_when_already_green(session_factory):
         _process(s, 1, {"a.test": "PASSED"})
         build = _process(s, 2, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, build, RCPT, recovery_notice=True) is None
+        assert build_regression_report(s, build, recovery_notice=True) is None
 
 
 def test_no_recovery_notice_on_first_ever_green_run(session_factory):
@@ -100,7 +118,7 @@ def test_no_recovery_notice_on_first_ever_green_run(session_factory):
     with session_factory() as s:
         build = _process(s, 1, {"a.test": "PASSED"})
         s.commit()
-        assert build_regression_report(s, build, RCPT, recovery_notice=True) is None
+        assert build_regression_report(s, build, recovery_notice=True) is None
 
 
 def test_recovery_notice_when_baseline_failure_was_removed(session_factory):
@@ -109,9 +127,9 @@ def test_recovery_notice_when_baseline_failure_was_removed(session_factory):
         _process(s, 1, {"a.test": "FAILED", "b.test": "PASSED"})
         build = _process(s, 2, {"b.test": "PASSED"})  # a.test removed
         s.commit()
-        msg = build_regression_report(s, build, RCPT, recovery_notice=True)
-    assert msg is not None
-    assert "back to green" in msg.subject
+        alert = build_regression_report(s, build, recovery_notice=True)
+    assert alert is not None
+    assert "back to green" in alert.title
 
 
 def test_dashboard_links_when_base_url_set(session_factory):
@@ -120,17 +138,18 @@ def test_dashboard_links_when_base_url_set(session_factory):
         _process(s, 1, {"a.test": "PASSED", "b.test": "PASSED"})
         build = _process(s, 2, {"a.test": "FAILED", "b.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, build, RCPT, app_base_url=BASE)
+        alert = build_regression_report(s, build, app_base_url=BASE)
         ids = {
             i.canonical_name: i.id
             for i in s.scalars(
                 select(TestIdentity).where(TestIdentity.canonical_name.in_(["a.test", "b.test"]))
             )
         }
-    assert msg is not None
-    assert f"{BASE}/tests/{ids['a.test']}" in msg.body
-    assert f"{BASE}/tests/{ids['b.test']}" in msg.body
-    assert f"Dashboard: {BASE}/builds/2" in msg.body
+    assert alert is not None
+    assert f"{BASE}/tests/{ids['a.test']}" in alert.body
+    assert f"{BASE}/tests/{ids['b.test']}" in alert.body
+    assert f"Dashboard: {BASE}/builds/2" in alert.body
+    assert alert.dashboard_url == f"{BASE}/builds/2"
 
 
 def test_no_dashboard_links_when_base_url_unset(session_factory):
@@ -139,11 +158,12 @@ def test_no_dashboard_links_when_base_url_unset(session_factory):
         _process(s, 1, {"a.test": "PASSED"})
         build = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, build, RCPT)
-    assert msg is not None
-    assert "Dashboard:" not in msg.body
-    assert "http" not in msg.body  # make_build sets no Jenkins url either — zero URLs at all
-    assert "/tests/" not in msg.body
+        alert = build_regression_report(s, build)
+    assert alert is not None
+    assert "Dashboard:" not in alert.body
+    assert "http" not in alert.body  # make_build sets no Jenkins url either — zero URLs at all
+    assert "/tests/" not in alert.body
+    assert alert.dashboard_url is None
 
 
 def test_dashboard_links_join_cleanly_with_trailing_slash(session_factory):
@@ -152,12 +172,12 @@ def test_dashboard_links_join_cleanly_with_trailing_slash(session_factory):
         _process(s, 1, {"a.test": "PASSED"})
         build = _process(s, 2, {"a.test": "FAILED"})
         s.commit()
-        msg = build_regression_report(s, build, RCPT, app_base_url=BASE + "/")
-    assert msg is not None
-    assert f"{BASE}/builds/2" in msg.body
-    assert f"{BASE}/tests/" in msg.body
-    assert "//tests/" not in msg.body.replace("://", "")
-    assert "//builds/" not in msg.body.replace("://", "")
+        alert = build_regression_report(s, build, app_base_url=BASE + "/")
+    assert alert is not None
+    assert f"{BASE}/builds/2" in alert.body
+    assert f"{BASE}/tests/" in alert.body
+    assert "//tests/" not in alert.body.replace("://", "")
+    assert "//builds/" not in alert.body.replace("://", "")
 
 
 def test_recovery_notice_includes_build_link_when_base_url_set(session_factory):
@@ -165,35 +185,33 @@ def test_recovery_notice_includes_build_link_when_base_url_set(session_factory):
         _process(s, 1, {"a.test": "FAILED"})
         build = _process(s, 2, {"a.test": "FIXED"})  # back to green
         s.commit()
-        msg = build_regression_report(s, build, RCPT, recovery_notice=True, app_base_url=BASE)
-        bare = build_regression_report(s, build, RCPT, recovery_notice=True)
-    assert msg is not None
-    assert f"Dashboard: {BASE}/builds/2" in msg.body
+        alert = build_regression_report(s, build, recovery_notice=True, app_base_url=BASE)
+        bare = build_regression_report(s, build, recovery_notice=True)
+    assert alert is not None
+    assert f"Dashboard: {BASE}/builds/2" in alert.body
     assert bare is not None
     assert "Dashboard:" not in bare.body
 
 
-def test_send_alert_delivers_via_sender(session_factory):
-    sender = RecordingEmailSender()
-    with session_factory() as s:
-        _process(s, 1, {"a.test": "PASSED"})
-        build = _process(s, 2, {"a.test": "FAILED"})
-        s.commit()
-        msg = build_regression_report(s, build, RCPT)
-    assert msg is not None
-    assert send_alert(sender, msg) is True
-    assert sender.sent == [msg]
+# ── The email channel: renders an Alert to the exact message, addressed to its recipients ─────────
 
 
-def test_send_alert_swallows_sender_failure():
-    """A raising sender is logged and dropped, never raised — alerting is best-effort (#81)."""
+def test_email_channel_renders_alert_verbatim():
+    alert = Alert(kind=AlertKind.ops, title="UT Analyzer ops — x", body="line one\nline two\n")
+    msg = _email_of(alert, recipients=("a@x", "b@x"))
+    assert msg == EmailMessage(
+        subject="UT Analyzer ops — x", body="line one\nline two\n", recipients=("a@x", "b@x")
+    )
 
-    class _RaisingSender:
-        def send(self, message: EmailMessage) -> None:
-            raise smtplib.SMTPException("relay down")
 
-    msg = EmailMessage(subject="s", body="b", recipients=RCPT)
-    assert send_alert(_RaisingSender(), msg) is False
+def test_build_ops_alert_prefixes_subject():
+    alert = build_ops_alert(subject="poller is stale", body="the poller is stale\n")
+    assert alert.kind is AlertKind.ops
+    assert alert.title == "UT Analyzer ops — poller is stale"
+    assert alert.body == "the poller is stale\n"
+
+
+# ── SmtpEmailSender: the SMTP boundary (no socket is opened) ──────────────────────────────────────
 
 
 class _RecordingSmtp:
@@ -256,6 +274,14 @@ def test_smtp_sender_explicit_starttls_overrides_credential_default(monkeypatch)
     assert _send_via_fake_smtp(monkeypatch, on).calls == [("starttls",), ("send_message", RCPT[0])]
 
 
+def test_smtp_sender_skips_send_without_recipients(monkeypatch):
+    """An empty recipient list means email isn't addressed anywhere — no socket, no send."""
+    made: list[_RecordingSmtp] = []
+    monkeypatch.setattr(smtplib, "SMTP", lambda *a, **k: made.append(1))
+    SmtpEmailSender("relay", 25, "f@x").send(EmailMessage(subject="s", body="b", recipients=()))
+    assert made == []
+
+
 def test_build_email_sender_passes_credentials_through(monkeypatch):
     """The settings→sender builder forwards user/password/starttls, not just host/port/from."""
     settings = Settings(
@@ -279,25 +305,6 @@ def test_empty_smtp_starttls_env_means_unset():
     """`.env.example` ships `SMTP_STARTTLS=`; an empty value must mean "default", not a crash."""
     assert Settings(smtp_starttls="").smtp_starttls is None
     assert Settings(smtp_starttls="false").smtp_starttls is False
-
-
-def test_send_ops_alert_delivers_via_sender():
-    sender = RecordingEmailSender()
-    msg = send_ops_alert(sender, RCPT, subject="poller is stale", body="b")
-    assert msg is not None
-    assert sender.sent == [msg]
-    assert msg.subject == "UT Analyzer ops — poller is stale"
-
-
-def test_send_ops_alert_swallows_sender_failure():
-    """Ops alerting is best-effort like send_alert: a raising sender yields ``None``, not an
-    exception — an SMTP outage must not 500 ``/health`` or erase the poller's tick record."""
-
-    class _RaisingSender:
-        def send(self, message: EmailMessage) -> None:
-            raise smtplib.SMTPException("relay down")
-
-    assert send_ops_alert(_RaisingSender(), RCPT, subject="poller is stale", body="b") is None
 
 
 def test_smtp_sender_dials_with_timeout(monkeypatch):

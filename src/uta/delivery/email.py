@@ -1,21 +1,24 @@
-"""Regression-only email.
+"""The email Alert Channel and the ``build_*`` Alert composers.
 
-Every commit triggers a build, so a per-build digest would be constant noise. The tool emails **only
-when a processed build introduces ≥1 new failing test** (a regression vs the baseline). Builds
-with no
-new failures send **nothing** — silence means "no worse than before". The email leads with the
-**new failures** (predicted cause + suggested contact each) and carries still-failing / newly-fixed
-counts as context.
+Every commit triggers a build, so a per-build digest would be constant noise. The tool alerts
+**only** on a noteworthy condition: a build that introduces ≥1 new failing test (a **regression**),
+a newly-opened pipeline-failure **incident**, an **overrunning** in-progress build, a poller-health
+/ quarantine **ops** condition, and — when subscribed — the suite going back to green
+(**recovery**).
 
-A **recovery notice** ("back to green") is an optional, separately-toggleable exception.
+Each ``build_*`` function composes a channel-neutral :class:`~uta.delivery.alert.Alert` (title,
+plain-text body, structured summary/facts, deep-links, kind); the dispatcher then hands it to every
+enabled Alert Channel that subscribes to its kind (ADR-0007). :class:`EmailAlertChannel` renders an
+Alert back to the **exact plain-text email** the tool always sent (subject = title, body = the
+Alert's ``body``) and delivers it over the SMTP boundary behind :class:`EmailSender`, so the offline
+suite drives a fake and never opens a socket.
 
-The SMTP boundary sits behind :class:`EmailSender` so the offline suite drives a fake and never
-opens a socket. The alert is two-phased around the ingest commit (issue #81):
-:func:`build_regression_report` composes the message *inside* the ingest transaction (it needs the
-session), and :func:`send_alert` delivers it *after* the transaction commits, swallowing any send
-failure — so an SMTP outage can never fail or roll back an ingest, and a commit failure means
-nothing was sent yet. The poller passes a real sender for live builds, while back-fill and the
-on-demand re-ingest job pass none (so historical regressions are never re-mailed).
+The alert is two-phased around the ingest commit (issue #81): the composer runs *inside* the ingest
+transaction (it needs the session) and the dispatcher delivers *after* the transaction commits,
+swallowing any send failure — so an SMTP/webhook outage can never fail or roll back an ingest, and a
+commit failure means nothing was sent yet. The poller passes real channels for live builds, while
+back-fill and the on-demand re-ingest job pass none (so historical regressions are never
+re-alerted).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from uta.analyze.baseline import compute_diff, select_baseline
+from uta.delivery.alert import Alert, AlertKind, AlertSeverity
 from uta.models import Build, BuildIncident, Classification, FailureEpisode, TestIdentity
 
 logger = logging.getLogger(__name__)
@@ -92,6 +96,32 @@ class SmtpEmailSender:
             smtp.send_message(mime)
 
 
+class EmailAlertChannel:
+    """The email Alert Channel: renders an Alert to the exact plain-text email and sends via SMTP.
+
+    Wraps an :class:`EmailSender` (the real :class:`SmtpEmailSender` or a test fake). The rendered
+    message is byte-for-byte what each ``build_*`` composer produced before multi-channel — subject
+    = the Alert title, body = the Alert's plain-text ``body`` — addressed to this channel's
+    configured recipients. Subscribes to the kinds in ``subscriptions`` (``EMAIL_EVENTS``); the
+    dispatcher only calls :meth:`send` for a subscribed kind.
+    """
+
+    def __init__(
+        self,
+        sender: EmailSender,
+        recipients: tuple[str, ...],
+        subscriptions: frozenset[AlertKind] | set[AlertKind],
+    ) -> None:
+        self._sender = sender
+        self._recipients = tuple(recipients)
+        self.subscriptions = frozenset(subscriptions)
+
+    def send(self, alert: Alert) -> None:
+        self._sender.send(
+            EmailMessage(subject=alert.title, body=alert.body, recipients=self._recipients)
+        )
+
+
 def _dashboard_url(base_url: str, path: str) -> str | None:
     """Absolute dashboard deep link, or ``None`` when no base URL is configured (issue #108).
 
@@ -145,23 +175,20 @@ def _new_failure_lines(session: Session, build: Build, regression_ids: list[int]
 def build_regression_report(
     session: Session,
     build: Build,
-    recipients: tuple[str, ...],
     *,
     recovery_notice: bool = False,
     app_base_url: str = "",
-) -> EmailMessage | None:
-    """The email for a processed build, or ``None`` if nothing should be sent.
+) -> Alert | None:
+    """The Alert for a processed build, or ``None`` if nothing should be sent.
 
-    Returns a message only when the build introduced ≥1 new failing test, or — if
-    ``recovery_notice``
-    is on — when the build is back to green (no new failures and no failing tests at all). "Back to
+    Returns a ``regression``-kind Alert only when the build introduced ≥1 new failing test, or — if
+    ``recovery_notice`` is on (i.e. some channel subscribes to ``recovery``) — a ``recovery``-kind
+    Alert when the build is back to green (no new failures and no failing tests at all). "Back to
     green" means an actual **red→green transition**: the baseline had ≥1 failing test that this
-    build
-    resolved — fixed (``diff.newly_fixed``) or absent this build (``diff.removed``; a deleted
-    failing
-    test still turns the suite green). A build that is merely *still* green (already-green baseline,
-    or a first-ever all-green build with no baseline) sends nothing — silence stays the steady
-    state.
+    build resolved — fixed (``diff.newly_fixed``) or absent this build (``diff.removed``; a deleted
+    failing test still turns the suite green). A build that is merely *still* green (already-green
+    baseline, or a first-ever all-green build with no baseline) sends nothing — silence stays the
+    steady state.
 
     When ``app_base_url`` is set (issue #108) the body carries dashboard deep links — each new
     failure links to its per-test record (``/tests/{identity_id}``) and the message links the build
@@ -186,10 +213,18 @@ def build_regression_report(
             )
             if build_link:
                 body += f"Dashboard: {build_link}\n"
-            return EmailMessage(
-                subject=f"UT back to green — build #{build.build_number}",
+            return Alert(
+                kind=AlertKind.recovery,
+                title=f"UT back to green — build #{build.build_number}",
                 body=body,
-                recipients=recipients,
+                summary=(
+                    f"Build #{build.build_number} introduced no new failures and has no "
+                    f"failing tests."
+                ),
+                facts=(("Newly fixed this build", str(len(diff.newly_fixed))),),
+                dashboard_url=build_link,
+                jenkins_url=build.url or None,
+                severity=AlertSeverity.good,
             )
         return None
 
@@ -213,10 +248,20 @@ def build_regression_report(
     ]
     if build_link:
         lines.append(f"Dashboard: {build_link}")
-    return EmailMessage(
-        subject=f"UT regressions — build #{build.build_number}: {len(new_failures)} new failing",
+    return Alert(
+        kind=AlertKind.regression,
+        title=f"UT regressions — build #{build.build_number}: {len(new_failures)} new failing",
         body="\n".join(lines) + "\n",
-        recipients=recipients,
+        summary=f"Build #{build.build_number} introduced {len(new_failures)} new failing test(s).",
+        facts=(
+            ("New failing", str(len(new_failures))),
+            ("Still failing", str(len(diff.still_failing))),
+            ("Newly fixed", str(len(diff.newly_fixed))),
+            ("Removed", str(len(diff.removed))),
+        ),
+        dashboard_url=build_link,
+        jenkins_url=build.url or None,
+        severity=AlertSeverity.warning,
     )
 
 
@@ -224,18 +269,16 @@ def build_incident_alert(
     session: Session,
     incident: BuildIncident,
     build: Build,
-    recipients: tuple[str, ...],
     *,
     app_base_url: str = "",
-) -> EmailMessage | None:
-    """The alert for a **newly-opened** ``pipeline_failure`` Build Incident (issue #171).
+) -> Alert:
+    """The Alert for a **newly-opened** ``pipeline_failure`` Build Incident (issue #171).
 
     Sent only for the *opening* build of a streak (the caller enforces that), and only for
     ``pipeline_failure`` — ``aborted`` incidents and recoveries are suppressed by default. Leads
     with the failing stage and the deterministic prediction (+ suggested contact), and — when
-    ``app_base_url`` is set — deep-links the incident's build page. Rides the same
-    :class:`EmailSender` seam as the regression report; composed inside the ingest transaction,
-    delivered after commit (:func:`send_alert`).
+    ``app_base_url`` is set — deep-links the incident's build page. Returns an ``incident``-kind
+    Alert; composed inside the ingest transaction, delivered after commit by the dispatcher.
     """
     classification = session.scalar(
         select(Classification)
@@ -260,10 +303,23 @@ def build_incident_alert(
     build_link = _dashboard_url(app_base_url, f"/builds/{build.build_number}")
     if build_link:
         lines.append(f"Dashboard: {build_link}")
-    return EmailMessage(
-        subject=f"UT pipeline failure — build #{build.build_number} incident opened",
+    facts: list[tuple[str, str]] = [
+        ("Failing stage", incident.failing_stage or "unknown"),
+        ("Predicted cause", cause),
+    ]
+    if contact:
+        facts.append(("Suggested contact", contact))
+    if classification and classification.llm_hypothesis:
+        facts.append(("Hypothesis", classification.llm_hypothesis))
+    return Alert(
+        kind=AlertKind.incident,
+        title=f"UT pipeline failure — build #{build.build_number} incident opened",
         body="\n".join(lines) + "\n",
-        recipients=recipients,
+        summary=f"Build #{build.build_number} FAILED — a new pipeline-failure incident was opened.",
+        facts=tuple(facts),
+        dashboard_url=build_link,
+        jenkins_url=build.url or None,
+        severity=AlertSeverity.attention,
     )
 
 
@@ -286,20 +342,19 @@ def _compact_duration(seconds: float | None) -> str:
 
 def build_overrun_alert(
     build_number: int,
-    recipients: tuple[str, ...],
     *,
     elapsed_seconds: float,
     expected_seconds: float | None,
     jenkins_build_url: str | None = None,
     app_base_url: str = "",
-) -> EmailMessage:
-    """The one-per-build alert for an **overrunning** in-progress build (issue #184).
+) -> Alert:
+    """The one-per-build Alert for an **overrunning** in-progress build (issue #184).
 
     Fired on the first tick the poller sets the ``overrunning`` flag (the caller de-dups by the
     persisted marker), so a human can go stop the build. Leads with how long it has been running
     versus the Expected Duration and links straight to the build in Jenkins; unlike the aborted
     Build Incident that opens if someone acts on it, this is the *only* notification for an
-    overrunning build.
+    overrunning build. Returns an ``overrun``-kind Alert.
     """
     lines = [
         f"Build #{build_number} is still running and has overrun its expected duration.",
@@ -314,60 +369,33 @@ def build_overrun_alert(
     dashboard = _dashboard_url(app_base_url, "/")
     if dashboard:
         lines.append(f"Dashboard: {dashboard}")
-    return EmailMessage(
-        subject=f"UT overrunning build — #{build_number} still running past expected duration",
+    return Alert(
+        kind=AlertKind.overrun,
+        title=f"UT overrunning build — #{build_number} still running past expected duration",
         body="\n".join(lines) + "\n",
-        recipients=recipients,
+        summary=f"Build #{build_number} is still running and has overrun its expected duration.",
+        facts=(
+            ("Elapsed", _compact_duration(elapsed_seconds)),
+            ("Expected (median of recent builds)", _compact_duration(expected_seconds)),
+        ),
+        dashboard_url=dashboard,
+        jenkins_url=jenkins_build_url,
+        severity=AlertSeverity.warning,
     )
 
 
-def send_ops_alert(
-    sender: EmailSender | None,
-    recipients: tuple[str, ...],
-    *,
-    subject: str,
-    body: str,
-) -> EmailMessage | None:
-    """Send an operational alert (poller stale, build quarantined/skipped — issue #51).
+def build_ops_alert(*, subject: str, body: str) -> Alert:
+    """An operational Alert (poller stale, build quarantined/skipped — issues #51/#121).
 
-    Rides the same :class:`EmailSender` seam as the regression report; a missing sender or empty
-    recipient list means email is not configured, so nothing is sent. Delivery is **best-effort**,
-    like :func:`send_alert`: a send failure is logged and swallowed, never raised — an SMTP outage
-    must not turn ``/health`` into a 500 or wipe the poller tick's heartbeat record. Returns the
-    message only when it actually went out (``None`` otherwise), so callers that latch on delivery
-    (``check_health``'s ``stale_alerted_at``) re-try on the next occasion.
+    Returns an ``ops``-kind Alert with the ``UT Analyzer ops — `` subject prefix the email channel
+    has always used. Delivery is best-effort via the dispatcher; a latching caller
+    (``check_health``) fires once on a successful delivery and re-arms when nothing went out.
     """
-    if sender is None or not recipients:
-        return None
-    message = EmailMessage(subject=f"UT Analyzer ops — {subject}", body=body, recipients=recipients)
-    try:
-        sender.send(message)
-    except Exception:  # noqa: BLE001 — ops alerting is best-effort; never break the caller
-        logger.warning(
-            "ops alert %r failed to send — the fault stays visible on /health and the "
-            "control panel; the alert is dropped",
-            message.subject,
-            exc_info=True,
-        )
-        return None
-    return message
-
-
-def send_alert(sender: EmailSender, message: EmailMessage) -> bool:
-    """Send a composed alert, swallowing any failure. Returns whether it went out.
-
-    Called by the ingest pipeline **after** the build's transaction has committed: the alert is
-    best-effort delivery of already-persisted facts, so a send failure must never fail — let alone
-    roll back — the ingest (the same discipline the LLM providers apply to enrichment). The failure
-    is logged and the alert dropped; the regression stays visible on the dashboard.
-    """
-    try:
-        sender.send(message)
-    except Exception:  # noqa: BLE001 — alerting is best-effort; never break ingest (issue #81)
-        logger.warning(
-            "alert %r failed to send — the build is persisted, the alert is dropped",
-            message.subject,
-            exc_info=True,
-        )
-        return False
-    return True
+    first_line = next((ln for ln in body.splitlines() if ln.strip()), subject)
+    return Alert(
+        kind=AlertKind.ops,
+        title=f"UT Analyzer ops — {subject}",
+        body=body,
+        summary=first_line,
+        severity=AlertSeverity.attention,
+    )
