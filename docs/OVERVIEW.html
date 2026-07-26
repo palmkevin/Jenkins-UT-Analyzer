@@ -528,7 +528,7 @@
 
 <section id="ingest">
   <h2><span class="n">1</span>Ingest loop <span class="muted" style="font-size:14px">— poller</span></h2>
-  <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 300 s). On an empty store
+  <p class="lead">The trigger is a scheduled poll (<code>uta poll</code>, default every 60 s). On an empty store
   it back-fills the last <code>BACKFILL_DEPTH</code> builds oldest-first; then it runs purely incrementally
   above the DB high-water mark. On-demand <code>uta bootstrap</code> / <code>uta backfill</code> do the same by
   hand, as does the dashboard's <b><code>/control</code></b> panel (a build or range, run in a background
