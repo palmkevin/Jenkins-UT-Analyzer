@@ -61,3 +61,10 @@ class FakeJenkinsClient:
 
     def last_completed_build(self) -> int | None:
         return self._build
+
+    def last_build(self):
+        """The golden fixture build, completed (not building) — the overrunning-quiescent case."""
+        from uta.ingest.jenkins import LastBuild
+
+        meta = self.build_meta(self._build)
+        return LastBuild(number=self._build, building=False, timestamp=meta["timestamp"])

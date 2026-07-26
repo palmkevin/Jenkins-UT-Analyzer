@@ -150,6 +150,16 @@ TUNABLES: tuple[Tunable, ...] = (
         "Builds a cold-start poll ingests on an empty store.",
     ),
     Tunable(
+        "overrun_ratio",
+        "Overrun ratio",
+        "Overrunning builds",
+        "float",
+        0.0,
+        10.0,
+        "An in-progress build is flagged overrunning once its elapsed time exceeds the Expected "
+        "Duration (median of the last 20 green builds) by this multiple — 1.0 means 2× the median.",
+    ),
+    Tunable(
         "result_retention_days",
         "Passing-result retention (days)",
         "Retention",

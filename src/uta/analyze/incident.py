@@ -19,7 +19,8 @@ Enrichment differs by kind:
   human-documented reason (plus an optional LLM sanity note is out of scope of the deterministic
   path). Nothing is fabricated.
 
-The two reserved kinds (``HUNG`` / ``SLOW``, issue #172) have no detector; nothing here opens them.
+The one reserved kind (``SLOW``, issue #172 — a completed-build duration regression) has no
+detector; nothing here opens it. An overrunning *in-progress* build is never an incident (ADR-0006).
 """
 
 from __future__ import annotations

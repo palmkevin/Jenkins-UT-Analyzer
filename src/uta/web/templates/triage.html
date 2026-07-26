@@ -29,6 +29,21 @@
 {%- endmacro %}
 
 {% block content %}
+{#- In-progress build banner (issue #184): shown whenever a build is building. Dumb — it reflects
+    the poller's stored snapshot and computes only `elapsed` live at render (|elapsed), so it ticks
+    up between polls. Highlighted (alert-warning) iff the stored `overrunning` flag is set; the
+    normal state is a muted info strip. "Expected" is omitted until a 20-build baseline exists. -#}
+{% if overrunning %}
+<div class="overrun-banner alert {{ 'alert-warning' if overrunning.overrunning else 'alert-info' }} d-flex flex-wrap align-items-center gap-2 py-2"
+     role="status">
+  <strong>
+    {% if overrunning.overrunning %}⚠ Build #{{ overrunning.build_number }} is overrunning{% else %}Build #{{ overrunning.build_number }} in progress{% endif %}
+  </strong>
+  <span>· running for <strong>{{ overrunning.started_at|elapsed }}</strong></span>
+  {% if overrunning.expected_seconds %}<span>· expected ~{{ overrunning.expected_seconds|duration }}</span>{% endif %}
+  {% if overrunning.jenkins_url %}<a class="ms-auto btn btn-sm {{ 'btn-warning' if overrunning.overrunning else 'btn-outline-secondary' }}" href="{{ overrunning.jenkins_url }}" target="_blank" rel="noopener">Open in Jenkins ↗</a>{% endif %}
+</div>
+{% endif %}
 <h1>Daily triage queue</h1>
 <p class="meta">
   <span class="count">{{ queue.counts.new }}</span> new ·

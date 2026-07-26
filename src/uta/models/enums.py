@@ -50,16 +50,17 @@ class IncidentKind(StrEnum):
     - ``ABORTED`` — the build was aborted (``result == ABORTED``): no signature, no classification,
       no change candidates — straight to a human-documented reason.
 
-    ``HUNG`` and ``SLOW`` are **reserved** for issue #172 (hung / slow builds detected on
-    *in-progress* builds). They are defined here so the enum, schema and UI are forward-compatible
-    with no future churn, but there is **no detector** for them yet — nothing opens an incident of
-    these kinds today.
+    ``SLOW`` is **reserved** for issue #172 (a *completed* build slower than its Expected Duration).
+    It is defined here so the enum, schema and UI are forward-compatible with no future churn, but
+    there is **no detector** for it yet. There is deliberately no ``HUNG`` kind: an overrunning
+    *in-progress* build is a live, poller-observed banner, **never** a persisted Build Incident
+    (ADR-0006, issue #184) — the durable record comes only from the ``aborted`` incident if a human
+    stops it.
     """
 
     PIPELINE_FAILURE = "PIPELINE_FAILURE"
     ABORTED = "ABORTED"
-    # ── Reserved for #172 (no detector yet) ──────────────────────────────────
-    HUNG = "HUNG"
+    # ── Reserved for #172: a completed-build duration regression (no detector yet) ─────────────
     SLOW = "SLOW"
 
 

@@ -13,6 +13,7 @@
 
 <p class="mb-4">
   <a href="#workflow">Daily workflow</a> ·
+  <a href="#inprogress">Build still running?</a> ·
   <a href="#incidents">Build Incidents</a> ·
   <a href="#statuses">Statuses &amp; badges</a> ·
   <a href="#llm">How the LLM contributes</a> ·
@@ -70,6 +71,25 @@
   </p>
 </div>
 
+<h2 id="inprogress">Build still running?</h2>
+<div class="card">
+  <p>
+    Whenever a build is currently in progress, a banner appears above the queue showing its
+    build number, how long it has been running, how long a build normally takes, and a link to
+    <strong>open it in Jenkins</strong>. The "how long it has been running" figure ticks up live
+    as you watch the page.
+  </p>
+  <p class="mb-0">
+    Most of the time this banner is a plain, muted strip — just letting you know a build is
+    under way. It turns into a highlighted warning only once that build has been running for
+    well past its usual time — a sign it may be stuck. If you see the warning, check it in
+    Jenkins and stop it if it looks hung; if you do, the tool tracks that automatically as a
+    <strong>Build Incident</strong> (below), so nothing extra needs to be done on your end. Until
+    enough recent builds exist to know what "usual" even means, the banner shows the elapsed
+    time only and never turns into a warning.
+  </p>
+</div>
+
 <h2 id="incidents">Build Incidents</h2>
 <div class="card">
   <p>
@@ -77,7 +97,8 @@
     result is a failure or it gets aborted, the tool opens a <strong>Build Incident</strong> so
     that gets tracked and triaged too, the same way a failing test does. A run of several bad
     builds in a row counts as <strong>one</strong> incident (shown as "×N builds"), and it clears
-    itself automatically the next time the pipeline goes green again.
+    itself automatically the next time the pipeline goes green again. A build that is still
+    <strong>running</strong> never shows up here yet — see the banner above the queue.
   </p>
   <p>
     You'll find the queue at <strong>Incidents</strong> in the top navigation — it carries the

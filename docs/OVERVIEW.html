@@ -136,7 +136,10 @@
         <p>The UT pipeline. The app reads, per build: the merged <b>test report</b>
         (<code>/testReport/api/json</code>), the <b>SVN change sets</b> (the authoritative list of code
         changes), per-track <b>timing</b> (<code>wfapi/describe</code>), and — for the console-log UT stages —
-        the stage <b>logs</b> (<code>wfapi/log</code>). Anonymous read; token optional.</p>
+        the stage <b>logs</b> (<code>wfapi/log</code>). Anonymous read; token optional. Separately, every
+        poll tick also reads the job's <b><code>lastBuild</code></b> (<code>api/json?tree=lastBuild[number,
+        building,timestamp]</code>) to observe whether a build is currently <b>in progress</b> — the
+        overrunning-build detector (issue #184; gated by <code>DETECT_OVERRUNNING_BUILDS</code>).</p>
       </div>
       <div class="part" style="border-color:var(--svn)">
         <h4>SVN <span class="pill">optional · flag-gated</span> <span class="pill">ownership</span></h4>
@@ -167,12 +170,15 @@
       </div>
       <div class="part" style="border-color:var(--mail)">
         <h4>SMTP <span class="pill">outbound</span></h4>
-        <p>Two distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a build
+        <p>Three distinct alerts ride this seam. The <b>regression report</b> is sent <b>only when a build
         worsens</b> (≥1 new failing test vs the baseline) — silence means “no worse than before.” A
         separate <b>ops alert</b> (subject prefixed <code>UT Analyzer ops —</code>) fires when the poller
         quarantines/skips a build, or (once, latched) when <code>/health</code> finds the poller stale —
-        operational noise about the pipeline itself, not about test results. Both are disabled when no
-        recipients are configured.</p>
+        operational noise about the pipeline itself, not about test results. A third,
+        <b>overrunning-build alert</b> fires once per build the first tick it crosses the overrunning
+        threshold (issue #184) — de-duped by a persisted marker so it never repeats, and reset once that
+        build finishes or a different build starts. All three are disabled when no recipients are
+        configured.</p>
       </div>
       <div class="part" style="border-color:var(--auth)">
         <h4>Keycloak (IAM) <span class="pill">optional · flag-gated</span></h4>
@@ -195,9 +201,12 @@
         Reached only via <code>DATABASE_URL</code> (“container now, external later”). Also holds a small
         <b>operational</b> state — not part of the failure model: <code>setting_overrides</code> (runtime
         threshold tuning), <code>ingest_jobs</code> (on-demand ingest requests, recovered to <code>ERROR</code>
-        if orphaned by a restart), <code>poller_heartbeats</code> (poller health, now including
-        <code>last_success_at</code> and a latched <code>stale_alerted_at</code>) and
-        <code>build_quarantines</code> (per-build failed-attempt counters and quarantine state).</p>
+        if orphaned by a restart), <code>poller_heartbeats</code> (poller health, including
+        <code>last_success_at</code>, a latched <code>stale_alerted_at</code>, and the single-row
+        <b>overrunning-build snapshot</b> — in-progress build number/start, Expected Duration, the
+        <code>overrunning</code> flag, and an alerted-build marker, all overwritten every tick — issue
+        #184) and <code>build_quarantines</code> (per-build failed-attempt counters and quarantine
+        state).</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>poller</code> container <span class="pill">ingest</span></h4>
@@ -210,7 +219,10 @@
         blips) retry in-tick with exponential backoff; a build that keeps failing accrues one attempt per
         tick and, past the attempt limit, is <b>quarantined</b> — recorded, ops-alerted by email, and
         skipped so the high-water mark advances past it. A build rotated out of Jenkins retention (404) is
-        quarantined immediately, the explicit form of what used to be a silent skip.</p>
+        quarantined immediately, the explicit form of what used to be a silent skip. Independently of that
+        ingest work, every tick also observes Jenkins' current in-progress build and writes a single-row
+        <b>overrunning-build snapshot</b> onto the heartbeat (issue #184; ADR-0006) — the sole source of
+        truth the dashboard banner reflects; see <a href="#analysis">Analysis</a>.</p>
       </div>
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
@@ -221,7 +233,10 @@
         one-click <b>“Ack all w/ signature (N)”</b> — shown per New-bucket row only when other
         unacknowledged failures share its signature — and its attribution twin
         on the per-test record page (apply cause/reason/tickets/assignee/triage status to every open
-        failing test sharing the signature) — build summaries (results
+        failing test sharing the signature), an <b>in-progress-build banner</b> atop the queue whenever
+        Jenkins reports a build building (elapsed ticking up live, the stored Expected Duration, a Jenkins
+        deep link, and a warning highlight only when the poller's stored <code>overrunning</code> flag is
+        set — issue #184) — build summaries (results
         table <b>server-side paginated</b>, page size = the <code>ui_row_limit</code> tunable, with an
         optional <b>failures-only</b> filter), a
         <b><code>/builds</code> “Job builds” list</b> (also paginated — every ingested build newest-first —
@@ -291,10 +306,13 @@
   <p class="lead">How data and notifications flow between the parts. The <code>poller</code> pulls from Jenkins
   and Oracle, writes to Postgres, prunes old passing results / finished ingest jobs from Postgres at the end
   of every tick, and fans out to email + LLM; the <code>web</code> app reads Postgres and the human writes
-  back through it. The <code>web</code> app's <b>control panel</b> also has a direct, on-demand path to
-  Jenkins/Oracle for manual ingest — always with back-fill semantics (no email, no LLM). Two producers
-  reach email: the <code>poller</code> for the regression report, a new <b>pipeline-failure Build
-  Incident</b> alert, and <b>ops alerts</b> (a quarantined/skipped build), and <code>web</code>'s
+  back through it. Every tick the <code>poller</code> also reads Jenkins' <code>lastBuild</code> and writes a
+  live <b>overrunning-build snapshot</b> to Postgres (never a Build Incident — issue #184; ADR-0006), which
+  <code>web</code> reflects as the triage-queue banner. The <code>web</code> app's <b>control panel</b> also
+  has a direct, on-demand path to Jenkins/Oracle for manual ingest — always with back-fill semantics (no
+  email, no LLM). Two producers reach email: the <code>poller</code> for the regression report, a new
+  <b>pipeline-failure Build Incident</b> alert, an <b>overrunning-build</b> alert (once per build), and
+  <b>ops alerts</b> (a quarantined/skipped build), and <code>web</code>'s
   <code>/health</code> check for a <b>latched</b> ops alert when the poller goes stale. A fifth external
   system, <b>Keycloak</b>, appears only when
   <code>AUTH_ENABLED=true</code> (pink, dashed — off by default, so it is absent from the map in local
@@ -385,9 +403,9 @@
       <!-- Email -->
       <rect class="box" x="690" y="140" width="190" height="96" fill="#122a1c" stroke="#4bbf73"/>
       <text class="lbl" x="710" y="166">SMTP → recipients</text>
-      <text class="sub" x="710" y="183">regression / incident</text>
-      <text class="sub" x="710" y="198">alert, or an ops alert</text>
-      <text class="sub" x="710" y="213">(quarantine / stale)</text>
+      <text class="sub" x="710" y="183">regression / incident /</text>
+      <text class="sub" x="710" y="198">overrun alert, or an ops</text>
+      <text class="sub" x="710" y="213">alert (quarantine / stale)</text>
 
       <!-- Web -->
       <rect class="box" x="330" y="380" width="200" height="70" fill="#12233d" stroke="#5aa0ff"/>
@@ -416,7 +434,8 @@
 
       <!-- edges: Jenkins -> poller -->
       <path class="edge" d="M200,83 C260,83 280,110 328,110" marker-end="url(#arr)"/>
-      <text class="etxt" x="222" y="76">builds</text>
+      <text class="etxt" x="222" y="70">builds /</text>
+      <text class="etxt" x="222" y="83">lastBuild</text>
       <!-- Oracle -> poller -->
       <path class="edge" d="M200,196 C270,196 280,150 328,140" marker-end="url(#arr)"/>
       <text class="etxt" x="222" y="182">changes</text>
@@ -429,10 +448,10 @@
       <!-- LLM -> poller (hypothesis back) -->
       <path class="edgeA" d="M688,96 C620,120 600,120 532,120" marker-end="url(#arrA)"/>
       <text class="etxt" x="560" y="138" style="fill:#7ee0c0">hypothesis</text>
-      <!-- poller -> email (regression report, new pipeline-failure incident, or quarantine/skip ops alert) -->
+      <!-- poller -> email (regression report, new pipeline-failure incident, overrunning build, or quarantine/skip ops alert) -->
       <path class="edge" d="M530,150 C600,160 640,168 688,170" marker-end="url(#arr)"/>
-      <text class="etxt" x="558" y="163">regression /</text>
-      <text class="etxt" x="558" y="176">incident / quarantine</text>
+      <text class="etxt" x="558" y="163">regression / incident /</text>
+      <text class="etxt" x="558" y="176">overrun / quarantine</text>
       <!-- web /health -> email (latched ops alert on staleness) -->
       <path class="edge" d="M530,392 C630,392 660,300 700,234" marker-end="url(#arr)"/>
       <text class="etxt" x="560" y="300">/health stale</text>
@@ -588,9 +607,12 @@
       <code>ABORTED</code>; consecutive non-green builds collapse into that same incident (a streak
       model mirroring how episodes collapse consecutive test failures, with the same
       <code>reopen_count</code> flap counter), and it closes the next time a build reaches
-      <code>SUCCESS</code> or <code>UNSTABLE</code>. In-progress builds are ignored (a future
-      <code>hung</code>/<code>slow</code> detector, issue #172, is reserved in the <code>IncidentKind</code>
-      enum but has no detector yet). A <code>pipeline_failure</code> incident gets the <b>full analysis
+      <code>SUCCESS</code> or <code>UNSTABLE</code>. A build that is still <b>in progress</b> is
+      deliberately <b>never</b> an incident — see the <b>Overrunning builds</b> card below, and
+      <a href="adr/0006-overrunning-builds-live-signal-not-incident.md">ADR-0006</a>; a future
+      <code>slow</code> detector (a <i>completed</i> build slower than its Expected Duration, issue
+      #172) is reserved in the <code>IncidentKind</code> enum but has no detector yet. A
+      <code>pipeline_failure</code> incident gets the <b>full analysis
       stack reused</b>: the build's own change candidates drive a deterministic classification (an
       infra-looking failing-stage signature still outranks any coincidental change) and, with a real LLM
       provider, a hypothesis — against an <b>incident-namespaced</b> failure signature (drawn from the
@@ -600,13 +622,34 @@
       <a href="adr/0005-build-incident-build-level-triage.md">ADR-0005</a> for why this is a distinct
       build-level entity rather than a stretched Failure Episode.</p>
     </div>
+    <div class="card">
+      <h3>Overrunning builds <span class="pill">issue #184</span></h3>
+      <p>A <b>live signal</b>, not a persisted entity — <a
+      href="adr/0006-overrunning-builds-live-signal-not-incident.md">ADR-0006</a>. Each poll tick the
+      poller reads Jenkins' <code>lastBuild</code>; when it is still <code>building</code>, the tick
+      computes the <b>Expected Duration</b> — the median end-to-end wall-clock of the last 20
+      <code>SUCCESS</code>/<code>UNSTABLE</code> builds (undefined until 20 exist) — and flags the
+      build <b>overrunning</b> once its elapsed time exceeds <code>expected × (1 + OVERRUN_RATIO)</code>
+      (default <code>1.0</code> ⇒ 2× the median). The result is written as a single-row snapshot on the
+      poller heartbeat; the dashboard's triage-queue banner is a pure read of that snapshot, computing
+      only <code>elapsed</code> live so it ticks up between polls (may lag the true crossing by up to
+      one poll interval). On the first tick a build is flagged, the poller sends one email, de-duped by
+      a persisted marker and reset when the in-progress build changes or finishes. If a human then
+      aborts the build, the ordinary <code>aborted</code> Build Incident records that — silently, no
+      double alert. Gated by <code>DETECT_OVERRUNNING_BUILDS</code> (default on); off means no
+      <code>lastBuild</code> call and no banner.</p>
+    </div>
   </div>
 </section>
 
 <section id="triage">
   <h2><span class="n">3</span>Human triage <span class="muted" style="font-size:14px">— web dashboard</span></h2>
   <p class="lead">The dashboard opens on the <b>daily triage queue</b> — the primary landing surface —
-  organized into the three buckets the monitor thinks in. A <b>filter/sort bar</b> (owner, suite, track,
+  organized into the three buckets the monitor thinks in. Whenever a build is currently building, an
+  always-on <b>in-progress build banner</b> sits above everything else — build number, live elapsed
+  time, the Expected Duration, and a Jenkins deep link — turning to a warning highlight only once the
+  poller has flagged it <b>overrunning</b> (see <a href="#analysis">Analysis</a>), so a human can go
+  stop it. A <b>filter/sort bar</b> (owner, suite, track,
   predicted cause, triage status, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
   bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
   <div class="grid g3">
@@ -713,6 +756,11 @@
     streak's first build — leading with the failing stage and the deterministic prediction (+ suggested
     contact); an <code>aborted</code> incident and a streak's recovery are silent, and this alert is
     subject to the same <code>SMTP_RECIPIENTS</code>-configured gate as the others.</p>
+    <p>A fourth, <b>overrunning-build</b> alert (issue #184) fires the first poll tick an in-progress
+    build crosses the Expected-Duration threshold — leading with elapsed vs. expected and a Jenkins
+    link, so a human can go check/stop it. Exactly one email per overrunning build (a persisted marker
+    de-dups across ticks and survives a poller restart); the eventual <code>aborted</code> incident, if
+    the human does stop it, stays silent — no double alert.</p>
   </div>
 </section>
 
@@ -743,8 +791,10 @@
       when it passed again, never on removal — cause/reason, age), so regressions accumulate instead of
       overwriting.</td></tr>
     <tr><th>Build Incidents <span class="pill">issue #171</span></th><td>One row per streak of consecutive
-      non-green builds — kind (<code>pipeline_failure</code> / <code>aborted</code>; <code>hung</code>/
-      <code>slow</code> reserved for issue #172), opened-in / last-non-green / recovered-in builds,
+      non-green builds — kind (<code>pipeline_failure</code> / <code>aborted</code>; <code>slow</code>
+      reserved for issue #172 — a future <i>completed</i>-build duration regression; there is
+      deliberately no <code>hung</code> kind, see <i>Overrunning Build</i> below), opened-in /
+      last-non-green / recovered-in builds,
       build/reopen counts, failing stage, and the same triage/documentation fields as an episode. Shares the
       reused <code>Classification</code>/<code>Attribution</code> rows with episodes — both are now
       nullable-keyed on <b>either</b> <code>episode_id</code> <b>or</b> <code>incident_id</code>, never
@@ -800,6 +850,10 @@
       but the kind is folded into the signature hash and every retrieval query filters on it — a test failure
       and a pipeline failure must <b>never cross-match</b>, even if their normalized text happens to
       coincide.</td></tr>
+    <tr><th>Overrunning is live, never persisted</th><td>An in-progress build's overrunning-ness is a
+      poller-computed snapshot on <code>poller_heartbeats</code>, overwritten every tick — <b>never</b> a
+      Build Incident (<a href="adr/0006-overrunning-builds-live-signal-not-incident.md">ADR-0006</a>). If
+      the build is subsequently aborted, the ordinary <code>aborted</code> incident is the durable record.</td></tr>
     <tr><th>Retention</th><td>Nothing else in the store is ever deleted. Only <b>unsigned</b>
       (<code>signature_id IS NULL</code>) passing/skipped test results from old builds, and finished ingest
       jobs, are pruned — <b>failing results, builds, episodes, lifecycles, attributions and KB
@@ -858,6 +912,15 @@
       entity when a build's own Jenkins <code>result</code> is <code>FAILURE</code>/<code>ABORTED</code>
       (or recovers on <code>SUCCESS</code>/<code>UNSTABLE</code>), folded into the ordinary ingest
       path — mirrors <code>INGEST_UNITTEST_STAGES</code>. Off skips incident detection entirely.</td></tr>
+    <tr><td><code>DETECT_OVERRUNNING_BUILDS</code></td><td><code>true</code></td>
+      <td>Detect <b>Overrunning Builds</b> (issue #184): each poll tick, observe Jenkins'
+      <code>lastBuild</code> and flag it once its elapsed time runs past the Expected Duration by more
+      than <code>OVERRUN_RATIO</code> — a live, poller-observed banner on the triage dashboard, never a
+      persisted Build Incident. Off: no <code>lastBuild</code> call and no banner.</td></tr>
+    <tr><td><code>OVERRUN_RATIO</code> <span class="pill">control panel</span></td><td><code>1.0</code></td>
+      <td>Overrun multiple: an in-progress build is flagged <b>overrunning</b> once its elapsed time
+      exceeds <code>expected × (1 + OVERRUN_RATIO)</code> — the default means 2× the Expected Duration
+      median.</td></tr>
   </table>
 
   <h3>SVN blame — test ownership, optional &amp; flag-gated</h3>
@@ -1034,8 +1097,11 @@
     <tr><td><code>DATA_CHANGE_TOLERANCE_MINUTES</code> <span class="pill">control panel</span></td>
       <td><code>5</code></td>
       <td>Margin widening both ends of that window to absorb Jenkins↔Oracle clock skew.</td></tr>
-    <tr><td><code>POLL_INTERVAL_SECONDS</code></td><td><code>300</code></td>
-      <td>Scheduled-poll cadence for <code>uta poll</code>.</td></tr>
+    <tr><td><code>POLL_INTERVAL_SECONDS</code></td><td><code>60</code></td>
+      <td>Scheduled-poll cadence for <code>uta poll</code>. Dropped from 300s (issue #184) for a
+      near-real-time overrunning-build banner; an idle tick stays cheap. Since
+      <code>POLLER_STALE_AFTER_INTERVALS</code> (below) counts this many intervals, <code>/health</code>
+      now flags a stale poller after roughly 5 minutes of no successful tick, rather than ~25.</td></tr>
   </table>
 
   <h3>Poller resilience</h3>
