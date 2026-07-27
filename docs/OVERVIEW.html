@@ -241,7 +241,8 @@
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
         <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue — now with a
-        bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, flaky
+        bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, a
+        free-text <b>failure detail</b> search over each row's raw error message/stack trace, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
         one-click <b>“Ack all w/ signature (N)”</b> — shown per New-bucket row only when other
@@ -683,7 +684,8 @@
   time, the Expected Duration, and a Jenkins deep link — turning to a warning highlight only once the
   poller has flagged it <b>overrunning</b> (see <a href="#analysis">Analysis</a>), so a human can go
   stop it. A <b>filter/sort bar</b> (owner, suite, track,
-  predicted cause, triage status, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
+  predicted cause, triage status, a free-text <b>failure detail</b> search over each row's raw error
+  message/stack trace, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
   bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
   <div class="grid g3">
     <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. Each row's

@@ -142,6 +142,13 @@ _Avoid_: Fix ticket, resolved ticket
 How a recorded cause or reason was reached — AI-suggested (unconfirmed or confirmed) or
 human-authored (corrected or entered). Weights knowledge-base retrieval.
 
+**Failure Detail**:
+The **raw** error text of a Test Result exactly as Jenkins reported it — the failure message
+(`error_details`) plus its stack trace (`error_stack_trace`). What the triage queue's
+free-text "failure detail" filter searches (substring, case-insensitive). Distinct from the
+Failure Signature: this is the unprocessed text, the signature is its normalized fingerprint.
+_Avoid_: Error text, failure message (when you mean the whole message+trace surface)
+
 **Failure Signature**:
 The normalized fingerprint of a failure's error text, used to recognize recurrences of the same
 failure — on the same test for a Failure Episode, or of the same failing pipeline stage for a

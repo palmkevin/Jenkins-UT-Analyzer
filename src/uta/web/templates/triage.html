@@ -104,6 +104,11 @@
       {% endfor %}
     </select>
   </div>
+  <div class="col">
+    <label class="form-label small mb-0" for="filter-failure">Failure detail</label>
+    <input class="form-control form-control-sm" id="filter-failure" type="text" name="failure"
+           value="{{ filters.failure or '' }}" placeholder="e.g. uuid4">
+  </div>
   <div class="col form-check pb-1">
     <input class="form-check-input" type="checkbox" name="flaky" value="1" id="filter-flaky"
            onchange="this.form.submit()" {% if filters.flaky %}checked{% endif %}>
