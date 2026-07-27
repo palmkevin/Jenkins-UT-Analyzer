@@ -901,6 +901,33 @@ def test_search_navbar_box_present(client):
     assert 'action="/search"' in client.get("/").text
 
 
+def test_search_page_shows_episode_status_and_sortable_headers(session_factory):
+    with session_scope(session_factory) as s:
+        # An open failure, a fixed one, and a never-failed identity — all match "srch_".
+        r1 = make_build(s, 1, {"srch_open": "FAILED", "srch_fixed": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        r2 = make_build(s, 2, {"srch_fixed": "PASSED"})
+        apply_build(s, r2, baseline=r1)
+        get_identity(s, "srch_clean")
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search?q=srch_").text
+    # Status column renders each of the three states.
+    assert "open episode" in page
+    assert "no failures on record" in page
+    # Sortable headers link back to /search with the query preserved.
+    assert "/search?q=srch_&amp;sort=name" in page
+    assert "/search?q=srch_&amp;sort=owner" in page
+
+
+def test_search_page_sort_by_name_orders_alphabetically(session_factory):
+    with session_scope(session_factory) as s:
+        get_identity(s, "srch_zeta")
+        get_identity(s, "srch_alpha")
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search?q=srch_&sort=name").text
+    assert page.index("srch_alpha") < page.index("srch_zeta")
+
+
 def test_theme_toggle_present_and_defaults_from_system_preference(client):
     body = client.get("/").text
     assert 'id="theme-toggle"' in body

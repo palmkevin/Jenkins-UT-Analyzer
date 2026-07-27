@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from math import ceil
 from urllib.parse import urlencode
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from uta.analyze.baseline import compute_diff, identity_status_maps, select_baseline
@@ -1313,36 +1313,126 @@ def kb_search(
     return {"query": query, "results": results}
 
 
-def test_search(session: Session, query: str, *, limit: int = 20) -> list[dict]:
+# Column-sort options for the global test search. ``recent`` (the default) orders by the most
+# recent failure episode, newest-first; ``name``/``owner`` are plain ascending alphabetical. Any
+# unknown value (including ``None``) falls back to ``recent``.
+SEARCH_SORTS = ("recent", "name", "owner")
+
+
+def search_url(query: str, sort: str | None = None) -> str:
+    """The ``/search`` URL for a query + sort — the shareable state (mirrors :func:`triage_url`).
+
+    ``recent`` is the default, so it is left out of the query string (a bare ``?q=`` stays clean).
+    """
+    params = {"q": query}
+    if sort and sort != "recent":
+        params["sort"] = sort
+    return f"/search?{urlencode(params)}"
+
+
+def search_sort_links(query: str, sort: str | None = None) -> dict[str, dict]:
+    """Column-header sort links for the global test search.
+
+    For each supported sort returns ``{"active": bool, "url": str}``; the current query is carried
+    across. ``recent`` is active when no (or an unknown) sort is set — it is the default order.
+    """
+    active = sort if sort in SEARCH_SORTS else "recent"
+    return {key: {"active": active == key, "url": search_url(query, key)} for key in SEARCH_SORTS}
+
+
+def _search_order_by(stmt, ep_agg, sort: str | None):
+    """Apply the chosen sort to the search statement (see :data:`SEARCH_SORTS`).
+
+    NULL handling is expressed portably (an ``IS NULL`` flag column first) so the ordering is
+    identical on Postgres (production/CI) and SQLite (offline tests), which disagree on where NULLs
+    fall by default.
+    """
+    name_key = func.lower(TestIdentity.canonical_name)
+    if sort == "name":
+        return stmt.order_by(name_key)
+    if sort == "owner":
+        return stmt.order_by(
+            TestIdentity.main_developer.is_(None),  # owned tests first, unowned last
+            func.lower(TestIdentity.main_developer),
+            name_key,
+        )
+    # ``recent`` (default): most recent failure episode first; tests that never failed sort last,
+    # then alphabetically as a stable tiebreak.
+    return stmt.order_by(
+        ep_agg.c.latest_failure_at.is_(None),
+        ep_agg.c.latest_failure_at.desc(),
+        name_key,
+    )
+
+
+def test_search(
+    session: Session, query: str, *, limit: int = 20, sort: str | None = None
+) -> list[dict]:
     """Global "jump to test by name" search (issue #63): canonical-name substring → identities.
 
     Matches suite/class/method too (all folded into ``canonical_name``), case-insensitively.
     Returns plain rows for the navbar search box: a unique match lets the route redirect straight
     to the test record, several matches render as a short pick-list. ``limit <= 0`` disables the
     cap (same semantics as :func:`_cap` / :func:`_page_window`).
+
+    Each row carries its **failure-episode status**: ``has_open_episode`` (an episode is currently
+    open — the test is failing now), and ``last_closed_at`` (when the most recent episode was
+    closed, only when none is open). ``latest_failure_at`` is the most recent failure across all
+    episodes and drives the default ``recent`` sort (newest-first). ``sort`` reorders the rows —
+    ``recent`` (default), ``name`` or ``owner``.
+
+    Episode facts come from **one grouped scan** of the matched identities' episodes joined into the
+    query (no per-row lookups — the issue #52 pattern), and the sort + cap are applied in SQL so the
+    "top N by most recent failure" are the ones actually returned.
     """
     query = (query or "").strip()
     if not query:
         return []
-    stmt = (
-        select(TestIdentity)
-        .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
-        .order_by(TestIdentity.canonical_name)
+
+    ep_agg = (
+        select(
+            FailureEpisode.test_identity_id.label("tid"),
+            func.max(
+                func.coalesce(FailureEpisode.last_failing_at, FailureEpisode.first_failure_at)
+            ).label("latest_failure_at"),
+            func.max(FailureEpisode.fixed_at).label("last_closed_at"),
+            func.sum(case((FailureEpisode.is_open.is_(True), 1), else_=0)).label("open_count"),
+        )
+        .group_by(FailureEpisode.test_identity_id)
+        .subquery()
     )
+    stmt = (
+        select(
+            TestIdentity,
+            ep_agg.c.latest_failure_at,
+            ep_agg.c.last_closed_at,
+            ep_agg.c.open_count,
+        )
+        .outerjoin(ep_agg, ep_agg.c.tid == TestIdentity.id)
+        .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
+    )
+    stmt = _search_order_by(stmt, ep_agg, sort)
     if limit > 0:
         stmt = stmt.limit(limit)
-    idents = session.scalars(stmt).all()
-    return [
-        {
-            "identity_id": i.id,
-            "test_id": i.canonical_name,
-            "suite": i.suite,
-            "owner": i.main_developer,
-            "suite_url": pivot_url("suite", i.suite),
-            "owner_url": pivot_url("owner", i.main_developer),
-        }
-        for i in idents
-    ]
+
+    rows: list[dict] = []
+    for ident, latest_failure_at, last_closed_at, open_count in session.execute(stmt).all():
+        has_open = bool(open_count or 0)
+        rows.append(
+            {
+                "identity_id": ident.id,
+                "test_id": ident.canonical_name,
+                "suite": ident.suite,
+                "owner": ident.main_developer,
+                "suite_url": pivot_url("suite", ident.suite),
+                "owner_url": pivot_url("owner", ident.main_developer),
+                "has_open_episode": has_open,
+                "latest_failure_at": latest_failure_at,
+                # Only meaningful when nothing is open — otherwise the open episode is the story.
+                "last_closed_at": None if has_open else last_closed_at,
+            }
+        )
+    return rows
 
 
 def build_summary(

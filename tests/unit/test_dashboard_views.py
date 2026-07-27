@@ -1001,6 +1001,86 @@ def test_test_search_limit_zero_disables_the_cap(session_factory):
         assert len(results) == 3
 
 
+# ── global test search: failure-episode status + sorting ─────────────────────
+
+
+def test_test_search_flags_open_failure_episode(session_factory):
+    """A test failing now carries an open episode and no last-closed timestamp."""
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"ut_x.C.test_open": "FAILED"})
+        apply_build(s, r1, baseline=None)
+
+        (row,) = views.test_search(s, "test_open")
+        assert row["has_open_episode"] is True
+        assert row["last_closed_at"] is None
+        assert row["latest_failure_at"] is not None
+
+
+def test_test_search_reports_when_last_episode_was_closed(session_factory):
+    """A test that failed then passed has no open episode — its most recent close is surfaced."""
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"ut_x.C.test_closed": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        r2 = make_build(s, 2, {"ut_x.C.test_closed": "PASSED"})
+        apply_build(s, r2, baseline=r1)
+
+        (row,) = views.test_search(s, "test_closed")
+        assert row["has_open_episode"] is False
+        assert row["last_closed_at"] is not None
+
+
+def test_test_search_never_failed_has_no_episode_facts(session_factory):
+    """An identity that never failed (only exists from ingest) has no episode facts."""
+    with session_scope(session_factory) as s:
+        get_identity(s, "ut_x.C.test_clean")
+
+        (row,) = views.test_search(s, "test_clean")
+        assert row["has_open_episode"] is False
+        assert row["last_closed_at"] is None
+        assert row["latest_failure_at"] is None
+
+
+def test_test_search_default_sort_is_most_recent_failure_first(session_factory):
+    """Default order: newest most-recent-failure first; never-failed tests sort last."""
+    now = datetime.now(UTC)
+    with session_scope(session_factory) as s:
+        # "old" failed long ago (and was fixed); "recent" failed yesterday and is still open.
+        r1 = make_build(s, 1, {"srch_old": "FAILED"}, started_at=now - timedelta(days=40))
+        apply_build(s, r1, baseline=None)
+        r2 = make_build(s, 2, {"srch_old": "PASSED"}, started_at=now - timedelta(days=39))
+        apply_build(s, r2, baseline=r1)
+        r3 = make_build(s, 3, {"srch_recent": "FAILED"}, started_at=now - timedelta(days=1))
+        apply_build(s, r3, baseline=None)
+        # "clean" never failed.
+        get_identity(s, "srch_clean")
+
+        names = [r["test_id"] for r in views.test_search(s, "srch_")]
+        assert names == ["srch_recent", "srch_old", "srch_clean"]
+
+
+def test_test_search_name_sort_is_alphabetical(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"srch_b": "FAILED"}, started_at=datetime.now(UTC))
+        apply_build(s, r1, baseline=None)
+        get_identity(s, "srch_a")
+
+        names = [r["test_id"] for r in views.test_search(s, "srch_", sort="name")]
+        assert names == ["srch_a", "srch_b"]
+
+
+def test_search_sort_links_mark_active_and_carry_query():
+    links = views.search_sort_links("test_margin", sort=None)
+    # No sort → the default "recent" column is active.
+    assert links["recent"]["active"] is True
+    assert links["name"]["active"] is False
+    assert links["recent"]["url"] == "/search?q=test_margin"
+    assert links["name"]["url"] == "/search?q=test_margin&sort=name"
+
+    on_name = views.search_sort_links("test_margin", sort="name")
+    assert on_name["name"]["active"] is True
+    assert on_name["recent"]["active"] is False
+
+
 # ── bulk actions (issue #63) ─────────────────────────────────────────────────
 
 
