@@ -677,21 +677,29 @@ def test_acknowledge_unknown_identity_returns_false(session_factory):
 # ── triage filters/sort (issue #63) ─────────────────────────────────────────
 
 
-def test_triage_filters_by_owner_and_suite(session_factory):
+def test_triage_filters_by_owner(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
         apply_build(s, r1, baseline=None)
         get_identity(s, "alpha").main_developer = "AB"
-        get_identity(s, "alpha").suite = "ut_pricing"
         get_identity(s, "beta").main_developer = "CD"
-        get_identity(s, "beta").suite = "ut_billing"
 
         by_owner = views.triage_queue(s, filters={"owner": "ab"})
         assert {r["test_id"] for r in by_owner["new"]} == {"alpha"}
         assert by_owner["counts"]["new"] == 1
 
-        by_suite = views.triage_queue(s, filters={"suite": "billing"})
-        assert {r["test_id"] for r in by_suite["new"]} == {"beta"}
+
+def test_triage_ignores_a_suite_filter(session_factory):
+    """No suite filter (issue #191): every devUTs test shares one JUnit suite name, so a stray
+    ``suite=`` param — a stale bookmark, say — must not silently hide rows."""
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        get_identity(s, "alpha").suite = "nose2-junit"
+        get_identity(s, "beta").suite = "nose2-junit"
+
+        queue = views.triage_queue(s, filters={"suite": "ut_billing"})
+        assert {r["test_id"] for r in queue["new"]} == {"alpha", "beta"}
 
 
 def test_triage_filters_by_triage_status(session_factory):
@@ -758,16 +766,17 @@ def test_triage_sort_by_name_and_owner(session_factory):
         assert [r["test_id"] for r in by_owner["new"]] == ["zeta", "alpha"]
 
 
-def test_triage_filter_options_lists_distinct_owners_and_suites(session_factory):
+def test_triage_filter_options_lists_distinct_owners(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "PASSED"})
         apply_build(s, r1, baseline=None)
         get_identity(s, "alpha").main_developer = "AB"
-        get_identity(s, "alpha").suite = "ut_pricing"
+        get_identity(s, "alpha").suite = "nose2-junit"
 
         options = views.triage_filter_options(s)
         assert "AB" in options["owners"]
-        assert "ut_pricing" in options["suites"]
+        # Suites are no longer offered — the filter they fed is gone (issue #191).
+        assert "suites" not in options
 
 
 # ── active-filter chips + header sort links (issue #77) ──────────────────────
@@ -787,8 +796,8 @@ def test_triage_filter_chips_empty_when_nothing_active():
 
 
 def test_triage_filter_chip_removing_last_filter_links_home():
-    (chip,) = views.triage_filter_chips({"suite": "ut_pricing"})
-    assert chip["label"] == "suite: ut_pricing"
+    (chip,) = views.triage_filter_chips({"owner": "AB"})
+    assert chip["label"] == "owner: AB"
     assert chip["remove_url"] == "/"
 
 
@@ -850,12 +859,12 @@ def test_pivot_url_builds_single_filter_queue_urls():
     assert views.pivot_url("owner", "KP") == "/?owner=KP"
     assert views.pivot_url("cause", "CODE_CHANGE") == "/?cause=CODE_CHANGE"
     # Values are URL-encoded; the pivot carries exactly one filter, never inherited state.
-    assert views.pivot_url("suite", "ut a&b") == "/?suite=ut+a%26b"
+    assert views.pivot_url("owner", "A B&C") == "/?owner=A+B%26C"
 
 
 def test_pivot_url_empty_value_yields_none():
     assert views.pivot_url("owner", None) is None
-    assert views.pivot_url("suite", "") is None
+    assert views.pivot_url("owner", "") is None
 
 
 def test_triage_rows_carry_pivot_urls(session_factory):
@@ -883,14 +892,16 @@ def test_triage_row_pivot_urls_none_without_owner_or_classification(session_fact
         assert row["cause_url"] is None
 
 
-def test_search_rows_carry_suite_and_owner_pivot_urls(session_factory):
+def test_search_rows_carry_owner_pivot_url_but_no_suite_pivot(session_factory):
     with session_scope(session_factory) as s:
         ident = get_identity(s, "ut_a.TestClass.test_thing")
-        ident.suite = "ut_a"
+        ident.suite = "nose2-junit"
         ident.main_developer = "KP"
         (row,) = views.test_search(s, "thing")
-        assert row["suite_url"] == "/?suite=ut_a"
         assert row["owner_url"] == "/?owner=KP"
+        # Suite is shown but not clickable — there is no suite filter to pivot into (issue #191).
+        assert row["suite"] == "nose2-junit"
+        assert "suite_url" not in row
 
 
 def test_triage_row_carries_tracks_and_signature_for_bulk_by_signature(session_factory):
@@ -974,6 +985,18 @@ def test_test_search_matches_substring_case_insensitively(session_factory):
         assert [r["test_id"] for r in results] == [
             "ut_pricing.pr_engine.TestClass.test_margin_calc"
         ]
+
+
+def test_test_search_narrows_by_module_prefix(session_factory):
+    """The replacement for the removed suite filter (issue #191): the module prefix lives in
+    ``canonical_name``, so the search — not the triage queue — is what narrows to it."""
+    with session_scope(session_factory) as s:
+        # Both share the one JUnit suite name, which is exactly why filtering on suite was useless.
+        for name in ("ut_ldt.ld_import.TestClass.test_parse", "ut_billing.bi_tax.TestClass.test_x"):
+            get_identity(s, name).suite = "nose2-junit"
+
+        results = views.test_search(s, "ut_ldt")
+        assert [r["test_id"] for r in results] == ["ut_ldt.ld_import.TestClass.test_parse"]
 
 
 def test_test_search_empty_query_returns_nothing(session_factory):

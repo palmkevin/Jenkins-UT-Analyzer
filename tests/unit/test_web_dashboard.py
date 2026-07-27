@@ -525,14 +525,12 @@ def test_runs_list_paginates_server_side(session_factory, monkeypatch):
 
 @pytest.fixture
 def multi_owner_client(session_factory):
-    """Two new failing tests with distinct owners/suites, for filter-bar assertions."""
+    """Two new failing tests with distinct owners, for filter-bar assertions."""
     with session_scope(session_factory) as s:
         r1 = make_build(s, 1, {"alpha": "FAILED", "beta": "FAILED"})
         apply_build(s, r1, baseline=None)
         get_identity(s, "alpha").main_developer = "AB"
-        get_identity(s, "alpha").suite = "ut_pricing"
         get_identity(s, "beta").main_developer = "CD"
-        get_identity(s, "beta").suite = "ut_billing"
     return TestClient(create_app(session_factory=session_factory), follow_redirects=False)
 
 
@@ -546,8 +544,15 @@ def test_triage_owner_filter_reduces_buckets(multi_owner_client):
 def test_triage_filter_bar_options_render(multi_owner_client):
     page = multi_owner_client.get("/").text
     assert 'id="filter-owner"' in page
-    assert "ut_pricing" in page  # datalist option
-    assert "ut_billing" in page
+    assert 'id="filter-track"' in page
+
+
+def test_triage_filter_bar_has_no_suite_control(multi_owner_client):
+    """Issue #191: the Suite filter is gone — every devUTs test shares one JUnit suite name, so
+    it could only ever select all of them."""
+    page = multi_owner_client.get("/").text
+    assert 'id="filter-suite"' not in page
+    assert 'id="suite-options"' not in page
 
 
 def test_triage_track_filter_keeps_both_track_failure_and_renders_badges(session_factory):
@@ -1105,16 +1110,18 @@ def test_flaky_leaderboard_owner_pivots(session_factory):
     assert '<a class="pivot-link" href="/?owner=KP"' in page
 
 
-def test_search_results_suite_and_owner_pivot_with_encoding(session_factory):
+def test_search_results_owner_pivots_with_encoding_and_suite_stays_plain(session_factory):
     with session_scope(session_factory) as s:
         for name in ("ut_a.TestClass.test_alpha_one", "ut_a.TestClass.test_alpha_two"):
             ident = get_identity(s, name)
-            ident.suite = "ut a&b"  # forces visible URL-encoding in the pivot href
-            ident.main_developer = "KP"
+            ident.suite = "nose2-junit"
+            ident.main_developer = "K P&Co"  # forces visible URL-encoding in the pivot href
     client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
     page = client.get("/search?q=alpha").text
-    assert '<a class="pivot-link" href="/?suite=ut+a%26b"' in page
-    assert '<a class="pivot-link" href="/?owner=KP"' in page
+    assert '<a class="pivot-link" href="/?owner=K+P%26Co"' in page
+    # Suite renders, but never as a pivot link — there is no suite filter (issue #191).
+    assert "nose2-junit" in page
+    assert "/?suite=" not in page
     # The cross-link to the KB belongs to the *empty* state only.
     assert "Search the knowledge base" not in page
 
