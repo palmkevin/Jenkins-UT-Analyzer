@@ -241,7 +241,7 @@
       <div class="part" style="border-color:var(--app)">
         <h4><code>web</code> container <span class="pill">dashboard</span></h4>
         <p>FastAPI + HTMX/Jinja. Serves the triage dashboard: the three-bucket queue — now with a
-        bookmarkable <b>filter/sort bar</b> (owner, suite, track, predicted cause, triage status, a
+        bookmarkable <b>filter/sort bar</b> (owner, track, predicted cause, triage status, a
         free-text <b>failure detail</b> search over each row's raw error message/stack trace, flaky
         flag; sort by age/name/owner, all via query params) and row-level <b>bulk actions</b> (bulk
         acknowledge on the New bucket; bulk triage-status/causing-person/reason on Still-failing) plus a
@@ -683,10 +683,15 @@
   always-on <b>in-progress build banner</b> sits above everything else — build number, live elapsed
   time, the Expected Duration, and a Jenkins deep link — turning to a warning highlight only once the
   poller has flagged it <b>overrunning</b> (see <a href="#analysis">Analysis</a>), so a human can go
-  stop it. A <b>filter/sort bar</b> (owner, suite, track,
+  stop it. A <b>filter/sort bar</b> (owner, track,
   predicted cause, triage status, a free-text <b>failure detail</b> search over each row's raw error
   message/stack trace, flaky flag; sort by age/name/owner) sits above the buckets, entirely via
-  bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue.</p>
+  bookmarkable query params, so a monitor can save/share a link to “my” slice of the queue. There
+  is deliberately <b>no suite filter</b>: the JUnit report exposes one suite element per track, both
+  named <code>nose2-junit</code>, so every devUTs identity carries the same <code>suite</code> and
+  filtering on it could only ever select all of them — the module prefix people actually want
+  (<code>ut_pricing</code>, <code>ut_ldt</code>) lives in the class name, which the navbar
+  <b>search</b> matches.</p>
   <div class="grid g3">
     <div class="card"><h3>★ New — unacknowledged</h3><p>Failing tests with no acknowledgement. Each row's
       test name carries a muted <b>one-line error snippet</b> (the traceback's closing exception line,

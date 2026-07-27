@@ -486,7 +486,8 @@ def test_timezone_record_exercises_the_trace_clamp(session_factory):
 def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     """Issue #157: the demo's plain facts are pivots — owner and predicted-cause cells in the
     triage queue, the build results' owner column, the flaky leaderboard's owner and the search
-    pick-list's suite/owner all deep-link to the triage queue pre-filtered on that one value."""
+    pick-list's owner all deep-link to the triage queue pre-filtered on that one value. Suite is
+    not among them — the filter it pivoted into is gone (issue #191)."""
     from uta.web.app import create_app
 
     client = TestClient(create_app(session_factory=session_factory))
@@ -509,8 +510,8 @@ def test_pivot_links_render_across_demo_surfaces(session_factory, queue):
     assert 'class="pivot-link" href="/?owner=' in flaky_page
 
     search_page = client.get("/search?q=test_").text  # many matches -> the pick-list renders
-    assert 'class="pivot-link" href="/?suite=' in search_page
     assert 'class="pivot-link" href="/?owner=' in search_page
+    assert "/?suite=" not in search_page
 
     # Following an owner pivot lands on the queue filtered to just that owner (the chip names it).
     filtered = client.get(f"/?owner={row['owner']}").text

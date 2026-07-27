@@ -66,14 +66,9 @@
     <input class="form-control form-control-sm" id="filter-owner" type="text" name="owner"
            value="{{ filters.owner or '' }}" placeholder="developer">
   </div>
-  <div class="col">
-    <label class="form-label small mb-0" for="filter-suite">Suite</label>
-    <input class="form-control form-control-sm" id="filter-suite" type="text" name="suite"
-           value="{{ filters.suite or '' }}" list="suite-options" placeholder="e.g. ut_pricing">
-    <datalist id="suite-options">
-      {% for s in options.suites %}<option value="{{ s }}">{% endfor %}
-    </datalist>
-  </div>
+  {#- No Suite filter (issue #191): every devUTs test carries the same JUnit suite name
+      ("nose2-junit"), so the field could only select "all of them" — the module prefix people
+      want (ut_pricing, ut_ldt, …) lives in the class name. Use the navbar search for that. -#}
   <div class="col">
     <label class="form-label small mb-0" for="filter-track">Track</label>
     <select class="form-select form-select-sm" id="filter-track" name="track"
