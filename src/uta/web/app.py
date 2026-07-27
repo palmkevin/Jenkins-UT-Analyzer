@@ -245,7 +245,7 @@ def _referer_path(request: Request) -> str | None:
     return _same_origin_path(rel)
 
 
-_TRIAGE_FILTER_KEYS = ("owner", "suite", "track", "cause", "triage_status", "flaky")
+_TRIAGE_FILTER_KEYS = ("owner", "suite", "track", "cause", "triage_status", "failure", "flaky")
 
 
 def _triage_filters(request: Request) -> dict[str, str]:

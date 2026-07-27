@@ -258,6 +258,19 @@ _SPECS: tuple[TestSpec, ...] = (
         line=91,
         owner="rvo",
     ),
+    # Failure-detail search showcase (issue #189): a new & unacknowledged failure whose error text
+    # names "uuid4" — the worked example from the ticket. Typing `uuid4` into the triage bar's
+    # "failure detail" filter pulls exactly this row out of the New bucket; the token appears
+    # nowhere else in the dataset, so the substring match is unambiguous in the live demo.
+    TestSpec(
+        "ut_core.co_ids.TestClass",
+        "test_reference_identifier",
+        "PPPPPPPPPPPPFF",
+        exc_type="AssertionError",
+        message="identifier is not deterministic: expected 'REF-001' but got a random uuid4",
+        line=39,
+        owner="tha",
+    ),
 )
 
 TRACKS = ("permanent", "permanent_py39")

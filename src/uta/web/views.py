@@ -381,22 +381,38 @@ def _row(
         )
         if failure_info
         else None,
+        # Full failure detail (raw message + stack trace) lower-cased for the failure-detail
+        # filter (issue #189) — the searchable text behind the displayed snippet. Kept off the
+        # row's rendered surface; only _matches_filters reads it.
+        "failure_haystack": _failure_haystack(failure_info) if failure_info else "",
     }
+
+
+def _failure_haystack(failure_info: dict) -> str:
+    """The lower-cased raw failure text (error details + stack trace) of an episode's
+    characterising result — the substring the failure-detail filter searches (issue #189)."""
+    parts = (failure_info.get("error_details"), failure_info.get("error_stack_trace"))
+    return "\n".join(p for p in parts if p).lower()
 
 
 def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     """Whether a projected triage row passes the query-param filter set.
 
-    Text filters (``owner``/``suite``) are case-insensitive substring matches; ``track`` matches
-    when **any** failing track equals it (a test failing in both tracks must show under either
-    filter — issue #84); ``cause``/``triage_status`` are exact; ``flaky`` is a truthy toggle. An
-    absent or empty filter value never excludes a row.
+    Text filters (``owner``/``suite``/``failure``) are case-insensitive substring matches;
+    ``failure`` searches the raw failure detail (error message + stack trace) of the episode's
+    characterising result (issue #189); ``track`` matches when **any** failing track equals it (a
+    test failing in both tracks must show under either filter — issue #84); ``cause``/
+    ``triage_status`` are exact; ``flaky`` is a truthy toggle. An absent or empty filter value
+    never excludes a row.
     """
     owner = filters.get("owner", "").strip().lower()
     if owner and owner not in (row["owner"] or "").lower():
         return False
     suite = filters.get("suite", "").strip().lower()
     if suite and suite not in (row["suite"] or "").lower():
+        return False
+    failure = filters.get("failure", "").strip().lower()
+    if failure and failure not in (row.get("failure_haystack") or ""):
         return False
     track = filters.get("track", "").strip()
     if track and track not in row["tracks"]:
@@ -435,6 +451,7 @@ _CHIP_LABELS = {
     "track": "track",
     "cause": "cause",
     "triage_status": "status",
+    "failure": "failure detail",
 }
 
 

@@ -716,6 +716,34 @@ def test_triage_filters_by_flaky(session_factory):
         assert {r["test_id"] for r in by_flaky["new"]} == {"alpha"}
 
 
+def test_triage_filters_by_failure_detail(session_factory):
+    # Issue #189: the "failure detail" filter is a case-insensitive substring over the raw error
+    # message + stack trace of each episode's characterising result.
+    with session_scope(session_factory) as s:
+        r1 = make_build(
+            s,
+            1,
+            {"alpha": "FAILED", "beta": "FAILED"},
+            errors={
+                "alpha": ("test failure", "Traceback...\nValueError: bad uuid4 token"),
+                "beta": ("row count mismatch", "Traceback...\nAssertionError: expected 1 got 2"),
+            },
+        )
+        apply_build(s, r1, baseline=None)
+
+        # Matches a term that lives only in the stack trace, case-insensitively.
+        by_trace = views.triage_queue(s, filters={"failure": "UUID4"})
+        assert {r["test_id"] for r in by_trace["new"]} == {"alpha"}
+        assert by_trace["counts"]["new"] == 1
+
+        # Matches the details message too, not only the trace.
+        by_details = views.triage_queue(s, filters={"failure": "mismatch"})
+        assert {r["test_id"] for r in by_details["new"]} == {"beta"}
+
+        # A term present in neither field excludes every row.
+        assert views.triage_queue(s, filters={"failure": "no-such-token"})["counts"]["new"] == 0
+
+
 def test_triage_sort_by_name_and_owner(session_factory):
     with session_scope(session_factory) as s:
         r1 = make_build(s, 1, {"zeta": "FAILED", "alpha": "FAILED"})
@@ -761,6 +789,14 @@ def test_triage_filter_chips_empty_when_nothing_active():
 def test_triage_filter_chip_removing_last_filter_links_home():
     (chip,) = views.triage_filter_chips({"suite": "ut_pricing"})
     assert chip["label"] == "suite: ut_pricing"
+    assert chip["remove_url"] == "/"
+
+
+def test_triage_filter_chip_labels_failure_detail():
+    # Issue #189: the failure-detail filter renders a removable chip like the other text filters.
+    (chip,) = views.triage_filter_chips({"failure": "uuid4"})
+    assert chip["key"] == "failure"
+    assert chip["label"] == "failure detail: uuid4"
     assert chip["remove_url"] == "/"
 
 
