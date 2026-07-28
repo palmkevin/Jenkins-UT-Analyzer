@@ -239,7 +239,7 @@ _SPECS: tuple[TestSpec, ...] = (
     # attribution (issue #106) target — and the queue button announces the pair as its "(2)"
     # blast radius up front (issue #152); the solo failures around it show no bulk button at all.
     # Deliberately left untriaged by the seed so both controls render and stay clickable in the
-    # live demo. A fresh suite/owner also widens the filter bar's dropdown options.
+    # live demo. A fresh owner also widens the filter bar's owner dropdown.
     TestSpec(
         "ut_notify.nt_dispatch.TestClass",
         "test_email_dispatch",

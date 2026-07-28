@@ -45,8 +45,19 @@ _Avoid_: Shard, lane, stage
 
 **Failure Episode**:
 One fail→fix cycle of a test — from the build where it started failing to the build where it came
-back to passing (or was removed). Numbered per test.
+back to passing. Numbered per test. Closes **only** when the test runs and passes again; if the
+test is removed while failing, its episode stays open (disappeared ≠ fixed) — see Open episode /
+closed episode below.
 _Avoid_: Streak, incident
+
+**Open episode / closed episode**:
+An episode's binary state (`FailureEpisode.is_open`). **Open** means the test is currently failing
+— or has been removed while failing, since removal never closes an episode. **Closed** means the
+test passed again (`fixed_at` is set); "closed" names the *state*, "fixed" names *how* it closed.
+This pairing is the canonical vocabulary for a test's failure status outside its own record (e.g.
+the test-search results column: "open episode" / "removed" / "closed" / "no failures on record").
+_Avoid_: Fixed (as the state label — reserve "fixed" for describing how an episode closed, not for
+the closed state itself)
 
 **Lifecycle State**:
 Whether a test is currently failing, fixed, or removed. About the result only — independent of

@@ -349,7 +349,6 @@ def _row(
     return {
         "identity_id": ident.id,
         "test_id": ident.canonical_name,
-        "suite": ident.suite,
         "owner": ident.main_developer,
         # Pivot links (issue #157): the row's plain facts double as filters on the queue itself.
         "owner_url": pivot_url("owner", ident.main_developer),
@@ -398,18 +397,17 @@ def _failure_haystack(failure_info: dict) -> str:
 def _matches_filters(row: dict, filters: dict[str, str]) -> bool:
     """Whether a projected triage row passes the query-param filter set.
 
-    Text filters (``owner``/``suite``/``failure``) are case-insensitive substring matches;
-    ``failure`` searches the raw failure detail (error message + stack trace) of the episode's
-    characterising result (issue #189); ``track`` matches when **any** failing track equals it (a
-    test failing in both tracks must show under either filter — issue #84); ``cause``/
-    ``triage_status`` are exact; ``flaky`` is a truthy toggle. An absent or empty filter value
-    never excludes a row.
+    Text filters (``owner``/``failure``) are case-insensitive substring matches; ``failure``
+    searches the raw failure detail (error message + stack trace) of the episode's characterising
+    result (issue #189); ``track`` matches when **any** failing track equals it (a test failing in
+    both tracks must show under either filter — issue #84); ``cause``/``triage_status`` are exact;
+    ``flaky`` is a truthy toggle. An absent or empty filter value never excludes a row.
+
+    There is deliberately **no suite filter** (issue #191): every devUTs test shares one JUnit
+    suite name, so filtering on it can only ever mean "all of them".
     """
     owner = filters.get("owner", "").strip().lower()
     if owner and owner not in (row["owner"] or "").lower():
-        return False
-    suite = filters.get("suite", "").strip().lower()
-    if suite and suite not in (row["suite"] or "").lower():
         return False
     failure = filters.get("failure", "").strip().lower()
     if failure and failure not in (row.get("failure_haystack") or ""):
@@ -447,7 +445,6 @@ def _sort_rows(rows: list[dict], sort: str | None, *, age_key) -> None:
 # it's a toggle, so its chip is a fixed phrase rather than "key: value".
 _CHIP_LABELS = {
     "owner": "owner",
-    "suite": "suite",
     "track": "track",
     "cause": "cause",
     "triage_status": "status",
@@ -469,7 +466,7 @@ def triage_url(filters: dict[str, str], sort: str | None, expand: Collection[str
 
 def pivot_url(key: str, value: str | None) -> str | None:
     """The triage-queue URL filtered on just this **one** value (issue #157) — the pivot behind a
-    clickable owner / suite / predicted-cause fact.
+    clickable owner / predicted-cause fact.
 
     Single-filter by design: clicking an owner anywhere means "show me everything of this owner",
     not "add this owner to my current view" — so the URL never inherits the page's other filters.
@@ -582,10 +579,11 @@ def build_expand_urls(
 
 
 def triage_filter_options(session: Session) -> dict:
-    """Distinct owner/suite values in play, for the triage filter bar's dropdowns.
+    """Distinct owner values in play, for the triage filter bar's dropdowns.
 
-    Suites come from identities that currently have a lifecycle row (irrelevant identities never
-    show up in any bucket); owners likewise. Cheap, small-cardinality scans.
+    Owners come from identities that currently have a lifecycle row (irrelevant identities never
+    show up in any bucket). A cheap, small-cardinality scan. Suites used to be offered here too;
+    they were dropped with the suite filter (issue #191).
     """
     owners = sorted(
         {
@@ -598,18 +596,7 @@ def triage_filter_options(session: Session) -> dict:
             if o
         }
     )
-    suites = sorted(
-        {
-            s
-            for s in session.scalars(
-                select(TestIdentity.suite)
-                .join(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
-                .distinct()
-            ).all()
-            if s
-        }
-    )
-    return {"owners": owners, "suites": suites}
+    return {"owners": owners}
 
 
 def new_failing_count(session: Session) -> int:
@@ -647,8 +634,9 @@ def triage_queue(
        episode surfaced with a Removed flag (disappeared ≠ fixed).
     3. **Recently fixed** — ``FIXED`` within the configured window (default 7 days).
 
-    ``filters`` (issue #63) narrows every bucket by owner/suite/track/predicted cause/triage
-    status/flaky before capping — query params, so the view stays server-rendered and bookmarkable.
+    ``filters`` (issue #63) narrows every bucket by owner/track/predicted cause/triage status/
+    failure detail/flaky before capping — query params, so the view stays server-rendered and
+    bookmarkable.
     ``sort`` reorders each bucket by ``name``/``owner``; any other value (including ``None``) keeps
     each bucket's natural age-based order.
 
@@ -1370,16 +1358,20 @@ def test_search(
 ) -> list[dict]:
     """Global "jump to test by name" search (issue #63): canonical-name substring → identities.
 
-    Matches suite/class/method too (all folded into ``canonical_name``), case-insensitively.
+    ``canonical_name`` is ``className.method``, so a substring matches the module path, the class
+    or the method, case-insensitively — this is how you narrow to a module prefix (``ut_pricing``,
+    ``ut_ldt``), the triage queue having no such filter (issue #191).
     Returns plain rows for the navbar search box: a unique match lets the route redirect straight
     to the test record, several matches render as a short pick-list. ``limit <= 0`` disables the
     cap (same semantics as :func:`_cap` / :func:`_page_window`).
 
     Each row carries its **failure-episode status**: ``has_open_episode`` (an episode is currently
-    open — the test is failing now), and ``last_closed_at`` (when the most recent episode was
-    closed, only when none is open). ``latest_failure_at`` is the most recent failure across all
-    episodes and drives the default ``recent`` sort (newest-first). ``sort`` reorders the rows —
-    ``recent`` (default), ``name`` or ``owner``.
+    open — the test is failing now), ``removed`` (that open episode belongs to a test that has since
+    disappeared from the suite — open, but not "failing now"), and ``last_closed_at`` (when the most
+    recent episode closed, i.e. the test passed again — only when none is open).
+    ``latest_failure_at`` is the most recent failure across all episodes and drives the default
+    ``recent`` sort (newest-first). ``sort`` reorders the rows — ``recent`` (default), ``name`` or
+    ``owner``.
 
     Episode facts come from **one grouped scan** of the matched identities' episodes joined into the
     query (no per-row lookups — the issue #52 pattern), and the sort + cap are applied in SQL so the
@@ -1407,8 +1399,10 @@ def test_search(
             ep_agg.c.latest_failure_at,
             ep_agg.c.last_closed_at,
             ep_agg.c.open_count,
+            TestLifecycle.state,
         )
         .outerjoin(ep_agg, ep_agg.c.tid == TestIdentity.id)
+        .outerjoin(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
         .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
     )
     stmt = _search_order_by(stmt, ep_agg, sort)
@@ -1416,19 +1410,23 @@ def test_search(
         stmt = stmt.limit(limit)
 
     rows: list[dict] = []
-    for ident, latest_failure_at, last_closed_at, open_count in session.execute(stmt).all():
+    for ident, latest_failure_at, last_closed_at, open_count, lc_state in session.execute(stmt):
         has_open = bool(open_count or 0)
+        # A removed test keeps an *open* episode (disappeared ≠ fixed) — flag it distinctly so it
+        # isn't shown as "failing now" (mirrors the triage queue's Removed treatment).
+        removed = has_open and lc_state == LifecycleState.REMOVED
         rows.append(
             {
                 "identity_id": ident.id,
                 "test_id": ident.canonical_name,
+                # Displayed only — no pivot, the queue has no suite filter (#191).
                 "suite": ident.suite,
                 "owner": ident.main_developer,
-                "suite_url": pivot_url("suite", ident.suite),
                 "owner_url": pivot_url("owner", ident.main_developer),
                 "has_open_episode": has_open,
+                "removed": removed,
                 "latest_failure_at": latest_failure_at,
-                # Only meaningful when nothing is open — otherwise the open episode is the story.
+                # Only meaningful when the episode is closed — otherwise it's still open/removed.
                 "last_closed_at": None if has_open else last_closed_at,
             }
         )

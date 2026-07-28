@@ -12,8 +12,8 @@
 
 {% block content %}
 <h1>Test search</h1>
-<p class="meta">Jump to a test record by name — matches suite/class/method substrings. Each match
-  shows its failure-episode status; sorted by most recent failure by default.</p>
+<p class="meta">Jump to a test record by name — matches module / class / method substrings. Each
+  match shows its failure-episode status; sorted by most recent failure by default.</p>
 
 <form class="row g-2 mb-3" method="get" action="/search">
   <div class="col-md-8 col-lg-6">
@@ -45,16 +45,20 @@
       {% for r in results %}
       <tr>
         <td><a href="/tests/{{ r.identity_id }}">{{ r.test_id }}</a></td>
-        {#- Suite / owner pivot into the triage queue filtered on that value (issue #157). -#}
-        <td>{{ ui.pivot(r.suite, r.suite_url) }}</td>
+        {#- Owner pivots into the triage queue filtered on that value (issue #157). Suite is plain
+            text: the queue has no suite filter to pivot into (issue #191). -#}
+        <td>{{ r.suite or "—" }}</td>
         <td>{{ ui.pivot(r.owner, r.owner_url) }}</td>
-        {#- Failure-episode status: an open episode (failing now) vs the most recent close, so the
-            reader sees at a glance whether the test is a live problem or a settled one. -#}
+        {#- Failure-episode status: a live problem (open episode), a settled one (closed — the test
+            passed again), or a removed test whose episode is still open (disappeared ≠ fixed, so
+            not "failing now" — flagged like the triage queue does). One signal per row. -#}
         <td>
-          {% if r.has_open_episode %}
+          {% if r.removed %}
+            <span class="badge removed">removed</span>
+          {% elif r.has_open_episode %}
             <span class="badge removed">open episode</span>
           {% elif r.last_closed_at %}
-            <span class="badge match">fixed</span> <span class="meta">closed {{ r.last_closed_at|reltime }}</span>
+            <span class="badge match">closed</span> <span class="meta">{{ r.last_closed_at|reltime }}</span>
           {% else %}
             <span class="empty">no failures on record</span>
           {% endif %}
