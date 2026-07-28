@@ -586,14 +586,24 @@ def create_app(
         return render(request, "help.html", ctx, cfg=cfg)
 
     @app.get("/search", response_class=HTMLResponse)
-    def search_view(request: Request, q: str = ""):
+    def search_view(request: Request, q: str = "", sort: str = ""):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            results = views.test_search(s, q, limit=cfg.ui_row_limit)
+            results = views.test_search(s, q, limit=cfg.ui_row_limit, sort=sort or None)
         # A unique match jumps straight to the record; the navbar box is a "go to test" shortcut.
         if len(results) == 1:
             return RedirectResponse(f"/tests/{results[0]['identity_id']}", status_code=303)
-        return render(request, "search.html", {"query": q, "results": results}, cfg=cfg)
+        return render(
+            request,
+            "search.html",
+            {
+                "query": q,
+                "results": results,
+                "sort": sort or "recent",
+                "sort_links": views.search_sort_links(q, sort or None),
+            },
+            cfg=cfg,
+        )
 
     # ── Control panel (issue #16) ────────────────────────────────────────────
     # Access is deliberately open for now (honesty system, no auth anywhere yet). These handlers are

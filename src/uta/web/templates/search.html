@@ -2,9 +2,18 @@
 {% import "_macros.html" as ui %}
 {% block title %}Search — UT Analyzer{% endblock %}
 
+{#- Clickable column-sort header (mirrors triage's, issue #77): links come pre-built from the view
+    layer (search_sort_links) and carry the query. ``recent`` sorts newest-first (▼), the name/owner
+    columns ascending (▲); the active column shows its arrow. -#}
+{% macro sort_th(label, key) -%}
+  {%- set arrow = "▼" if key == "recent" else "▲" -%}
+  <a class="sort-link text-reset" href="{{ sort_links[key].url }}">{{ label }}{% if sort_links[key].active %} <span aria-hidden="true">{{ arrow }}</span>{% endif %}</a>
+{%- endmacro %}
+
 {% block content %}
 <h1>Test search</h1>
-<p class="meta">Jump to a test record by name — matches module / class / method substrings.</p>
+<p class="meta">Jump to a test record by name — matches module / class / method substrings. Each
+  match shows its failure-episode status; sorted by most recent failure by default.</p>
 
 <form class="row g-2 mb-3" method="get" action="/search">
   <div class="col-md-8 col-lg-6">
@@ -25,7 +34,13 @@
   {% else %}
   <div class="table-responsive">
   <table class="table table-hover table-sm align-middle">
-    <thead><tr><th>Test</th><th>Suite</th><th>Owner</th></tr></thead>
+    <thead><tr>
+      <th>{{ sort_th("Test", "name") }}</th>
+      <th>Suite</th>
+      <th>{{ sort_th("Owner", "owner") }}</th>
+      <th>Failure status</th>
+      <th>{{ sort_th("Latest failure", "recent") }}</th>
+    </tr></thead>
     <tbody>
       {% for r in results %}
       <tr>
@@ -34,6 +49,21 @@
             text: the queue has no suite filter to pivot into (issue #191). -#}
         <td>{{ r.suite or "—" }}</td>
         <td>{{ ui.pivot(r.owner, r.owner_url) }}</td>
+        {#- Failure-episode status: a live problem (open episode), a settled one (closed — the test
+            passed again), or a removed test whose episode is still open (disappeared ≠ fixed, so
+            not "failing now" — flagged like the triage queue does). One signal per row. -#}
+        <td>
+          {% if r.removed %}
+            <span class="badge removed">removed</span>
+          {% elif r.has_open_episode %}
+            <span class="badge removed">open episode</span>
+          {% elif r.last_closed_at %}
+            <span class="badge match">closed</span> <span class="meta">{{ r.last_closed_at|reltime }}</span>
+          {% else %}
+            <span class="empty">no failures on record</span>
+          {% endif %}
+        </td>
+        <td>{{ r.latest_failure_at|reltime }}</td>
       </tr>
       {% endfor %}
     </tbody>

@@ -906,6 +906,39 @@ def test_search_navbar_box_present(client):
     assert 'action="/search"' in client.get("/").text
 
 
+def test_search_page_shows_episode_status_and_sortable_headers(session_factory):
+    with session_scope(session_factory) as s:
+        # One open, one closed (failed→passed), one removed (failed→absent), one never-failed —
+        # all four status states, all matching "srch_".
+        r1 = make_build(
+            s, 1, {"srch_open": "FAILED", "srch_closed": "FAILED", "srch_gone": "FAILED"}
+        )
+        apply_build(s, r1, baseline=None)
+        r2 = make_build(s, 2, {"srch_open": "FAILED", "srch_closed": "PASSED"})
+        apply_build(s, r2, baseline=r1)  # srch_gone absent → REMOVED, episode stays open
+        get_identity(s, "srch_clean")
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search?q=srch_").text
+    # Status column renders all four states with the agreed vocabulary (no "fixed" wording).
+    assert "open episode" in page
+    assert ">closed<" in page
+    assert ">removed<" in page
+    assert "no failures on record" in page
+    assert ">fixed<" not in page  # the "fixed" badge was retired for "closed" (open/closed pair)
+    # Sortable headers link back to /search with the query preserved.
+    assert "/search?q=srch_&amp;sort=name" in page
+    assert "/search?q=srch_&amp;sort=owner" in page
+
+
+def test_search_page_sort_by_name_orders_alphabetically(session_factory):
+    with session_scope(session_factory) as s:
+        get_identity(s, "srch_zeta")
+        get_identity(s, "srch_alpha")
+    client = TestClient(create_app(session_factory=session_factory), follow_redirects=False)
+    page = client.get("/search?q=srch_&sort=name").text
+    assert page.index("srch_alpha") < page.index("srch_zeta")
+
+
 def test_theme_toggle_present_and_defaults_from_system_preference(client):
     body = client.get("/").text
     assert 'id="theme-toggle"' in body

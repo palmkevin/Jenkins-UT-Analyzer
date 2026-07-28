@@ -65,8 +65,14 @@
     to a test by name — that box matches any substring of the full name, so it is also how you
     narrow to one <strong>module</strong> (e.g. <code>ut_pricing</code>). There is deliberately no
     suite filter: every devUTs test reports under the same JUnit suite name, so filtering on it
-    would only ever mean "all of them". Owner and predicted-cause values shown throughout the
-    queue, on a test's own record, a build's results and the flaky leaderboard are themselves
+    would only ever mean "all of them". A single match opens that test's record directly; several
+    matches list as a results table, each row showing its <strong>failure status</strong> — an
+    "open episode" badge if it's failing right now, "removed" if the test has since disappeared from
+    the suite (its episode stays open — gone ≠ fixed), "closed" with how long ago its last episode
+    closed (the test passed again), or "no failures on record" — plus its most recent failure time,
+    sorted newest-failure-first by default. The Test, Owner and "Latest failure" column headers are
+    clickable to change the sort. Owner and predicted-cause values shown throughout the queue, on a
+    test's own record, a build's results and the flaky leaderboard are themselves
     <strong>clickable pivots</strong> — click one to jump straight to the triage queue filtered to
     just that value.
   </p>
@@ -291,6 +297,7 @@
     <tr><td style="width: 10rem"><a href="/builds">Job builds</a></td><td>Every ingested build, newest first — status, duration, pass/fail/skip totals, regressions and newly-fixed counts versus baseline, plus a build-health timeline chart and the poller's last/next tick. A build's failed count links straight to that build's results filtered to failures only.</td></tr>
     <tr><td><a href="/flaky">Flaky</a></td><td>Tests ranked by <strong>oscillation</strong> (how often they flip between pass and fail), not just fail count — a solidly-failing test is a regression, not flaky.</td></tr>
     <tr><td><a href="/kb">Knowledge base</a></td><td>Free-text search over past failures, described above.</td></tr>
+    <tr><td>Test search</td><td>The navbar search box's results page — every test matching your text, with its failure status and sortable columns, described in Daily workflow above.</td></tr>
     <tr><td><a href="/control">Control</a></td><td>Live-tunable thresholds (flaky sensitivity, knowledge-base cutoffs, retention windows, and more — no redeploy needed), the AI suggestion accuracy table, poller health, build quarantine, and on-demand ingest of a specific build or range.</td></tr>
   </table>
 </div>
