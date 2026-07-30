@@ -9,9 +9,11 @@ base**, regression-only **email** alerts, and an optional **LLM root-cause hypot
 > - [docs/OVERVIEW.html](docs/OVERVIEW.html) — the authoritative concept/architecture overview: what
 >   the tool outputs, the parts involved, the workflows, and a **Reference** section (the persisted
 >   information model + load-bearing invariants).
-> - **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — status source of
->   truth (open todos + closed-issue/PR history). See `CLAUDE.md` → *Task workflow* for the branch +
->   `Closes #N` convention.
+> - **[Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues)** — status source
+>   of truth (open todos + resolved-issue/PR history). See `CLAUDE.md` → *Task workflow* for the
+>   branch + `Closes #N` convention. History from before the move off GitHub (issues #15–#194 and
+>   110 PRs) is archived in [docs/history/](docs/history/); see
+>   [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md).
 > - [CLAUDE.md](CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test identity,
 >   medical-data handling) and the testing contract.
 
@@ -77,8 +79,11 @@ requires the CI `test` check to pass before merge, and Render auto-deploys only 
 **deploys are test-gated by construction**:
 
 - **Every PR** runs the full offline suite (ruff + `pytest -m "not live"`, which includes the demo
-  integration tests) via GitHub Actions — the merge gate on `main`.
+  integration tests) via **Bitbucket Pipelines** — the merge gate on `main`.
 - **Every push to `main`** (i.e. a merged PR) triggers Render to build the image and deploy it.
+  Render watches the **GitHub mirror**, not Bitbucket; `origin` pushes to both hosts at once, so the
+  gate still applies. This is the main reason the mirror is kept — see
+  [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md).
 
 **One-time setup** (already GitHub-authenticated): Render dashboard → **New → Blueprint** → select
 this repository → **Apply**. Render reads `render.yaml`, creates the `jenkins-ut-analyzer-demo`
@@ -249,4 +254,6 @@ ruff check . && ruff format --check .
 - **`live`-marked tests are local-only** (they hit the gated external systems / a real API key) and
   never run in CI: `pytest -m live`.
 
-CI (`.github/workflows/ci.yml`): ruff → `pytest -m "not live"` → coverage, with a `services:` Postgres.
+CI ([`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)): ruff → `pytest -m "not live"` → coverage,
+with a `services:` Postgres and a `scripts/wait_for_db.py` readiness gate (Pipelines has no service
+health-checks). `.github/workflows/ci.yml` is retained only for the read-only GitHub mirror.

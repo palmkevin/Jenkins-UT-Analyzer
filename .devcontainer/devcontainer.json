@@ -26,9 +26,14 @@
   // rebuild. First run: `claude` in a terminal to authenticate (browser flow).
   // Second volume: `gh` keeps its auth token in ~/.config/gh (its own store, not git's), which would
   // otherwise be discarded on rebuild — persist it so `gh auth login` is a one-time step.
+  // Third volume: git's own credential store (~/.config/git/credentials), used for the Bitbucket
+  // Cloud push over HTTPS. The VS Code credential helper only forwards credentials the *host* holds,
+  // and the container has no SSH key, so Bitbucket needs a stored Atlassian API token — persisted
+  // here so it is also a one-time step. See docs/BITBUCKET-MIGRATION.md.
   "mounts": [
     "source=claude-code-config,target=/home/vscode/.claude,type=volume",
-    "source=gh-config,target=/home/vscode/.config/gh,type=volume"
+    "source=gh-config,target=/home/vscode/.config/gh,type=volume",
+    "source=git-credentials,target=/home/vscode/.config/git,type=volume"
   ],
 
   "remoteEnv": { "TZ": "Europe/Luxembourg" },

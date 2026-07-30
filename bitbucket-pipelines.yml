@@ -1,0 +1,62 @@
+# Bitbucket Pipelines — the merge gate on `main`. Port of the retired
+# `.github/workflows/ci.yml` (kept in-tree only for the read-only GitHub mirror).
+#
+# Same contract as before: ruff check + ruff format --check, then the offline suite
+# (`pytest -m "not live"`) with zero access to Jenkins, Oracle, or a real external Postgres.
+# The `postgres` service below is throwaway CI infrastructure the runner provides — it is NOT
+# one of the three gated external systems.
+#
+# Enforced via Repository settings → Branch restrictions on `main`: require a passing build
+# before merge, and require the branch to be up to date (the equivalent of GitHub's `strict`
+# required-check).
+
+image: python:3.12
+
+definitions:
+  services:
+    postgres:
+      image: postgres:16
+      # Trimmed from the 1 GB default to leave more of the step's 4 GB for pytest — the
+      # offline suite is memory-hungry (it OOMs when run in one batch in the devcontainer).
+      memory: 512
+      variables:
+        POSTGRES_USER: uta
+        POSTGRES_PASSWORD: uta
+        POSTGRES_DB: uta
+
+  caches:
+    # `pip install -e ".[dev]"` pulls psycopg/oracledb/anthropic wheels on every run.
+    pip: ~/.cache/pip
+
+  steps:
+    - step: &test
+        name: test
+        # If pytest starts getting OOM-killed (exit 137), uncomment `size: 2x` for an 8 GB
+        # step. It bills double build minutes, so it is deliberately not the default.
+        # size: 2x
+        caches:
+          - pip
+        services:
+          - postgres
+        script:
+          - python -m pip install --upgrade pip
+          - pip install -e ".[dev]"
+          - ruff check .
+          - ruff format --check .
+          # One shell block: Pipelines does not guarantee that an `export` on one script line is
+          # visible to the next, and it has no per-step `env:` key (unlike GitHub Actions). It also
+          # has no service health-checks, so `wait_for_db.py` stands in for `--health-cmd pg_isready`
+          # — without it the step can race Postgres' startup and the *destructive migration test*
+          # would silently skip, quietly weakening the gate instead of failing it.
+          - |
+            export DATABASE_URL=postgresql+psycopg://uta:uta@localhost:5432/uta
+            python scripts/wait_for_db.py
+            pytest -m "not live" --cov=uta --cov-report=term-missing
+
+pipelines:
+  pull-requests:
+    "**":
+      - step: *test
+  branches:
+    main:
+      - step: *test
