@@ -120,12 +120,17 @@ the stub in instead — it costs one merge commit and destroys nothing:
 
 ```bash
 git checkout main
-git fetch origin main
-git merge FETCH_HEAD --allow-unrelated-histories   # conflicts on .gitignore
+git fetch origin
+git merge origin/main --allow-unrelated-histories  # conflicts on .gitignore
 git checkout --ours .gitignore                     # ours is purpose-built; theirs is boilerplate
 git add .gitignore && git commit
 git push -u origin main
 ```
+
+> **Do not use `git merge FETCH_HEAD` here.** While `main` still tracked `github/main`,
+> `git fetch origin main` recorded FETCH_HEAD as **`not-for-merge`**, so `git merge FETCH_HEAD`
+> reported *"Already up to date"* and silently did nothing — the merge looked done when no merge had
+> happened. Merge the remote-tracking ref (or the explicit SHA) instead.
 
 ### 4. Bitbucket repo settings (web UI, once)
 
