@@ -105,8 +105,13 @@ export BITBUCKET_TOKEN='<api-token>'
    `/2.0/user`, `/pullrequests`, `/issues` and `/pipelines_config` while `GET /2.0/repositories/…`
    succeeds. A token for the API work needs **pull-request write** and **issue write**
    (`write:pullrequest:bitbucket` / `write:issue:bitbucket` on a scoped Atlassian API token;
-   `pullrequest:write` / `issue:write` on a repository or workspace access token). Enabling Pipelines
-   over the API additionally needs repository **admin**; doing it in the UI avoids that.
+   `pullrequest:write` / `issue:write` on a repository or workspace access token).
+3. **Admin is a separate tier.** Enabling the **issue tracker** *or* **Pipelines** over the API needs
+   repository **admin**, which a pull-request/issue-write token does not carry — both `PUT`s answer
+   `Your credentials lack one or more required privilege scopes`. Do these two in the UI (§4) unless
+   you deliberately mint an admin-scoped token.
+4. **`410 Gone` on `/issues` means the tracker is switched off**, not that the token is wrong. It is
+   easy to misread as an auth failure while `/pullrequests` returns `200` with the same credential.
 
 Verify a new token before relying on it:
 

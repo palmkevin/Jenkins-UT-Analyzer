@@ -175,9 +175,18 @@ def main() -> int:
             print(f"  would create {plan} #{issue['number']} {issue['title']}")
         return 0
 
-    # The tracker is off by default on a fresh Bitbucket repo; POSTing an issue would 404.
-    print("Enabling the issue tracker ...")
-    request("PUT", f"/repositories/{args.workspace}/{args.repo}", {"has_issues": True})
+    # The tracker is off by default on a fresh Bitbucket repo, and issue endpoints then answer
+    # **410 Gone** — not 404, and not a scope error, so don't misread it as a bad token. Turning it
+    # on needs *repository admin*, which a plain pull-request/issue-write token does not carry, so
+    # treat the failure as advisory: the tracker may already be on, and the create loop is the real
+    # test.
+    print("Ensuring the issue tracker is enabled ...")
+    try:
+        request("PUT", f"/repositories/{args.workspace}/{args.repo}", {"has_issues": True})
+    except BitbucketError as exc:
+        print(f"  could not enable it ({exc}).")
+        print("  Continuing — if the next step fails, enable it by hand:")
+        print("  Repository settings -> Issue tracker.")
 
     already = existing_titles(args.workspace, args.repo)
     if already:
