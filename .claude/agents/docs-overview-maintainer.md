@@ -55,8 +55,10 @@ what's wrong. In priority order:
    and communications.
 2. [CLAUDE.md](../../CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test
    identity, ingest scope, …) and conventions.
-3. [GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues) — status and the record
-   of completed changes.
+3. [Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues) — status and the
+   record of completed changes. Anything predating the move off GitHub is archived under
+   [docs/history/](../../docs/history/); note that a bare `#N` in the commit history refers to that
+   GitHub numbering, not to a Bitbucket issue ID.
 
 # What counts as "material" (update the page)
 
