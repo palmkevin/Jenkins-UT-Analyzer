@@ -19,9 +19,12 @@ wrong or re-derive.
   the **end-user-facing** counterpart: the daily triage workflow, what every status/badge means,
   what the LLM contributes versus the deterministic classifier, and how to act on (confirm/correct)
   an AI suggestion. Same freshness contract as OVERVIEW.html — see below.
-- **[GitHub Issues](https://github.com/palmkevin/Jenkins-UT-Analyzer/issues)** — the **source of
-  truth for status** (open todos, in-progress work) and, once closed, the record of completed changes.
-  Every change is a branch + PR that `Closes #N`; see **Task workflow** below.
+- **[Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues)** — the **source
+  of truth for status** (open todos, in-progress work) and, once resolved, the record of completed
+  changes. Every change is a branch + PR that says `Closes #N`; see **Task workflow** below.
+  Issues #15–#194 predate the move off GitHub and are archived in
+  [docs/history/](docs/history/) — a bare `#N` in the commit history refers to *that* numbering,
+  **not** to a Bitbucket issue ID (see **Git hosting** below).
 
 The original planning docs (`PLAN.md` / `IMPLEMENTATION-PLAN.md` / `NEXT-PHASE-REQUIREMENTS.md`) were
 the pre-build requirements. The tool is built, so they've been retired — their durable content lives
@@ -34,8 +37,10 @@ It runs the `uta.demo.app:app` entrypoint — an **ephemeral in-memory SQLite** 
 from `src/uta/demo/` (fake Jenkins + `ut_ref` payloads fed through the *real* `ingest_build`
 pipeline), with **no** connection to Jenkins/Oracle/FishEye/Jira/SMTP/LLM and **no** real data
 (never LIMS/patient/`MODDATA`/real names — same discipline as the fixtures). Deploy is via
-[`render.yaml`](render.yaml): Render auto-deploys `main` on every push, and because `main` is a
-protected branch requiring the CI `test` check, deploys are test-gated by construction. The free
+[`render.yaml`](render.yaml): Render auto-deploys `main` on every push. Since the migration to
+Bitbucket, Render still watches the **GitHub mirror** — which is exactly why the mirror is kept — and
+because `main` only advances through a Bitbucket PR whose Pipelines build passed, and `origin` pushes
+to both hosts at once, deploys stay test-gated by construction. The free
 instance sleeps after ~15 min idle (cold start ~30–50 s). Locally: `uta demo` (or
 `uvicorn uta.demo.app:app`). The store is stateless — a restart rebuilds the same dataset.
 
@@ -48,23 +53,46 @@ times). The dataset is a deliberately small-but-complete story, so grow it thoug
 piling on. Pure refactors/bug-fixes/perf/infra work that change no visible surface don't need it.
 When in doubt, add the example — a feature the demo can't show is a feature reviewers can't see.
 
-## Task workflow (GitHub Issues + PR)
-Work is tracked in **GitHub Issues**, driven conversationally via `gh` (available and authed in the
-devcontainer — see Conventions). There is **no status doc** to hand-maintain; the issue *is* the unit
-of work and the closed issue + merged PR *is* the record.
+## Git hosting (Bitbucket Cloud, with a GitHub mirror)
+The canonical remote is **Bitbucket Cloud**; the old GitHub repo is kept as a **read-only push
+mirror** so the Render demo (which auto-deploys from GitHub) and the archived issue/PR history keep
+working. See [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md) for the runbook and the
+one-time settings.
+- **`origin` pushes to both hosts.** `git remote -v` shows two push URLs on `origin` (Bitbucket
+  first, GitHub second), so a single `git push origin main` updates both. Fetches come from
+  Bitbucket only. Never push to GitHub as the source of truth — it is a mirror.
+- **Only `main` was carried over.** The ~110 merged feature branches were squash-merged, so their
+  content is in `main`'s history; the branch *tips* remain on the GitHub mirror if ever needed.
+- **`#N` is ambiguous by construction — mind which numbering you mean.** GitHub shared one sequence
+  across issues *and* PRs (#193 is a PR, #194 an issue); Bitbucket numbers issues and PRs
+  separately, both from 1. Every `#N` written **before** the migration means the GitHub sequence
+  (archived in [docs/history/](docs/history/)); every `#N` written **after** means a Bitbucket
+  issue. When citing a pre-migration item, write it as `GH#194` to remove the ambiguity.
+
+## Task workflow (Bitbucket Issues + PR)
+Work is tracked in **Bitbucket Issues**, driven conversationally via the Bitbucket Cloud REST API
+(there is no `gh`-equivalent CLI — see Conventions for the `curl` recipe). There is **no status doc**
+to hand-maintain; the issue *is* the unit of work and the resolved issue + merged PR *is* the record.
 - **One issue = one shippable unit.** Imperative title; body states intent + an acceptance check.
-  Big efforts get a `Tracking:` issue listing children. Label with a `type:*` (feat/fix/perf/chore/
-  test) and an `area:*` (ingest/analysis/dashboard/flakiness/kb/email/llm/infra/docs).
+  Big efforts get a `Tracking:` issue listing children.
+- **Classification is lossier than GitHub's labels.** Bitbucket has a fixed `kind`
+  (`bug`/`enhancement`/`proposal`/`task`) and no free-form labels, so the old `type:*` maps onto
+  `kind` (`type:fix`→`bug`, `type:feat`/`type:perf`→`enhancement`, `type:chore`/`type:test`→`task`)
+  and the **`area:*` tag goes in the body's first line** as `area: ingest` (ingest/analysis/
+  dashboard/flakiness/kb/email/llm/infra/docs) so it stays greppable and searchable.
 - **Branch = Conventional prefix + issue number:** `feat/42-…`, `fix/57-…`, `docs/…`, `chore/…`,
   `perf/…`, off `main`.
-- **PR body must contain `Closes #N`** (or `Refs #N` for partial) so the merge auto-closes the issue.
-  Merge with `gh pr merge` once CI is green (`main` requires the CI `test` check; it's `strict`, so
-  rebase/update the branch first). `enforce_admins` is off — a direct-push hotfix escape hatch exists.
-- **Interaction verbs I honor directly:** "open an issue for …" → `gh issue create`; "start #N" →
-  branch off `main`; "update #N …" → `gh issue edit`/comment; "close #N" → PR that `Closes #N`, or
-  `gh issue close` for non-code items.
-- **Public repo hygiene:** issue titles/bodies are world-readable — no LIMS / `MODDATA` / patient
-  strings and no secrets, same discipline as the fixtures.
+- **PR body must contain `Closes #N`** (or `Refs #N` for partial). Bitbucket does **not** auto-close
+  issues from a PR body, so closing is a deliberate step: resolve the issue via the API (or the UI)
+  after the merge. Merge once the Pipelines build is green (`main`'s branch restrictions require a
+  passing build **and** an up-to-date branch — the equivalent of GitHub's `strict` required check).
+  Admins can still push directly — the hotfix escape hatch survives the move.
+- **Interaction verbs I honor directly:** "open an issue for …" → `POST …/issues`; "start #N" →
+  branch off `main`; "update #N …" → `PUT …/issues/N` or a comment; "close #N" → PR that
+  `Closes #N` **plus** resolving the issue.
+- **Public repo hygiene:** treat issue titles/bodies as world-readable regardless of the Bitbucket
+  repo's visibility — no LIMS / `MODDATA` / patient strings and no secrets, same discipline as the
+  fixtures.
 - Parallel **git worktrees** (in-container, single devcontainer): run multiple sessions/branches at
   once with `make worktree name=<x>` (teardown: `make worktree-rm name=<x>`; `scripts/worktree.sh`
   does the work). Each worktree lives under `.worktrees/<x>` (gitignored; inside the bind mount, so
@@ -138,11 +166,18 @@ Two tiers — offline (the gate) and `live` (local-only):
 - **Offline suite is the default and the gate.** `pytest -m "not live"` must be green with **zero**
   access to Jenkins, Oracle, or a real Postgres. Parsers test against committed golden fixtures;
   external clients (Jenkins/Oracle/LLM/SMTP) sit behind interfaces and are exercised with fakes.
-  DB-touching tests use an ephemeral Postgres (CI provides one via `services:`).
+  DB-touching tests use an ephemeral Postgres (CI provides one as a Pipelines `services:` container).
 - **`live`-marked tests are local-only**, never in CI (they hit the gated external systems).
 - **Every step ships with its unit tests.** A milestone isn't done until its new logic is covered.
-- CI (`.github/workflows/ci.yml`): lint (ruff) → `pytest -m "not live"` → coverage; **required
-  status on protected `main`**. The lint step runs **both** `ruff check .` **and**
+- CI ([`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)): lint (ruff) → `pytest -m "not live"` →
+  coverage; **required passing build on restricted `main`**. Two Pipelines-specific wrinkles the
+  GitHub Actions version didn't have: there are **no service health-checks**, so
+  [`scripts/wait_for_db.py`](scripts/wait_for_db.py) stands in for `pg_isready` (without it the
+  destructive migration test would *skip* on a startup race and silently weaken the gate), and there
+  is **no per-step `env:`**, so `DATABASE_URL` is exported inside a single `- |` shell block.
+  A step is 4 GB by default; if pytest starts getting OOM-killed, uncomment `size: 2x`.
+  `.github/workflows/ci.yml` is retained **only** for the read-only GitHub mirror — it is not the
+  gate. The lint step runs **both** `ruff check .` **and**
   `ruff format --check .`, so run **both before every commit** — `ruff check .` alone passes while a
   formatting-only diff still fails CI (a green `ruff check` is *not* enough). `ruff format .` fixes
   it in place. Also run `pytest -m "not live"` **in batches** in the devcontainer — the whole suite
@@ -170,10 +205,27 @@ Two tiers — offline (the gate) and `live` (local-only):
   the flag is on, so local dev, the demo, and the offline gate run the Phase-1 self-declared-actor
   app with zero Keycloak access. `current_actor` stays the single identity choke point (and the
   seam for future role gating); auth-on tests seed a signed session cookie, never a live Keycloak.
-- **`gh` CLI is available in the devcontainer** (the `github-cli` devcontainer feature, authed as
-  `palmkevin` via a persisted `gh-config` volume) — use it for GitHub PR / branch-protection work
-  (`gh pr create`, `gh api …/branches/main/protection`). The **bare VM host is deployment-only** (it
-  runs the deployed stack; it has no `gh` and no baked permission config) — see below.
+- **Bitbucket has no `gh`-equivalent CLI** — drive it with the REST API over `curl`. Auth is HTTP
+  Basic with an **Atlassian API token** (app passwords were retired), read from `BITBUCKET_EMAIL` +
+  `BITBUCKET_TOKEN`. These are **developer-shell credentials, not app config** — they are deliberately
+  *not* in `config.py`/`.env.example` (nothing in `src/uta/` reads them), so export them from your
+  shell profile rather than `.env`. A repository/workspace access token works as
+  `Authorization: Bearer` instead. Never inline a token in a command that gets committed or logged:
+
+  ```bash
+  # list open issues
+  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" \
+    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/issues?q=state=\"new\""
+  # open a PR
+  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" -X POST -H 'Content-Type: application/json' \
+    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/pullrequests" \
+    -d '{"title":"…","source":{"branch":{"name":"feat/42-…"}},"destination":{"branch":{"name":"main"}}}'
+  ```
+- **`gh` CLI is still available in the devcontainer** (the `github-cli` devcontainer feature, authed
+  as `palmkevin` via a persisted `gh-config` volume) — but its scope is now **the mirror only**:
+  re-exporting the archived issue/PR history and inspecting the old repo. Don't open PRs there.
+- The **bare VM host is deployment-only** (it runs the deployed stack; it has no `gh`, no `curl`
+  credentials, and no baked permission config) — see below.
 
 ## Development happens only in the devcontainer
 All development runs **inside the devcontainer**, never on the bare VM host. The devcontainer image

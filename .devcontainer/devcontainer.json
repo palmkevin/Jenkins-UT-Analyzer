@@ -26,9 +26,14 @@
   // rebuild. First run: `claude` in a terminal to authenticate (browser flow).
   // Second volume: `gh` keeps its auth token in ~/.config/gh (its own store, not git's), which would
   // otherwise be discarded on rebuild — persist it so `gh auth login` is a one-time step.
+  // Third volume: git's own credential store (~/.config/git/credentials), used for the Bitbucket
+  // Cloud push over HTTPS. The VS Code credential helper only forwards credentials the *host* holds,
+  // and the container has no SSH key, so Bitbucket needs a stored Atlassian API token — persisted
+  // here so it is also a one-time step. See docs/BITBUCKET-MIGRATION.md.
   "mounts": [
     "source=claude-code-config,target=/home/vscode/.claude,type=volume",
-    "source=gh-config,target=/home/vscode/.config/gh,type=volume"
+    "source=gh-config,target=/home/vscode/.config/gh,type=volume",
+    "source=git-credentials,target=/home/vscode/.config/git,type=volume"
   ],
 
   "remoteEnv": { "TZ": "Europe/Luxembourg" },
@@ -36,11 +41,14 @@
   // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
   "forwardPorts": [8000, 8088],
 
-  // First: rewrite git's github SSH URLs to HTTPS *container-locally* (~/.gitconfig, not the
-  // bind-mounted .git) so plain git push/fetch use VS Code's forwarded HTTPS credential helper —
-  // the container has no forwarded SSH agent. The repo's origin stays SSH, so the host is unaffected.
-  // Then match CI's install exactly (.github/workflows/ci.yml) and bring the schema to head vs `db`.
-  "postCreateCommand": "git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate",
+  // First: rewrite SSH remote URLs to HTTPS *container-locally* (~/.gitconfig, not the bind-mounted
+  // .git) so plain git push/fetch use VS Code's forwarded HTTPS credential helper — the container has
+  // no forwarded SSH agent, so an `git@…:` URL fails with `Permission denied (publickey)`.
+  // **bitbucket.org is the one that matters now** (it is the canonical remote); github.com is kept
+  // because the read-only mirror is still a push target. Rewriting is container-local, so a host
+  // clone that legitimately uses SSH is unaffected.
+  // Then match CI's install exactly (bitbucket-pipelines.yml) and bring the schema to head vs `db`.
+  "postCreateCommand": "git config --global url.https://bitbucket.org/.insteadOf git@bitbucket.org: && git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate",
 
   "customizations": {
     "vscode": {
