@@ -96,6 +96,25 @@ export BITBUCKET_EMAIL='kevin.palm@labsolution.lu'
 export BITBUCKET_TOKEN='<api-token>'
 ```
 
+**A git-push token is not enough, and two things bite here:**
+
+1. **The username differs by transport.** Git over HTTPS accepts the Bitbucket *username*
+   (`kpa_labsolution`); the REST API rejects it with `API token must be used with an atlassian
+   registered email` and requires the **Atlassian account email**.
+2. **Scopes.** The credential already stored in this devcontainer is git-only — it returns `403` on
+   `/2.0/user`, `/pullrequests`, `/issues` and `/pipelines_config` while `GET /2.0/repositories/…`
+   succeeds. A token for the API work needs **pull-request write** and **issue write**
+   (`write:pullrequest:bitbucket` / `write:issue:bitbucket` on a scoped Atlassian API token;
+   `pullrequest:write` / `issue:write` on a repository or workspace access token). Enabling Pipelines
+   over the API additionally needs repository **admin**; doing it in the UI avoids that.
+
+Verify a new token before relying on it:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" \
+  https://api.bitbucket.org/2.0/repositories/labsolutionlu/lx-ci-monitor/pullrequests
+```
+
 ### 2. Remotes
 
 ```bash
