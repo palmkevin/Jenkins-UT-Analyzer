@@ -55,10 +55,10 @@ what's wrong. In priority order:
    and communications.
 2. [CLAUDE.md](../../CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test
    identity, ingest scope, …) and conventions.
-3. [Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues) — status and the
-   record of completed changes. Anything predating the move off GitHub is archived under
-   [docs/history/](../../docs/history/); note that a bare `#N` in the commit history refers to that
-   GitHub numbering, not to a Bitbucket issue ID.
+3. [docs/OPEN-WORK.md](../../docs/OPEN-WORK.md) — open work (there is no issue tracker); the record
+   of completed changes is the git history plus the merged PR. Anything predating the move off
+   GitHub is archived under [docs/history/](../../docs/history/); a bare `#N` anywhere in this repo
+   refers to that GitHub numbering.
 
 # What counts as "material" (update the page)
 

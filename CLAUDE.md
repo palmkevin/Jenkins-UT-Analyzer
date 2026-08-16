@@ -19,12 +19,12 @@ wrong or re-derive.
   the **end-user-facing** counterpart: the daily triage workflow, what every status/badge means,
   what the LLM contributes versus the deterministic classifier, and how to act on (confirm/correct)
   an AI suggestion. Same freshness contract as OVERVIEW.html — see below.
-- **[Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues)** — the **source
-  of truth for status** (open todos, in-progress work) and, once resolved, the record of completed
-  changes. Every change is a branch + PR that says `Closes #N`; see **Task workflow** below.
-  Issues #15–#194 predate the move off GitHub and are archived in
-  [docs/history/](docs/history/) — a bare `#N` in the commit history refers to *that* numbering,
-  **not** to a Bitbucket issue ID (see **Git hosting** below).
+- **[docs/OPEN-WORK.md](docs/OPEN-WORK.md)** — the **source of truth for status**. There is **no
+  issue tracker**: Bitbucket Cloud's is being sunset and could not be enabled on this repo (see
+  **Git hosting** below), so open work is tracked in-tree and the record of completed work is the
+  git history plus the merged PR. Items are referenced by **slug**, never by number.
+  The pre-migration GitHub tracker (issues #15–#194 and 110 PRs) is frozen in
+  [docs/history/](docs/history/) — a bare `#N` anywhere in this repo means *that* numbering.
 
 The original planning docs (`PLAN.md` / `IMPLEMENTATION-PLAN.md` / `NEXT-PHASE-REQUIREMENTS.md`) were
 the pre-build requirements. The tool is built, so they've been retired — their durable content lives
@@ -63,36 +63,39 @@ one-time settings.
   Bitbucket only. Never push to GitHub as the source of truth — it is a mirror.
 - **Only `main` was carried over.** The ~110 merged feature branches were squash-merged, so their
   content is in `main`'s history; the branch *tips* remain on the GitHub mirror if ever needed.
-- **`#N` is ambiguous by construction — mind which numbering you mean.** GitHub shared one sequence
-  across issues *and* PRs (#193 is a PR, #194 an issue); Bitbucket numbers issues and PRs
-  separately, both from 1. Every `#N` written **before** the migration means the GitHub sequence
-  (archived in [docs/history/](docs/history/)); every `#N` written **after** means a Bitbucket
-  issue. When citing a pre-migration item, write it as `GH#194` to remove the ambiguity.
+- **There is no issue tracker.** Bitbucket Cloud's is being sunset and could not be enabled on this
+  repo (`410 Gone` on `/issues`); moving to Jira was declined. Open work is tracked in-tree in
+  [docs/OPEN-WORK.md](docs/OPEN-WORK.md) — see **Task workflow** above and
+  [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md) → *Where the tracker went*.
+- **A bare `#N` always means the GitHub archive.** GitHub shared one sequence across issues *and*
+  PRs (#193 is a PR, #194 an issue), and ~110 commit messages already cite it. Since no new
+  numbering exists to collide with it, every `#N` in this repo resolves in
+  [docs/history/](docs/history/). Write `GH#194` in new prose to keep that explicit. The only
+  numbers minted after the migration are **Bitbucket PR IDs** (from 1, cited as `PR #1`).
 
-## Task workflow (Bitbucket Issues + PR)
-Work is tracked in **Bitbucket Issues**, driven conversationally via the Bitbucket Cloud REST API
-(there is no `gh`-equivalent CLI — see Conventions for the `curl` recipe). There is **no status doc**
-to hand-maintain; the issue *is* the unit of work and the resolved issue + merged PR *is* the record.
-- **One issue = one shippable unit.** Imperative title; body states intent + an acceptance check.
-  Big efforts get a `Tracking:` issue listing children.
-- **Classification is lossier than GitHub's labels.** Bitbucket has a fixed `kind`
-  (`bug`/`enhancement`/`proposal`/`task`) and no free-form labels, so the old `type:*` maps onto
-  `kind` (`type:fix`→`bug`, `type:feat`/`type:perf`→`enhancement`, `type:chore`/`type:test`→`task`)
-  and the **`area:*` tag goes in the body's first line** as `area: ingest` (ingest/analysis/
-  dashboard/flakiness/kb/email/llm/infra/docs) so it stays greppable and searchable.
-- **Branch = Conventional prefix + issue number:** `feat/42-…`, `fix/57-…`, `docs/…`, `chore/…`,
-  `perf/…`, off `main`.
-- **PR body must contain `Closes #N`** (or `Refs #N` for partial). Bitbucket does **not** auto-close
-  issues from a PR body, so closing is a deliberate step: resolve the issue via the API (or the UI)
-  after the merge. Merge once the Pipelines build is green (`main`'s branch restrictions require a
+## Task workflow (docs/OPEN-WORK.md + PR)
+Open work lives in **[docs/OPEN-WORK.md](docs/OPEN-WORK.md)**, in-tree. There is **no issue tracker**
+(see **Git hosting** below for why), so that file *is* the backlog and the merged PR *is* the record
+of completed work. It's a hand-maintained status doc — keep it honest, it can't self-correct.
+- **One heading = one shippable unit.** Imperative slug + title; body states intent and an
+  acceptance check. Big efforts nest their children under one heading.
+- **Items are referenced by slug, never by number** — `incident-aggregate`, not `#12`. Deliberate:
+  any fresh numbering would collide with the ~110 commit messages already citing GitHub's `#N`.
+- **`area:` stays the classifier**, as the entry's first line: `area: ingest` (ingest/analysis/
+  dashboard/flakiness/kb/email/llm/infra/docs). The Conventional-Commit prefix carries what the old
+  `type:*` label did, so it isn't restated in the entry.
+- **Branch = Conventional prefix + slug:** `feat/incident-aggregate`, `fix/…`, `docs/…`, `chore/…`,
+  `perf/…`, off `main`. Same slug in the PR title.
+- **The PR that finishes an item deletes its entry** from OPEN-WORK.md — the diff is the closing
+  record, and it makes the doc self-cleaning rather than a graveyard. Partial progress edits the
+  entry instead. Merge once the Pipelines build is green (`main`'s branch restrictions require a
   passing build **and** an up-to-date branch — the equivalent of GitHub's `strict` required check).
   Admins can still push directly — the hotfix escape hatch survives the move.
-- **Interaction verbs I honor directly:** "open an issue for …" → `POST …/issues`; "start #N" →
-  branch off `main`; "update #N …" → `PUT …/issues/N` or a comment; "close #N" → PR that
-  `Closes #N` **plus** resolving the issue.
-- **Public repo hygiene:** treat issue titles/bodies as world-readable regardless of the Bitbucket
-  repo's visibility — no LIMS / `MODDATA` / patient strings and no secrets, same discipline as the
-  fixtures.
+- **Interaction verbs I honor directly:** "open an issue for …"/"add an item for …" → new entry in
+  OPEN-WORK.md; "start `<slug>`" → branch off `main`; "update `<slug>` …" → edit the entry; "close
+  `<slug>`" → PR that implements it **and** deletes the entry.
+- **Public repo hygiene:** treat OPEN-WORK.md entries as world-readable (they are — it's in the
+  repo) — no LIMS / `MODDATA` / patient strings and no secrets, same discipline as the fixtures.
 - Parallel **git worktrees** (in-container, single devcontainer): run multiple sessions/branches at
   once with `make worktree name=<x>` (teardown: `make worktree-rm name=<x>`; `scripts/worktree.sh`
   does the work). Each worktree lives under `.worktrees/<x>` (gitignored; inside the bind mount, so
@@ -201,7 +204,7 @@ Two tiers — offline (the gate) and `live` (local-only):
   [--depth N]` does the same on demand. Once the store is non-empty, selection is incremental above
   the high-water mark.
 - Secrets never committed. Don't add a `live` dependency to the default test path.
-- **Auth is flag-gated** (`AUTH_ENABLED`, default off): Keycloak OIDC (issue #17) is wired only when
+- **Auth is flag-gated** (`AUTH_ENABLED`, default off): Keycloak OIDC (GH#17) is wired only when
   the flag is on, so local dev, the demo, and the offline gate run the Phase-1 self-declared-actor
   app with zero Keycloak access. `current_actor` stays the single identity choke point (and the
   seam for future role gating); auth-on tests seed a signed session cookie, never a live Keycloak.
@@ -212,14 +215,17 @@ Two tiers — offline (the gate) and `live` (local-only):
   shell profile rather than `.env`. A repository/workspace access token works as
   `Authorization: Bearer` instead. Never inline a token in a command that gets committed or logged:
 
+  Pull requests are the only thing the API is used for — there is no issue tracker to drive
+  (`/issues` answers `410 Gone`; see **Git hosting**).
+
   ```bash
-  # list open issues
-  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" \
-    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/issues?q=state=\"new\""
   # open a PR
   curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" -X POST -H 'Content-Type: application/json' \
     "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/pullrequests" \
-    -d '{"title":"…","source":{"branch":{"name":"feat/42-…"}},"destination":{"branch":{"name":"main"}}}'
+    -d '{"title":"…","source":{"branch":{"name":"feat/incident-aggregate"}},"destination":{"branch":{"name":"main"}}}'
+  # list open PRs
+  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" \
+    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/pullrequests?state=OPEN"
   ```
 - **`gh` CLI is still available in the devcontainer** (the `github-cli` devcontainer feature, authed
   as `palmkevin` via a persisted `gh-config` volume) — but its scope is now **the mirror only**:

@@ -4,10 +4,10 @@ Record of the move of this repo from `github.com/palmkevin/Jenkins-UT-Analyzer` 
 `bitbucket.org/labsolutionlu/lx-ci-monitor`, and the runbook for the one-time steps that must be
 done in the two web UIs.
 
-**Shape of the move:** Bitbucket Cloud becomes the canonical remote and the issue tracker. GitHub is
+**Shape of the move:** Bitbucket Cloud becomes the canonical remote. GitHub is
 demoted to a **read-only push mirror** — it is not abandoned, because the public Render demo
 auto-deploys from it and the pre-migration issue/PR history lives there. Only `main` was carried
-over.
+over. The issue tracker did **not** survive the move: see *Where the tracker went* below.
 
 ## Decisions and their consequences
 
@@ -15,7 +15,7 @@ over.
 |---|---|
 | Bitbucket Cloud is canonical; GitHub kept as a push mirror | `origin` has **two push URLs**, so one `git push origin main` updates both. Fetch is Bitbucket-only. |
 | Only `main` migrated | The ~110 merged PR branches were **squash-merged**, so their content is already in `main`. Their tips stay on the GitHub mirror. `main`'s full commit history is preserved byte-for-byte. |
-| Issues move to the Bitbucket tracker | Only the **1 open** issue (GH#194) needed recreating; the other 83 were closed. All 84 issues + 110 PRs are archived in [`history/`](history/). |
+| Issues **could not** move to Bitbucket | The tracker is being sunset and would not enable (`410 Gone`); Jira was declined. Open work moved in-tree to [`OPEN-WORK.md`](OPEN-WORK.md). All 84 issues + 110 PRs are archived in [`history/`](history/). |
 | CI ported to Bitbucket Pipelines | [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml) is the merge gate. `.github/workflows/ci.yml` is retained **only** so the mirror stays green; it is not the gate. |
 | Render demo left pointing at GitHub | No Render reconfiguration, no downtime for the public demo. |
 
@@ -25,21 +25,43 @@ GitHub numbers issues **and** PRs in a single sequence (this repo's `#193` is a 
 Bitbucket numbers issues and PRs **separately, each from 1**. So Bitbucket issue IDs could never line
 up with the GitHub numbers, and ~110 merged commit messages already contain bare `#N`.
 
-The convention (also in `CLAUDE.md`): **a bare `#N` written before the migration means the GitHub
-sequence**, resolvable in [`history/github-issues.md`](history/github-issues.md) and
-[`history/github-pull-requests.md`](history/github-pull-requests.md). A bare `#N` written after means
-a Bitbucket issue. When citing a pre-migration item from now on, write `GH#194`.
+The convention (also in `CLAUDE.md`): **a bare `#N` means the GitHub sequence**, resolvable in
+[`history/github-issues.md`](history/github-issues.md) and
+[`history/github-pull-requests.md`](history/github-pull-requests.md). When citing a pre-migration
+item from now on, write `GH#194`. Because no replacement tracker exists, nothing new mints issue
+numbers that could collide — the only post-migration numbers are **Bitbucket PR IDs** (from 1),
+which are always written as `PR #1`. In-tree work items are referenced by **slug** instead.
 
-### What Bitbucket's tracker cannot carry
+### Where the tracker went
 
-- **No free-form labels.** `type:*` maps onto Bitbucket's fixed `kind`
-  (`type:fix`→`bug`, `type:feat`/`type:perf`→`enhancement`, `type:chore`/`type:test`→`task`).
-  `area:*` has no equivalent — components must be pre-created in repo settings and are read-only over
-  the API — so it goes in the issue body instead.
-- **No author/date preservation.** Recreated issues are authored by the migrating user, dated now.
-  The originals go in a provenance footer.
-- **No `Closes #N` automation.** Bitbucket will not close an issue from a PR body. Resolving is a
-  separate, deliberate step after merge.
+The plan was to recreate the one still-open issue (GH#194) in Bitbucket Issues and carry on there.
+That failed, and the fallback is now the convention:
+
+1. **Bitbucket's tracker would not enable.** Every `POST`/`GET` on `/2.0/repositories/…/issues`
+   answered **`410 Gone`** — the tracker is switched off at the repo level, and turning it on needs
+   repository **admin** scope, which the pull-request/issue-write token does not carry
+   (`Your credentials lack one or more required privilege scopes`).
+2. **It is being sunset anyway.** Atlassian is retiring Bitbucket Cloud's issue tracker in favour of
+   Jira, so re-enabling it — even with an admin token, or by hand in the UI — would have meant
+   migrating twice.
+3. **Jira was declined.** Adopting the workspace Jira for this repo was considered and rejected: too
+   heavy for a single-maintainer tool, and it puts the backlog behind an auth wall that the repo's
+   own readers (and Claude Code sessions) can't see.
+4. **So the backlog moved in-tree**, to [`OPEN-WORK.md`](OPEN-WORK.md). It versions with the code,
+   needs no credentials to read, and the PR that finishes an item deletes its entry — so the diff
+   *is* the closing record. The cost is that it is hand-maintained and has no query/filter surface;
+   it stays viable only because the list is short.
+
+Even had it enabled, Bitbucket's tracker was a poor fit — recorded here so the decision isn't
+revisited from scratch:
+
+- **No free-form labels.** `type:*` would have collapsed onto the fixed `kind`
+  (`bug`/`enhancement`/`proposal`/`task`); `area:*` has no equivalent at all, since components must
+  be pre-created in repo settings and are read-only over the API.
+- **No author/date preservation.** Recreated issues would be authored by the migrating user, dated
+  now, with the originals demoted to a provenance footer.
+- **No `Closes #N` automation.** Bitbucket will not close an issue from a PR body, so every close
+  would have been a separate manual step after merge.
 
 ## What changed in the repo
 
@@ -47,7 +69,7 @@ a Bitbucket issue. When citing a pre-migration item from now on, write `GH#194`.
 |---|---|
 | [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml) | **New.** Port of the GitHub Actions CI. |
 | [`../scripts/wait_for_db.py`](../scripts/wait_for_db.py) | **New.** Postgres readiness gate — Pipelines has no service health-checks. |
-| [`../scripts/migrate_issues_to_bitbucket.py`](../scripts/migrate_issues_to_bitbucket.py) | **New.** One-shot issue recreation via the Bitbucket REST API. |
+| [`OPEN-WORK.md`](OPEN-WORK.md) | **New.** The in-tree backlog that replaces the issue tracker. |
 | [`history/`](history/) | **New.** Frozen Markdown + JSON archive of 84 issues and 110 PRs. |
 | [`pull-request-template.md`](pull-request-template.md) | **Moved** from `.github/`. Bitbucket has no in-repo PR template; this is the source text for the repo setting. |
 | `../.github/workflows/ci.yml` | **Kept**, mirror-only. |
@@ -86,7 +108,7 @@ chmod 600 ~/.config/git/credentials
 
 `@` in the email must be percent-encoded as `%40` in the credentials file.
 
-The **REST API** (issue migration, opening PRs) has no equivalent of the git helper and always needs
+The **REST API** (opening PRs) has no equivalent of the git helper and always needs
 the token explicitly. These are developer-shell credentials, **not app config** — nothing under
 `src/uta/` reads them, so they are deliberately absent from `config.py` and `.env.example`. Export
 them from your shell profile, not `.env`:
@@ -96,22 +118,23 @@ export BITBUCKET_EMAIL='kevin.palm@labsolution.lu'
 export BITBUCKET_TOKEN='<api-token>'
 ```
 
-**A git-push token is not enough, and two things bite here:**
+**A git-push token is not enough, and a few things bite here:**
 
 1. **The username differs by transport.** Git over HTTPS accepts the Bitbucket *username*
    (`kpa_labsolution`); the REST API rejects it with `API token must be used with an atlassian
    registered email` and requires the **Atlassian account email**.
 2. **Scopes.** The credential already stored in this devcontainer is git-only — it returns `403` on
    `/2.0/user`, `/pullrequests`, `/issues` and `/pipelines_config` while `GET /2.0/repositories/…`
-   succeeds. A token for the API work needs **pull-request write** and **issue write**
-   (`write:pullrequest:bitbucket` / `write:issue:bitbucket` on a scoped Atlassian API token;
-   `pullrequest:write` / `issue:write` on a repository or workspace access token).
-3. **Admin is a separate tier.** Enabling the **issue tracker** *or* **Pipelines** over the API needs
-   repository **admin**, which a pull-request/issue-write token does not carry — both `PUT`s answer
-   `Your credentials lack one or more required privilege scopes`. Do these two in the UI (§4) unless
-   you deliberately mint an admin-scoped token.
+   succeeds. A token for the API work needs **pull-request write**
+   (`write:pullrequest:bitbucket` on a scoped Atlassian API token; `pullrequest:write` on a
+   repository or workspace access token). Issue-write is moot — there is no tracker.
+3. **Admin is a separate tier.** Enabling **Pipelines** (or the issue tracker) over the API needs
+   repository **admin**, which a pull-request-write token does not carry — the `PUT`s answer
+   `Your credentials lack one or more required privilege scopes`. Do it in the UI (*Bitbucket repo
+   settings*, below) unless you deliberately mint an admin-scoped token.
 4. **`410 Gone` on `/issues` means the tracker is switched off**, not that the token is wrong. It is
    easy to misread as an auth failure while `/pullrequests` returns `200` with the same credential.
+   This is what ended the tracker plan — see *Where the tracker went*.
 
 Verify a new token before relying on it:
 
@@ -168,21 +191,11 @@ git push -u origin main
    - Leave admins exempt, preserving the direct-push hotfix escape hatch.
 3. **Default PR description** — Repository settings → Pull requests → paste
    [`pull-request-template.md`](pull-request-template.md).
-4. **Issue tracker** — the migration script enables it via the API; otherwise Repository settings →
-   Issue tracker → enable.
+4. **Issue tracker** — **skip: deliberately left disabled.** See *Where the tracker went* above; the
+   backlog lives in [`OPEN-WORK.md`](OPEN-WORK.md). Enabling it would reintroduce a second,
+   contradictory source of truth for status.
 
-### 5. Migrate the issues
-
-```bash
-python scripts/migrate_issues_to_bitbucket.py labsolutionlu lx-ci-monitor --dry-run
-python scripts/migrate_issues_to_bitbucket.py labsolutionlu lx-ci-monitor
-```
-
-Add `--include-closed` to also recreate the 83 closed issues as `resolved`. Not recommended: the
-archive already holds them, and recreating them makes Bitbucket's IDs diverge further from the
-GitHub numbers that the commit history cites.
-
-### 6. Demote GitHub
+### 5. Demote GitHub
 
 GitHub must stay **pushable** (the mirror) but stop being a workplace:
 
@@ -198,14 +211,14 @@ which also breaks the Render demo deploy.
 
 ## Open follow-ups
 
-- **Repo renamed in the move** (`Jenkins-UT-Analyzer` → `lx-ci-monitor`) while the Python package
-  stays `uta` and the Render service stays `jenkins-ut-analyzer-demo`. Decide whether to align the
-  names, and whether `docs/OVERVIEW.html`'s and the README's product naming should follow.
-- **Pipelines vs Jenkins.** [`../DEPLOYMENT-HANDOVER-uta-filled.md`](../DEPLOYMENT-HANDOVER-uta-filled.md)
-  states the internal target is Bitbucket + a **DevOps-owned Jenkins** pipeline on RKE2. If DevOps
-  runs CI in Jenkins against this repo, `bitbucket-pipelines.yml` becomes a redundant second CI that
-  still bills build minutes — at that point either drop it or keep it deliberately as the
-  pre-merge gate with Jenkins doing post-merge deploy.
-- **Pipelines build minutes** are metered per plan (the free tier is 50 min/month); this suite runs
-  several minutes per build across install + lint + tests. Check the workspace plan before relying on
-  it as the merge gate.
+These are **tracked in [`OPEN-WORK.md`](OPEN-WORK.md)**, not here — this doc records the move, and a
+second backlog would be exactly the drift the single-source-of-truth rule exists to prevent. The
+migration raised three items, by slug:
+
+- **`naming-alignment`** — the repo was renamed in the move (`Jenkins-UT-Analyzer` → `lx-ci-monitor`)
+  while the package stays `uta` and the Render service stays `jenkins-ut-analyzer-demo`.
+- **`ci-ownership`** — Bitbucket Pipelines vs the DevOps-owned Jenkins named in
+  [`../DEPLOYMENT-HANDOVER-uta-filled.md`](../DEPLOYMENT-HANDOVER-uta-filled.md), including the
+  metered build minutes (free tier is 50 min/month; this suite costs ~3.5 min per build).
+- **`github-protection-removal`** — time-sensitive: step 1 of *Demote GitHub* above, which the
+  migration push had to bypass.

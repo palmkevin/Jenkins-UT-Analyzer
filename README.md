@@ -9,10 +9,10 @@ base**, regression-only **email** alerts, and an optional **LLM root-cause hypot
 > - [docs/OVERVIEW.html](docs/OVERVIEW.html) — the authoritative concept/architecture overview: what
 >   the tool outputs, the parts involved, the workflows, and a **Reference** section (the persisted
 >   information model + load-bearing invariants).
-> - **[Bitbucket Issues](https://bitbucket.org/labsolutionlu/lx-ci-monitor/issues)** — status source
->   of truth (open todos + resolved-issue/PR history). See `CLAUDE.md` → *Task workflow* for the
->   branch + `Closes #N` convention. History from before the move off GitHub (issues #15–#194 and
->   110 PRs) is archived in [docs/history/](docs/history/); see
+> - **[docs/OPEN-WORK.md](docs/OPEN-WORK.md)** — status source of truth (open todos). There is no
+>   issue tracker; open work is tracked in-tree by slug and the record of completed work is the git
+>   history plus the merged PR. See `CLAUDE.md` → *Task workflow*. The pre-migration GitHub tracker
+>   (issues #15–#194 and 110 PRs) is archived in [docs/history/](docs/history/); see
 >   [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md).
 > - [CLAUDE.md](CLAUDE.md) — the operating contract: load-bearing invariants (clocks, test identity,
 >   medical-data handling) and the testing contract.

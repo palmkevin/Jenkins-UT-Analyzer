@@ -3,11 +3,11 @@
   of GitHub's `.github/pull_request_template.md`), so this file is the *source* for
   Repository settings → Pull requests → "Default description": edit here, then re-paste there.
 
-  Keep it short. The issue holds the detail; this is the change + how it was checked.
-  `Closes #N` does NOT auto-close on Bitbucket — resolve the issue yourself after merging.
+  Keep it short: the change + how it was checked. There is no issue tracker, so the PR body is the
+  detail — cite the `docs/OPEN-WORK.md` slug it finishes, and delete that entry in this same PR.
 -->
 
-Closes #
+Closes: `<open-work-slug>` (entry deleted in this PR) — or "n/a" for unplanned work
 
 ## What changed
 
