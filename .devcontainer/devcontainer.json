@@ -30,13 +30,30 @@
   // Cloud push over HTTPS. The VS Code credential helper only forwards credentials the *host* holds,
   // and the container has no SSH key, so Bitbucket needs a stored Atlassian API token — persisted
   // here so it is also a one-time step. See docs/BITBUCKET-MIGRATION.md.
+  // Fourth mount: the **one** Atlassian/Redmine credential file on the VM, shared read-only with
+  // every devcontainer instead of copied into each. Target `/.claude/` is deliberate, not `~`: the
+  // ls-atlassian / ls-redmine resolver (lib/atlassian_common.py) looks for `.claude/settings.local
+  // .json` from the cwd *upwards to `/`* before falling back to `~/.claude`, so a file at `/.claude`
+  // is found from any working directory — and it stays clear of the `claude-code-config` volume
+  // above, so Claude Code's own state and this credential store never fight. Read-only, and host
+  // uid 2001110 == container `vscode`, so the host file's 0600 mode is readable as-is. Editing the
+  // host file takes effect immediately (the resolver reads it per invocation — no rebuild).
+  // NOTE: everything in that file is readable by anything in this container, which runs in
+  // bypassPermissions mode — keep the tokens least-privilege (see the skill's scope table).
   "mounts": [
     "source=claude-code-config,target=/home/vscode/.claude,type=volume",
     "source=gh-config,target=/home/vscode/.config/gh,type=volume",
-    "source=git-credentials,target=/home/vscode/.config/git,type=volume"
+    "source=git-credentials,target=/home/vscode/.config/git,type=volume",
+    "source=/home/LS/kpa/.claude/settings.local.json,target=/.claude/settings.local.json,type=bind,readonly"
   ],
 
   "remoteEnv": { "TZ": "Europe/Luxembourg" },
+
+  // Claude Code keeps its OAuth account + per-project trust in `~/.claude.json`, which sits *outside*
+  // `~/.claude` — so the volume above does not, on its own, keep you signed in across rebuilds.
+  // Pointing CLAUDE_CONFIG_DIR at the same path makes that file land inside the volume too.
+  // containerEnv (not remoteEnv) so it applies to every process, including a plain `docker exec`.
+  "containerEnv": { "CLAUDE_CONFIG_DIR": "/home/vscode/.claude" },
 
   // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
   "forwardPorts": [8000, 8088],
@@ -48,7 +65,16 @@
   // because the read-only mirror is still a push target. Rewriting is container-local, so a host
   // clone that legitimately uses SSH is unaffected.
   // Then match CI's install exactly (bitbucket-pipelines.yml) and bring the schema to head vs `db`.
-  "postCreateCommand": "git config --global url.https://bitbucket.org/.insteadOf git@bitbucket.org: && git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate",
+  // Last: install the ls-atlassian plugin (Bitbucket/Jira/Confluence). Here rather than in the
+  // Dockerfile for two reasons: it installs into `~/.claude`, which the named volume above shadows
+  // (an image layer would only ever seed an *empty* volume, then silently freeze at that version),
+  // and its marketplace is a private Bitbucket repo — no credentials exist at build time, and the
+  // `insteadOf` rewrite it needs is itself applied at the head of this chain. Each step is `|| true`
+  // guarded and runs last, so a credential hiccup can never fail container creation or the steps
+  // above it; `autoUpdate` on the marketplace keeps it current afterwards. `requests` is the
+  // plugin's one dependency and is *not* a project dependency — its shared lib hard-exits without
+  // it, so it is installed here rather than added to pyproject.
+  "postCreateCommand": "git config --global url.https://bitbucket.org/.insteadOf git@bitbucket.org: && git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate && (pip install requests || true) && (claude plugin marketplace add git@bitbucket.org:labsolutionlu/ai-marketplace.git || true) && (claude plugin install ls-atlassian@labsolution-plugins --scope user || true)",
 
   "customizations": {
     "vscode": {
