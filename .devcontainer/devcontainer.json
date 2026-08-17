@@ -30,6 +30,9 @@
   // Cloud push over HTTPS. The VS Code credential helper only forwards credentials the *host* holds,
   // and the container has no SSH key, so Bitbucket needs a stored Atlassian API token — persisted
   // here so it is also a one-time step. See docs/BITBUCKET-MIGRATION.md.
+  // NOTE: a named volume mounts empty and *root*-owned (the image has no ~/.config/git to copy
+  // ownership from), so until post-create.sh step 4 chowns it, `store` could not write here at all
+  // and that "one-time step" silently never happened. Don't drop that chown.
   // Fourth mount: the **one** Atlassian/Redmine credential file on the VM, shared read-only with
   // every devcontainer instead of copied into each. Target `/.claude/` is deliberate, not `~`: the
   // ls-atlassian / ls-redmine resolver (lib/atlassian_common.py) looks for `.claude/settings.local
@@ -58,23 +61,10 @@
   // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
   "forwardPorts": [8000, 8088],
 
-  // First: rewrite SSH remote URLs to HTTPS *container-locally* (~/.gitconfig, not the bind-mounted
-  // .git) so plain git push/fetch use VS Code's forwarded HTTPS credential helper — the container has
-  // no forwarded SSH agent, so an `git@…:` URL fails with `Permission denied (publickey)`.
-  // **bitbucket.org is the one that matters now** (it is the canonical remote); github.com is kept
-  // because the read-only mirror is still a push target. Rewriting is container-local, so a host
-  // clone that legitimately uses SSH is unaffected.
-  // Then match CI's install exactly (bitbucket-pipelines.yml) and bring the schema to head vs `db`.
-  // Last: install the ls-atlassian plugin (Bitbucket/Jira/Confluence). Here rather than in the
-  // Dockerfile for two reasons: it installs into `~/.claude`, which the named volume above shadows
-  // (an image layer would only ever seed an *empty* volume, then silently freeze at that version),
-  // and its marketplace is a private Bitbucket repo — no credentials exist at build time, and the
-  // `insteadOf` rewrite it needs is itself applied at the head of this chain. Each step is `|| true`
-  // guarded and runs last, so a credential hiccup can never fail container creation or the steps
-  // above it; `autoUpdate` on the marketplace keeps it current afterwards. `requests` is the
-  // plugin's one dependency and is *not* a project dependency — its shared lib hard-exits without
-  // it, so it is installed here rather than added to pyproject.
-  "postCreateCommand": "git config --global url.https://bitbucket.org/.insteadOf git@bitbucket.org: && git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate && (pip install requests || true) && (claude plugin marketplace add git@bitbucket.org:labsolutionlu/ai-marketplace.git || true) && (claude plugin install ls-atlassian@labsolution-plugins --scope user || true)",
+  // Git remote rewrites, the Python env, the Atlassian plugin, and the git credential store — each
+  // step is commented in the script. It lives outside this file because the reasoning does not fit
+  // in a JSON string, and a six-command `&&` chain is not a thing anyone can safely edit.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
 
   "customizations": {
     "vscode": {
