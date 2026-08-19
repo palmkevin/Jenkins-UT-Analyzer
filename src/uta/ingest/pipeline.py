@@ -468,7 +468,7 @@ def ingest_build(
                 logger.info(
                     "build #%d is older than the newest complete build — historical re-ingest, "
                     "lifecycle/classification skipped (build, results and signatures persisted)",
-                    build,
+                    build.build_number,
                 )
             else:
                 t = time.perf_counter()
@@ -523,7 +523,7 @@ def ingest_build(
     logger.info(
         "build #%d ingested in %.1fs (fetch=%.1f parse=%.1f persist=%.1f signatures=%.1f "
         "lifecycle=%.1f classify=%.1f flaky=%.1f)",
-        build,
+        build.build_number,
         total,
         t_fetch,
         t_parse,
@@ -533,7 +533,7 @@ def ingest_build(
         t_classify,
         t_flaky,
     )
-    return build
+    return build.build_number
 
 
 def data_change_window(

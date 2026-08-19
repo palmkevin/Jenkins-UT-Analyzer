@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from datetime import timedelta
@@ -44,6 +45,23 @@ def test_ingest_persists_run_and_results(session_factory):
         assert n == 14
         tracks = set(s.scalars(select(TestResult.track)).all())
         assert tracks == {"permanent", "permanent_py39"}
+
+
+def test_ingest_logs_a_rendered_timing_line(session_factory, caplog):
+    """The end-of-ingest timing line renders — build number *and* numbers, not an ORM object.
+
+    The autouse guard in ``conftest`` already fails the test if the record cannot be formatted at
+    all; this pins the *content*, which a switch to ``%s`` (logging ``<Build object at 0x…>``)
+    would leave green. Deliberately not pinning the full phase list: the line is a diagnostic, not
+    an interface, and it is expected to grow counts.
+    """
+    assert ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2) == 1702
+
+    timing = [r for r in caplog.records if "ingested in" in r.getMessage()]
+    assert len(timing) == 1
+    message = timing[0].getMessage()
+    assert "build #1702 ingested in" in message
+    assert re.search(r"ingested in \d+\.\d+s \(fetch=\d", message)
 
 
 class _AbortedTrackFakeJenkins(FakeJenkinsClient):

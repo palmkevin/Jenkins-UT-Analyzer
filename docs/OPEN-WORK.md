@@ -41,6 +41,34 @@ reshapes the triage aggregate and is hard to reverse), or records the decision n
 
 ---
 
+## `classify-candidate-blowup` — classification re-ranks every data change, per episode
+
+`area: analysis` · observed on a cold-start ingest (empty store, build #2035)
+
+`classify_build` loops over every newly-opened episode and, for each, calls `rank_candidates`, which
+builds a `RankedDataChange` for **all** of the build's data-change candidates and then sorts the full
+list (`src/uta/analyze/relevance.py:270-271`). The candidate set is identical for every episode of a
+build, so both the scoring and the sort are redone per episode.
+
+Measured on the first ingest into an empty store: 14,166 `data_change_candidates` (cold start has no
+previous build, so the correlation window falls back to the 30-day `data_change_max_lookback_days`
+cap) × 734 opened episodes ≈ 10.4M ranked objects and 734 sorts of a 14k list — **509 s of the
+build's 1134 s**, one core pegged, all inside the ingest transaction so nothing is visible in the
+dashboard until it finishes. Steady state is far smaller (few new episodes, window bounded by the
+previous build's start), which is why this only bites on a cold start or after a wipe — but a bad
+build day plus a wide window reproduces it in production.
+
+Fix direction: the per-episode work that actually varies is the *score*, not the candidate list —
+rank once per build and keep only what differs per episode, and/or stop materializing+sorting the
+whole list when only the top match is consumed (`top_code` / `top_data`, `_top_evidence`).
+
+**Acceptance:** cold-start ingest of a build with ~700 opened episodes and ~14k data candidates
+spends seconds, not minutes, in `classify`; a unit test pins the candidate-ranking cost as a function
+of episodes (i.e. it no longer scales with episodes × candidates), and the ranking output for a given
+episode is unchanged.
+
+---
+
 ## `naming-alignment` — reconcile the three names this project answers to
 
 `area: infra` · raised by the Bitbucket migration
