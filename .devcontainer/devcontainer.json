@@ -30,25 +30,41 @@
   // Cloud push over HTTPS. The VS Code credential helper only forwards credentials the *host* holds,
   // and the container has no SSH key, so Bitbucket needs a stored Atlassian API token — persisted
   // here so it is also a one-time step. See docs/BITBUCKET-MIGRATION.md.
+  // NOTE: a named volume mounts empty and *root*-owned (the image has no ~/.config/git to copy
+  // ownership from), so until post-create.sh step 4 chowns it, `store` could not write here at all
+  // and that "one-time step" silently never happened. Don't drop that chown.
+  // Fourth mount: the **one** Atlassian/Redmine credential file on the VM, shared read-only with
+  // every devcontainer instead of copied into each. Target `/.claude/` is deliberate, not `~`: the
+  // ls-atlassian / ls-redmine resolver (lib/atlassian_common.py) looks for `.claude/settings.local
+  // .json` from the cwd *upwards to `/`* before falling back to `~/.claude`, so a file at `/.claude`
+  // is found from any working directory — and it stays clear of the `claude-code-config` volume
+  // above, so Claude Code's own state and this credential store never fight. Read-only, and host
+  // uid 2001110 == container `vscode`, so the host file's 0600 mode is readable as-is. Editing the
+  // host file takes effect immediately (the resolver reads it per invocation — no rebuild).
+  // NOTE: everything in that file is readable by anything in this container, which runs in
+  // bypassPermissions mode — keep the tokens least-privilege (see the skill's scope table).
   "mounts": [
     "source=claude-code-config,target=/home/vscode/.claude,type=volume",
     "source=gh-config,target=/home/vscode/.config/gh,type=volume",
-    "source=git-credentials,target=/home/vscode/.config/git,type=volume"
+    "source=git-credentials,target=/home/vscode/.config/git,type=volume",
+    "source=/home/LS/kpa/.claude/settings.local.json,target=/.claude/settings.local.json,type=bind,readonly"
   ],
 
   "remoteEnv": { "TZ": "Europe/Luxembourg" },
 
+  // Claude Code keeps its OAuth account + per-project trust in `~/.claude.json`, which sits *outside*
+  // `~/.claude` — so the volume above does not, on its own, keep you signed in across rebuilds.
+  // Pointing CLAUDE_CONFIG_DIR at the same path makes that file land inside the volume too.
+  // containerEnv (not remoteEnv) so it applies to every process, including a plain `docker exec`.
+  "containerEnv": { "CLAUDE_CONFIG_DIR": "/home/vscode/.claude" },
+
   // 8000 = in-container `uvicorn --reload`; 8088 = the compose `web` service's published WEB_PORT.
   "forwardPorts": [8000, 8088],
 
-  // First: rewrite SSH remote URLs to HTTPS *container-locally* (~/.gitconfig, not the bind-mounted
-  // .git) so plain git push/fetch use VS Code's forwarded HTTPS credential helper — the container has
-  // no forwarded SSH agent, so an `git@…:` URL fails with `Permission denied (publickey)`.
-  // **bitbucket.org is the one that matters now** (it is the canonical remote); github.com is kept
-  // because the read-only mirror is still a push target. Rewriting is container-local, so a host
-  // clone that legitimately uses SSH is unaffected.
-  // Then match CI's install exactly (bitbucket-pipelines.yml) and bring the schema to head vs `db`.
-  "postCreateCommand": "git config --global url.https://bitbucket.org/.insteadOf git@bitbucket.org: && git config --global url.https://github.com/.insteadOf git@github.com: && pip install -e '.[dev]' && uta migrate",
+  // Git remote rewrites, the Python env, the Atlassian plugin, and the git credential store — each
+  // step is commented in the script. It lives outside this file because the reasoning does not fit
+  // in a JSON string, and a six-command `&&` chain is not a thing anyone can safely edit.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
 
   "customizations": {
     "vscode": {
