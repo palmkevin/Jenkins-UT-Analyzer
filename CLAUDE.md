@@ -39,8 +39,9 @@ pipeline), with **no** connection to Jenkins/Oracle/FishEye/Jira/SMTP/LLM and **
 (never LIMS/patient/`MODDATA`/real names — same discipline as the fixtures). Deploy is via
 [`render.yaml`](render.yaml): Render auto-deploys `main` on every push. Since the migration to
 Bitbucket, Render still watches the **GitHub mirror** — which is exactly why the mirror is kept — and
-because `main` only advances through a Bitbucket PR whose Pipelines build passed, and `origin` pushes
-to both hosts at once, deploys stay test-gated by construction. The free
+because `main` only advances through a Bitbucket PR whose Pipelines build passed, and the mirror is
+fed by a Pipelines step that runs *after* that build on `main`, deploys stay test-gated by
+construction. The free
 instance sleeps after ~15 min idle (cold start ~30–50 s). Locally: `uta demo` (or
 `uvicorn uta.demo.app:app`). The store is stateless — a restart rebuilds the same dataset.
 
@@ -58,9 +59,13 @@ The canonical remote is **Bitbucket Cloud**; the old GitHub repo is kept as a **
 mirror** so the Render demo (which auto-deploys from GitHub) and the archived issue/PR history keep
 working. See [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md) for the runbook and the
 one-time settings.
-- **`origin` pushes to both hosts.** `git remote -v` shows two push URLs on `origin` (Bitbucket
-  first, GitHub second), so a single `git push origin main` updates both. Fetches come from
-  Bitbucket only. Never push to GitHub as the source of truth — it is a mirror.
+- **The mirror syncs itself; you never push to it.** A `mirror main to the GitHub mirror` step in
+  [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) runs after `test` on every `main` build and
+  pushes `main` to GitHub from Atlassian's runners. It exists because `main` only advances through a
+  **server-side PR merge** — no workstation is in the loop, so before this the mirror silently fell
+  behind and the Render demo stopped updating. Fetches come from Bitbucket only. Never push to
+  GitHub by hand — it is a receive-only mirror, and a manual push is how it diverges and starts
+  rejecting the automated one.
 - **Only `main` was carried over.** The ~110 merged feature branches were squash-merged, so their
   content is in `main`'s history; the branch *tips* remain on the GitHub mirror if ever needed.
 - **There is no issue tracker.** Bitbucket Cloud's is being sunset and could not be enabled on this

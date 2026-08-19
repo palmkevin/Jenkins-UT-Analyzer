@@ -94,21 +94,34 @@ Jenkins** pipeline on RKE2. `bitbucket-pipelines.yml` is currently the pre-merge
 billing build minutes — the free tier is 50 min/month and this suite costs ~3.5 min per build, so
 roughly 14 builds a month before it bites.
 
+Pipelines now also carries the **GitHub mirror sync** (the `mirror main to the GitHub mirror` step on
+`main`), so it is no longer only the test gate: dropping it silently strands the mirror, and with it
+the public Render demo. Whatever replaces Pipelines has to take that step over — and the mirror
+credential (a GitHub deploy key held as a Bitbucket repository SSH key) would have to be re-issued
+wherever CI lands.
+
 **Acceptance:** either Pipelines is kept deliberately as the pre-merge gate with Jenkins doing
-post-merge deploy, or `bitbucket-pipelines.yml` is dropped and the gate moves to Jenkins. Whichever,
-update the *Testing contract* in `CLAUDE.md`.
+post-merge deploy, or `bitbucket-pipelines.yml` is dropped and both the gate **and the mirror sync**
+move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 ---
 
 ## `github-protection-removal` — stop the mirror push from breaking
 
-`area: infra` · **time-sensitive** · raised by the Bitbucket migration
+`area: infra` · **blocking** · raised by the Bitbucket migration
 
 `main` on the GitHub mirror still has a required-status-check branch protection. The migration push
 had to bypass it (the remote said so). Once Actions minutes lapse or that workflow stops running,
 mirror pushes get **rejected** — and because Render auto-deploys the public demo from the mirror,
 the demo silently stops updating.
 
+**This is now a blocker, not just a clock.** The `mirror main to the GitHub mirror` Pipelines step
+authenticates with a deploy key, which — unlike the repo admin who made the migration push — cannot
+bypass branch protection. So the automated sync is rejected on every run until the protection comes
+off, and the demo keeps drifting exactly as before. The two web-UI halves (protection off; deploy
+key + known-hosts on) have to land together for the step to do anything.
+
 **Acceptance:** protection removed on the mirror's `main`, Issues + Wikis unchecked, a MIRROR note
-added. The repo must **not** be archived — archiving makes it read-only and kills the mirror push
-outright. See [BITBUCKET-MIGRATION.md](BITBUCKET-MIGRATION.md) → *Demote GitHub*.
+added, and one `main` build observed pushing to the mirror successfully. The repo must **not** be
+archived — archiving makes it read-only and kills the mirror push outright. See
+[BITBUCKET-MIGRATION.md](BITBUCKET-MIGRATION.md) → *Demote GitHub* and *Keeping the mirror in sync*.

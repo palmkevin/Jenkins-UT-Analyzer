@@ -13,7 +13,7 @@ over. The issue tracker did **not** survive the move: see *Where the tracker wen
 
 | Decision | Consequence |
 |---|---|
-| Bitbucket Cloud is canonical; GitHub kept as a push mirror | `origin` has **two push URLs**, so one `git push origin main` updates both. Fetch is Bitbucket-only. |
+| Bitbucket Cloud is canonical; GitHub kept as a push mirror | The mirror is fed by a **Pipelines step on `main`**, not by a developer's push. See *Keeping the mirror in sync* below. |
 | Only `main` migrated | The ~110 merged PR branches were **squash-merged**, so their content is already in `main`. Their tips stay on the GitHub mirror. `main`'s full commit history is preserved byte-for-byte. |
 | Issues **could not** move to Bitbucket | The tracker is being sunset and would not enable (`410 Gone`); Jira was declined. Open work moved in-tree to [`OPEN-WORK.md`](OPEN-WORK.md). All 84 issues + 110 PRs are archived in [`history/`](history/). |
 | CI ported to Bitbucket Pipelines | [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml) is the merge gate. `.github/workflows/ci.yml` is retained **only** so the mirror stays green; it is not the gate. |
@@ -67,7 +67,7 @@ revisited from scratch:
 
 | Path | Change |
 |---|---|
-| [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml) | **New.** Port of the GitHub Actions CI. |
+| [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml) | **New.** Port of the GitHub Actions CI, plus the `mirror main to the GitHub mirror` step (see *Keeping the mirror in sync*). |
 | [`../scripts/wait_for_db.py`](../scripts/wait_for_db.py) | **New.** Postgres readiness gate — Pipelines has no service health-checks. |
 | [`OPEN-WORK.md`](OPEN-WORK.md) | **New.** The in-tree backlog that replaces the issue tracker. |
 | [`history/`](history/) | **New.** Frozen Markdown + JSON archive of 84 issues and 110 PRs. |
@@ -199,8 +199,12 @@ git push -u origin main
 
 GitHub must stay **pushable** (the mirror) but stop being a workplace:
 
-1. Remove the required-status-check branch protection on `main` — otherwise mirror pushes are
-   rejected once Actions minutes lapse or the workflow is disabled.
+1. Remove the required-status-check branch protection on `main`. This is a **hard prerequisite for
+   the automated mirror sync** (next section), not just future-proofing: the migration push could
+   bypass the protection because it was made by a repo admin, but the deploy key the Pipelines step
+   authenticates with cannot bypass anything, so the automated push is **rejected outright** while
+   the protection stands. Independently, the protection would also start rejecting pushes once
+   Actions minutes lapse or the workflow is disabled.
 2. Repository settings → Features → **uncheck Issues** (the archive is in-tree) and **Wikis**.
 3. Edit the GitHub description / add a `MIRROR` note to the top of the README's GitHub view pointing
    at Bitbucket.
@@ -208,6 +212,49 @@ GitHub must stay **pushable** (the mirror) but stop being a workplace:
 
 Do **not** archive the GitHub repo — archiving makes it read-only and the mirror push would fail,
 which also breaks the Render demo deploy.
+
+### 6. Keeping the mirror in sync
+
+**The problem this solves.** `origin` was originally given two push URLs so one `git push origin
+main` would update both hosts. That works only when a *human* pushes `main` — and after the
+migration nobody does: `main` advances exclusively through a Bitbucket **PR merged server-side**, so
+no workstation is in the loop at all. The mirror therefore drifts silently, and because Render
+auto-deploys the public demo from the mirror, the demo quietly stops updating. It is a failure with
+no error message anywhere, which is what makes it worth automating rather than remembering.
+
+**The mechanism.** A second step in [`../bitbucket-pipelines.yml`](../bitbucket-pipelines.yml)'s
+`branches: main` pipeline pushes `main` to GitHub from Atlassian's runners, so the sync depends on
+no workstation being up, credentialed, or switched on. Three properties are deliberate:
+
+- **It runs after `test`.** Pipelines aborts a pipeline at the first failing step, so a red `main`
+  never reaches the mirror and never reaches the demo. That is what keeps "demo deploys are
+  test-gated" true by construction rather than by habit.
+- **`clone: depth: full`.** Pipelines clones at depth 50; git cannot push a complete history out of
+  a shallow clone.
+- **It never force-pushes.** The mirror is receive-only, so the push is always a fast-forward. If it
+  ever is not, someone has committed to the mirror directly and the push *should* fail loudly rather
+  than silently discard their work.
+
+**The credential** is an SSH deploy key, not a token — a PAT expires and would strand the demo on a
+date nobody has written down. One-time setup, both in web UIs:
+
+1. **Bitbucket** → Repository settings → **SSH keys** → *Generate keys*. Copy the **public** key.
+2. Same page → **Known hosts** → add `github.com` and *Fetch* its fingerprint. Without this the push
+   fails host-key verification — it is the step that is easiest to miss.
+3. **GitHub** → the mirror repo → Settings → **Deploy keys** → *Add deploy key* → paste the public
+   key, tick **Allow write access**.
+
+Once it is live, **drop the GitHub push URL from `origin`** — two mechanisms doing one job is how
+they drift, and a manual push to the mirror's `main` would hit the same branch protection anyway:
+
+```bash
+git remote set-url --delete --push origin https://github.com/palmkevin/Jenkins-UT-Analyzer.git
+git remote -v          # expect 1 fetch + 1 push URL, both Bitbucket
+```
+
+**If Pipelines is ever dropped** (see the `ci-ownership` item in [`OPEN-WORK.md`](OPEN-WORK.md)),
+this step goes with it and the mirror sync has to move to whatever replaces it — otherwise the demo
+silently stops updating again, by exactly the same mechanism.
 
 ## Open follow-ups
 
