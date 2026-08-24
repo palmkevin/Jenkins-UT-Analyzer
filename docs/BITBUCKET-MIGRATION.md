@@ -260,12 +260,31 @@ silently stops updating again, by exactly the same mechanism.
 
 These are **tracked in [`OPEN-WORK.md`](OPEN-WORK.md)**, not here — this doc records the move, and a
 second backlog would be exactly the drift the single-source-of-truth rule exists to prevent. The
-migration raised three items, by slug:
+migration raised three items, by slug. Two are still open:
 
 - **`naming-alignment`** — the repo was renamed in the move (`Jenkins-UT-Analyzer` → `lx-ci-monitor`)
   while the package stays `uta` and the Render service stays `jenkins-ut-analyzer-demo`.
 - **`ci-ownership`** — Bitbucket Pipelines vs the DevOps-owned Jenkins named in
   [`../DEPLOYMENT-HANDOVER-uta-filled.md`](../DEPLOYMENT-HANDOVER-uta-filled.md), including the
-  metered build minutes (free tier is 50 min/month; this suite costs ~3.5 min per build).
-- **`github-protection-removal`** — time-sensitive: step 1 of *Demote GitHub* above, which the
-  migration push had to bypass.
+  metered build minutes (free tier is 50 min/month; this suite costs ~3.5 min per build). Pipelines
+  now also carries the mirror sync, so it is no longer only the test gate.
+
+The third, **`github-protection-removal`**, is **done** — recorded here because this doc is the
+record of the move, while its `OPEN-WORK.md` entry was deleted on completion per the closing
+convention. Branch protection is off the mirror's `main`, Issues and Wikis are unchecked, the
+description points at Bitbucket, and the automated sync was observed pushing `main` to the mirror
+(`main` pipeline #9: `test` then `mirror main to the GitHub mirror`, both green, with the mirror's
+`main` read back to confirm it had actually advanced). The local `origin` no longer carries the
+GitHub push URL, so the Pipelines step is the single mechanism.
+
+Two things bit during that setup, both worth knowing if the credential is ever re-issued:
+
+- **Repository settings → Security → Access keys is the wrong page.** That is the *inbound*
+  direction — keys granting read access *to* the Bitbucket repo. The Pipelines key lives under
+  **Repository settings → Pipelines → SSH keys**, which is also where *Known hosts* is set. Only that
+  page generates a pair whose private half is injected into build containers.
+- **`Permission denied (publickey)` does not distinguish "no key configured" from "wrong key on the
+  far end".** It is an *authentication* failure, so it also rules out the read-only-deploy-key theory
+  (a read-only key authenticates and then fails the push with an explicit read-only message). Do not
+  read it as proof that *Known hosts* is correct either — that only shows up as
+  `Host key verification failed` once a key is actually being offered.
