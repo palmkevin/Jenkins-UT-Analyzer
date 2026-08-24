@@ -53,6 +53,32 @@ definitions:
             python scripts/wait_for_db.py
             pytest -m "not live" --cov=uta --cov-report=term-missing
 
+    - step: &mirror
+        name: mirror main to the GitHub mirror
+        # Render auto-deploys the public demo from the GitHub mirror, but `main` now only ever
+        # advances through a Bitbucket PR *merged server-side* — so nothing on a developer's
+        # machine is in the loop to fan the merge commit out to GitHub, and the mirror silently
+        # falls behind. This step closes that gap from Atlassian's runners, so the sync does not
+        # depend on any workstation being up, credentialed, or even switched on.
+        #
+        # It runs *after* `test` in the same pipeline, and Pipelines stops a pipeline at the first
+        # failing step — so a red `main` never reaches the mirror and never reaches the demo. That
+        # is what keeps "demo deploys are test-gated" true by construction rather than by habit.
+        clone:
+          # Pipelines clones at depth 50 by default. Pushing a *complete* history out of a shallow
+          # clone is not something git can do — the push is rejected (or, worse, the remote is left
+          # with unreachable objects). The mirror needs the real thing.
+          depth: full
+        script:
+          # Auth is the repository SSH key (Repository settings → SSH keys), whose public half is a
+          # write-enabled deploy key on the mirror. Nothing secret lives in this file or in a
+          # repository variable, and a deploy key does not expire the way a PAT does.
+          #
+          # Deliberately not a force-push: the mirror is receive-only, so this is always a
+          # fast-forward. If it ever is not, someone has committed to the mirror directly and the
+          # push *should* fail loudly instead of silently discarding their work.
+          - git push git@github.com:palmkevin/Jenkins-UT-Analyzer.git HEAD:main
+
 pipelines:
   pull-requests:
     "**":
@@ -60,3 +86,4 @@ pipelines:
   branches:
     main:
       - step: *test
+      - step: *mirror

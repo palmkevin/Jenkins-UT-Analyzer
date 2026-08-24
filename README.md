@@ -81,8 +81,9 @@ requires the CI `test` check to pass before merge, and Render auto-deploys only 
 - **Every PR** runs the full offline suite (ruff + `pytest -m "not live"`, which includes the demo
   integration tests) via **Bitbucket Pipelines** — the merge gate on `main`.
 - **Every push to `main`** (i.e. a merged PR) triggers Render to build the image and deploy it.
-  Render watches the **GitHub mirror**, not Bitbucket; `origin` pushes to both hosts at once, so the
-  gate still applies. This is the main reason the mirror is kept — see
+  Render watches the **GitHub mirror**, not Bitbucket; a Pipelines step pushes `main` to the mirror
+  after the `test` step passes, so the gate still applies — a red `main` reaches neither the mirror
+  nor the demo. This is the main reason the mirror is kept — see
   [docs/BITBUCKET-MIGRATION.md](docs/BITBUCKET-MIGRATION.md).
 
 **One-time setup** (already GitHub-authenticated): Render dashboard → **New → Blueprint** → select
