@@ -213,25 +213,43 @@ Two tiers — offline (the gate) and `live` (local-only):
   the flag is on, so local dev, the demo, and the offline gate run the Phase-1 self-declared-actor
   app with zero Keycloak access. `current_actor` stays the single identity choke point (and the
   seam for future role gating); auth-on tests seed a signed session cookie, never a live Keycloak.
-- **Bitbucket has no `gh`-equivalent CLI** — drive it with the REST API over `curl`. Auth is HTTP
-  Basic with an **Atlassian API token** (app passwords were retired), read from `BITBUCKET_EMAIL` +
-  `BITBUCKET_TOKEN`. These are **developer-shell credentials, not app config** — they are deliberately
-  *not* in `config.py`/`.env.example` (nothing in `src/uta/` reads them), so export them from your
-  shell profile rather than `.env`. A repository/workspace access token works as
-  `Authorization: Bearer` instead. Never inline a token in a command that gets committed or logged:
+- **Drive Bitbucket through the [`ls-atlassian:bitbucket`](https://bitbucket.org/labsolutionlu/ai-marketplace)
+  skill, not hand-written `curl`.** Bitbucket has no `gh`-equivalent CLI, but the skill is the
+  stand-in: it covers the whole PR lifecycle (create / list / diff / comment / approve / merge /
+  decline) plus branches, files and commits. The devcontainer installs it —
+  [`post-create.sh`](.devcontainer/post-create.sh) adds the `labsolution-plugins` marketplace and
+  installs `ls-atlassian` at **user** scope. Invoke it by name (`/ls-atlassian:bitbucket`, or let the
+  skill description match); if you shell out to its `scripts/bitbucket.py` directly, run it via
+  `python3 …` — the file is **not** executable, so calling it by path fails with `Permission denied`.
+  Pull requests are the only thing driven this way; there is no issue tracker (`/issues` answers
+  `410 Gone`; see **Git hosting**).
+- **Bitbucket credentials live in `.claude/settings.local.json`, not the shell.** The skill reads
+  `BITBUCKET_WORKSPACE` + `BITBUCKET_EMAIL` + `BITBUCKET_API_TOKEN`, taking real env vars first and
+  otherwise reading the settings file **directly** — nearest project `.claude/` walking up, then
+  `~/.claude/`. They currently sit in **`~/.claude/settings.local.json`** (user scope, outside the
+  repo), which is why `echo $BITBUCKET_API_TOKEN` in a shell prints nothing while the skill works
+  fine. Editing the settings file takes effect without restarting the session.
+  - Note the name: the skill wants **`BITBUCKET_API_TOKEN`**. Older notes here said
+    `BITBUCKET_TOKEN`, which nothing reads.
+  - Auth is HTTP Basic with an **Atlassian API token** (app passwords were retired); the token must
+    be paired with the Atlassian *account email*, not the Bitbucket username. These are
+    **developer-shell credentials, not app config** — deliberately *not* in `config.py`/`.env.example`
+    (nothing in `src/uta/` reads them). Never inline a token in a command that gets committed or logged.
+- **The skill has no build/pipeline-status command** — that gap is real and worth naming, because
+  checking whether a PR's build passed (or why a `main` build failed) is routine here. For those, call
+  `/2.0/repositories/…/pipelines/` directly, but reuse the skill's credential resolution rather than
+  assuming env vars:
 
-  Pull requests are the only thing the API is used for — there is no issue tracker to drive
-  (`/issues` answers `410 Gone`; see **Git hosting**).
-
-  ```bash
-  # open a PR
-  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" -X POST -H 'Content-Type: application/json' \
-    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/pullrequests" \
-    -d '{"title":"…","source":{"branch":{"name":"feat/incident-aggregate"}},"destination":{"branch":{"name":"main"}}}'
-  # list open PRs
-  curl -sS -u "$BITBUCKET_EMAIL:$BITBUCKET_TOKEN" \
-    "https://api.bitbucket.org/2.0/repositories/$BB_WS/$BB_REPO/pullrequests?state=OPEN"
+  ```python
+  import sys; sys.path.insert(0, "<ls-atlassian>/lib")
+  from atlassian_common import load_settings_env, require_env
+  load_settings_env(("BITBUCKET_WORKSPACE", "BITBUCKET_EMAIL", "BITBUCKET_API_TOKEN"))
+  auth = (require_env("BITBUCKET_EMAIL"), require_env("BITBUCKET_API_TOKEN"))
   ```
+
+  When filtering pipelines by branch, note the two target shapes: **branch**-triggered runs carry it in
+  `target.ref_name` and **PR**-triggered runs in `target.source`, so filtering on `ref_name` alone
+  silently misses every PR build. Matching `target.commit.hash` sidesteps it.
 - **`gh` CLI is still available in the devcontainer** (the `github-cli` devcontainer feature, authed
   as `palmkevin` via a persisted `gh-config` volume) — but its scope is now **the mirror only**:
   re-exporting the archived issue/PR history and inspecting the old repo. Don't open PRs there.
