@@ -199,6 +199,15 @@ Two tiers — offline (the gate) and `live` (local-only):
 - Expected tracks = 2 (`EXPECTED_TRACKS`, configurable).
 
 ## Conventions
+- **The tool answers to more than one name, deliberately** ([ADR-0008](docs/adr/0008-naming-human-labels-align-identity-keys-pinned.md)).
+  Human-facing labels follow the repo: **`lx-ci-monitor`** is the Bitbucket repo, the host clone, and
+  the devcontainer `name` / `workspaceFolder` (`/workspaces/lx-ci-monitor`). Names another system
+  **keys** on are pinned where they are, because renaming one moves or loses what it keys: the
+  deployment compose project **`jenkins-ut-analyzer`** (now an explicit `name:` in
+  `docker-compose.yml` — it owns `jenkins-ut-analyzer_pgdata`, the live database), the devcontainer
+  project **`jenkins-ut-analyzer-dev`** (it owns the persisted Claude Code / `gh` / git-credential
+  volumes), the Render service **`jenkins-ut-analyzer-demo`** (its name *is* the public demo URL),
+  and the Python package **`uta`** (import root, console script, entrypoints). Don't "tidy" these.
 - Python **3.12** (Docker image pin; host also has `python3.12`). Package root `src/uta/`.
 - Stack: FastAPI + HTMX/Jinja, SQLAlchemy 2.x + Alembic, `psycopg` (PG), `oracledb` (thin), ruff.
 - Config via env (12-factor) → typed settings object; `.env` is gitignored, `.env.example` documents

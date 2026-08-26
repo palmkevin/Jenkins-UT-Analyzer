@@ -1,8 +1,8 @@
 {
-  "name": "Jenkins-UT-Analyzer",
+  "name": "lx-ci-monitor",
   "dockerComposeFile": ["../docker-compose.yml", "docker-compose.dev.yml"],
   "service": "dev",
-  "workspaceFolder": "/workspaces/Jenkins-UT-Analyzer",
+  "workspaceFolder": "/workspaces/lx-ci-monitor",
 
   // Only `db` auto-starts with the `dev` service; web/poller/migrate stay down for a fast inner loop.
   "runServices": ["db"],
