@@ -104,7 +104,11 @@ Remote-SSH to the VM  →  Reopen in Container  →  pytest -m "not live"
 The devcontainer reuses [`docker-compose.yml`](docker-compose.yml) plus
 [`.devcontainer/docker-compose.dev.yml`](.devcontainer/docker-compose.dev.yml), which adds a `dev`
 workspace service (Python 3.12) alongside a fresh `db`. It runs under an **isolated compose project**
-(`jenkins-ut-analyzer-dev`), so it never touches a separately-running `docker compose up` deployment.
+(`jenkins-ut-analyzer-dev`), so it never touches a separately-running `docker compose up` deployment
+(project `jenkins-ut-analyzer`). Both names are pinned rather than derived from the directory, and
+both keep their pre-rename spelling on purpose — a compose project name prefixes its volumes, so
+renaming one orphans its data. See
+[ADR-0008](docs/adr/0008-naming-human-labels-align-identity-keys-pinned.md).
 `postCreateCommand` runs `pip install -e '.[dev]'` (matching CI) and `uta migrate`. Only `db` auto-starts;
 bring the full prod-like stack up from inside on demand:
 

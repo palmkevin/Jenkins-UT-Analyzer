@@ -2,6 +2,17 @@
 # head before either app service starts. Postgres is "container now, external later": the app
 # reaches it only via DATABASE_URL, so production points at an external server with no code change
 # (disable the `db` service, set DATABASE_URL).
+#
+# Load-bearing `name`: without it, compose derives the project name from the *directory* basename,
+# which is how the deployed stack ended up as project `jenkins-ut-analyzer` (it was first brought up
+# from the devcontainer path `/workspaces/Jenkins-UT-Analyzer`). Its data lives in the
+# project-prefixed volume `jenkins-ut-analyzer_pgdata`, so any later `up` from a differently-named
+# directory — the host clone is already `lx-ci-monitor`, and the devcontainer path was renamed to
+# match (ADR-0008) — would silently start a *second*, empty stack instead of the running one.
+# Pinning the name decouples project identity from the path. Do not change it: it would orphan the
+# live database. The devcontainer override sets its own `name` (last file wins), so its stack
+# stays isolated from this one.
+name: jenkins-ut-analyzer
 services:
   db:
     image: postgres:16

@@ -69,21 +69,6 @@ episode is unchanged.
 
 ---
 
-## `naming-alignment` — reconcile the three names this project answers to
-
-`area: infra` · raised by the Bitbucket migration
-
-The Bitbucket repo is **`lx-ci-monitor`**, the Python package is **`uta`**, the Render service is
-**`jenkins-ut-analyzer-demo`**, and the devcontainer `name` / `workspaceFolder` are still
-**`Jenkins-UT-Analyzer`**. Nothing is broken — but four names for one tool is a standing tax on every
-doc and every new reader.
-
-**Acceptance:** either a decision to align them (and the rename executed across
-`.devcontainer/devcontainer.json`, `render.yaml`, README/OVERVIEW product naming), or a recorded
-decision to keep them divergent with the reason.
-
----
-
 ## `ci-ownership` — decide between Bitbucket Pipelines and DevOps' Jenkins
 
 `area: infra` · raised by the Bitbucket migration

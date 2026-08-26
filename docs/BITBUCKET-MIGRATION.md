@@ -260,16 +260,21 @@ silently stops updating again, by exactly the same mechanism.
 
 These are **tracked in [`OPEN-WORK.md`](OPEN-WORK.md)**, not here — this doc records the move, and a
 second backlog would be exactly the drift the single-source-of-truth rule exists to prevent. The
-migration raised three items, by slug. Two are still open:
+migration raised three items, by slug. One is still open:
 
-- **`naming-alignment`** — the repo was renamed in the move (`Jenkins-UT-Analyzer` → `lx-ci-monitor`)
-  while the package stays `uta` and the Render service stays `jenkins-ut-analyzer-demo`.
 - **`ci-ownership`** — Bitbucket Pipelines vs the DevOps-owned Jenkins named in
   [`../DEPLOYMENT-HANDOVER-uta-filled.md`](../DEPLOYMENT-HANDOVER-uta-filled.md), including the
   metered build minutes (free tier is 50 min/month; this suite costs ~3.5 min per build). Pipelines
   now also carries the mirror sync, so it is no longer only the test gate.
 
-The third, **`github-protection-removal`**, is **done** — recorded here because this doc is the
+**`naming-alignment`** is **decided** — see
+[`adr/0008-naming-human-labels-align-identity-keys-pinned.md`](adr/0008-naming-human-labels-align-identity-keys-pinned.md).
+Human-facing labels (the devcontainer `name` / `workspaceFolder`) now follow the repo; the names other
+systems key on (the two compose project names, the Render service, the `uta` package) stay put, and
+the deployment's project name is pinned in `docker-compose.yml` so it no longer depends on the
+directory it is started from.
+
+**`github-protection-removal`** is **done** — recorded here because this doc is the
 record of the move, while its `OPEN-WORK.md` entry was deleted on completion per the closing
 convention. Branch protection is off the mirror's `main`, Issues and Wikis are unchecked, the
 description points at Bitbucket, and the automated sync was observed pushing `main` to the mirror

@@ -7,9 +7,18 @@
 # migrate/web/poller stay down for the fast inner loop. Bring the full prod-like stack up on demand:
 #   docker compose -f docker-compose.yml -f .devcontainer/docker-compose.dev.yml up web poller
 #
-# `name` forces a project SEPARATE from the running deployment (which is project
-# `jenkins-ut-analyzer`), so the devcontainer's db/volumes/network are isolated — closing or
-# rebuilding the container can never stop the live poller/web or touch their data.
+# `name` forces a project SEPARATE from the running deployment (project `jenkins-ut-analyzer`, now
+# pinned in ../docker-compose.yml rather than derived from the directory), so the devcontainer's
+# db/volumes/network are isolated — closing or rebuilding the container can never stop the live
+# poller/web or touch their data. Compose takes the `name` from the LAST file listed, which is this
+# one.
+#
+# It still reads `jenkins-ut-analyzer-dev` after the repo rename (ADR-0008) *deliberately*: a compose
+# project name prefixes its volumes, so `…-dev_claude-code-config`, `…-dev_gh-config` and
+# `…-dev_git-credentials` are keyed by it. Renaming would mount three empty volumes and silently
+# discard the Claude Code login, the `gh` token and the Bitbucket credential store — the one-time
+# steps devcontainer.json goes to some length to persist. The name only has to be *distinct* from the
+# deployment's, not pretty.
 name: jenkins-ut-analyzer-dev
 services:
   dev:
@@ -23,7 +32,7 @@ services:
       context: .devcontainer
       dockerfile: Dockerfile
     volumes:
-      - .:/workspaces/Jenkins-UT-Analyzer:cached
+      - .:/workspaces/lx-ci-monitor:cached
     command: sleep infinity
     env_file: .env
     environment:
