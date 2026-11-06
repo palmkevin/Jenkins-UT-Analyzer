@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `incident-tickets-not-linked` — incident tickets aren't rendered as Jira links
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`_macros.incident_summary` takes `jira`/`fisheye` but never uses them; incident cause/resolution tickets appear only inside form inputs.
-
-**Acceptance:** incident tickets render as Jira deep-links like episodes do.
-
----
-
 ## `attribute-by-signature-blank-claims-update` — signature-wide attribute reports updates when nothing changed
 
 `area: dashboard` · found by the 2026-11 bug hunt

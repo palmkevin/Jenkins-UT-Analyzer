@@ -81,6 +81,15 @@
     Recovered in: {% if inc.recovered %}<a href="/builds/{{ inc.recovered.number }}">#{{ inc.recovered.number }}</a> · {{ inc.recovered_at|reltime }}{% else %}<span class="empty">still open</span>{% endif %}<br>
     {% if inc.failing_stage %}Failing stage: <code>{{ inc.failing_stage }}</code>{% endif %}
   </p>
+  {% if inc.cause_ticket or inc.resolution_ticket or inc.assignee %}
+  <p>
+    {% if inc.assignee %}Assignee: <strong>{{ inc.assignee }}</strong>{% endif %}
+    {% if inc.cause_ticket %}{% if inc.assignee %} · {% endif %}Cause ticket:
+      <a href="{{ jira }}/browse/{{ inc.cause_ticket|urlencode }}">{{ inc.cause_ticket }}</a>{% endif %}
+    {% if inc.resolution_ticket %}{% if inc.assignee or inc.cause_ticket %} · {% endif %}Resolution ticket:
+      <a href="{{ jira }}/browse/{{ inc.resolution_ticket|urlencode }}">{{ inc.resolution_ticket }}</a>{% endif %}
+  </p>
+  {% endif %}
   {% if inc.signature %}
   <p class="meta">
     Failure signature{% if inc.signature.exception_type %} ({{ inc.signature.exception_type }}){% endif %} — seen {{ inc.signature.occurrence_count }}×.

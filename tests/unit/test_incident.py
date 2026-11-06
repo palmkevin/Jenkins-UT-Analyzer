@@ -604,3 +604,40 @@ def test_incident_pages_use_effective_kb_tunables(monkeypatch):
     assert client.get(f"/incidents/{inc_id}").status_code == 200
     assert client.get(f"/builds/{build_number}").status_code == 200
     assert seen == [(2, 0.75), (2, 0.75)]
+
+
+def test_incident_tickets_render_as_jira_links(monkeypatch):
+    """incident-tickets-not-linked: incident cause/resolution tickets (and the assignee) show in the
+    incident summary as Jira deep links, on the incident page and the build page's inline card."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from uta.db import Base, make_session_factory
+    from uta.web.app import create_app
+
+    monkeypatch.setenv("JIRA_BASE_URL", "https://jira.example.test")
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    sf = make_session_factory(engine)
+    with session_scope(sf) as s:
+        b = make_build(s, 1, {})
+        inc = apply_build_incident(
+            s, b, "FAILURE", failing_stage="Compile", failing_stage_log=_LOG
+        ).incident
+        s.flush()
+        actions.set_incident_attribution(
+            s, inc.id, "kev", assignee="ann", cause_ticket="LX-1", resolution_ticket="LX-2"
+        )
+        inc_id, build_number = inc.id, b.build_number
+    client = TestClient(create_app(session_factory=sf))
+    for url in (f"/incidents/{inc_id}", f"/builds/{build_number}"):
+        page = client.get(url).text
+        assert '<a href="https://jira.example.test/browse/LX-1">LX-1</a>' in page
+        assert '<a href="https://jira.example.test/browse/LX-2">LX-2</a>' in page
+        assert "Assignee: <strong>ann</strong>" in page
