@@ -523,16 +523,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `teams-card-markdown-injection` — Teams card text is unescaped Markdown and unbounded
-
-`area: alert` · found by the 2026-11 bug hunt
-
-Hypothesis/test names go raw into Markdown-rendering TextBlocks/FactSets (a hypothesis can carry a clickable link) and there's no length cap (Teams drops payloads over ~28 KB).
-
-**Acceptance:** values are Markdown-escaped and truncated.
-
----
-
 ## `demo-import-side-effect` — importing `uta.demo.app` seeds a demo and leaks a temp dir
 
 `area: demo` · found by the 2026-11 bug hunt

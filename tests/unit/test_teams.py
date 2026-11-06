@@ -12,7 +12,13 @@ import pytest
 from uta.clients import build_channels
 from uta.config import Settings
 from uta.delivery.alert import Alert, AlertKind, AlertSeverity, dispatch
-from uta.delivery.teams import TeamsAlertChannel, TeamsDeliveryError, build_card_message
+from uta.delivery.teams import (
+    MAX_CARD_VALUE_CHARS,
+    TeamsAlertChannel,
+    TeamsDeliveryError,
+    build_card_message,
+    card_text,
+)
 
 WEBHOOK = "https://example.webhook.office.com/workflows/abc?sig=secret"
 
@@ -57,11 +63,32 @@ def test_card_is_workflows_attachments_envelope_with_facts_and_open_url():
 
     factset = next(b for b in card["body"] if b["type"] == "FactSet")
     assert {"title": "Failing stage", "value": "Compile"} in factset["facts"]
-    assert {"title": "Predicted cause", "value": "CODE_CHANGE"} in factset["facts"]
+    assert {"title": "Predicted cause", "value": "CODE\\_CHANGE"} in factset["facts"]
 
     open_url = next(a for a in card["actions"] if a["title"] == "Open in dashboard")
     assert open_url["type"] == "Action.OpenUrl"
     assert open_url["url"] == "http://uta.example/builds/1702"
+
+
+def test_card_text_escapes_markdown_so_values_render_literally():
+    hypothesis = "Likely [this commit](https://evil.example) broke **it**\n- see `x_y`"
+    card = build_card_message(
+        Alert(kind=AlertKind.incident, title="t", body="b", facts=(("Hypothesis", hypothesis),))
+    )["attachments"][0]["content"]
+    (fact,) = next(b for b in card["body"] if b["type"] == "FactSet")["facts"]
+    assert fact["value"] == (
+        "Likely \\[this commit\\]\\(https://evil.example\\) broke \\*\\*it\\*\\*\n"
+        "\\- see \\`x\\_y\\`"
+    )
+    assert "](" not in fact["value"]  # no live link survives
+
+
+def test_card_text_truncates_long_values():
+    out = card_text("a" * 50_000)
+    assert len(out) == MAX_CARD_VALUE_CHARS
+    assert out.endswith("…")
+    assert card_text("short") == "short"
+    assert card_text("1. first") == "1\\. first"
 
 
 def test_card_omits_actions_and_factset_when_absent():
