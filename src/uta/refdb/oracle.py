@@ -43,6 +43,13 @@ _QUERY = (
 )
 
 
+# Bounds on every Oracle round-trip. Without them a hung ``V_TRACKING`` query (or an unreachable
+# listener) blocks the poller indefinitely while the Postgres ingest transaction stays open; with
+# them it raises, and the poller's retry/quarantine handling takes over.
+CALL_TIMEOUT_MS = 60_000  # per round-trip (python-oracledb ``Connection.call_timeout``, in ms)
+TCP_CONNECT_TIMEOUT_S = 20.0  # establishing the TCP connection to the listener, in seconds
+
+
 @dataclass(frozen=True)
 class DataChange:
     session_log_id: int | None
@@ -91,16 +98,26 @@ class OracleTrackingFeed:
         if thick:
             oracledb.init_oracle_client()
         self._oracledb = oracledb
-        self._dsn = oracledb.makedsn(host, port, service_name=service)
+        self._host = host
+        self._port = port
+        self._service = service
         self._user = user
         self._password = password
 
     def changes_in_window(self, start_utc: datetime, end_utc: datetime) -> list[DataChange]:
         win_start = to_ut_ref_local_window_start(start_utc)
         win_end = to_ut_ref_local_window_end(end_utc)
+        # host/port/service_name are passed as connect params (not a makedsn() descriptor) so
+        # tcp_connect_timeout applies in both thin and thick mode.
         with self._oracledb.connect(
-            user=self._user, password=self._password, dsn=self._dsn
+            user=self._user,
+            password=self._password,
+            host=self._host,
+            port=self._port,
+            service_name=self._service,
+            tcp_connect_timeout=TCP_CONNECT_TIMEOUT_S,
         ) as conn:
+            conn.call_timeout = CALL_TIMEOUT_MS
             cur = conn.cursor()
             cur.execute(_QUERY, win_start=win_start, win_end=win_end)
             col_names = [d[0] for d in cur.description]

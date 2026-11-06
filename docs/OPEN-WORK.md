@@ -93,16 +93,6 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 <!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
 
-## `oracle-call-timeout` — Oracle queries have no call timeout
-
-`area: ingest` · found by the 2026-11 bug hunt
-
-`refdb/oracle.py` sets no `call_timeout`, so a hung `V_TRACKING` query blocks the poller indefinitely while holding the Postgres ingest transaction open.
-
-**Acceptance:** the Oracle connection carries a bounded call timeout (and connect timeout).
-
----
-
 ## `data-change-lower-bound-uses-devuts-start` — data-change window lower bound starts at devUTs, not at the build
 
 `area: ingest` · found by the 2026-11 bug hunt · **needs owner input**

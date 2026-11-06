@@ -128,3 +128,61 @@ def test_no_moddata_leaks_into_feed():
     for c in feed.changes_in_window(start, end):
         assert not hasattr(c, "moddata")
         assert "MODDATA" not in vars(c)
+
+
+# ── Bounded timeouts on the live feed (oracle-call-timeout) — no live Oracle ─────────────────
+
+
+class _FakeCursor:
+    description = [(c,) for c in ("CREDATIM",)]
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def execute(self, sql, **binds) -> None:
+        # The timeout must already be in force when the query runs.
+        self._conn.call_timeout_at_execute = self._conn.call_timeout
+
+    def fetchall(self) -> list:
+        return []
+
+
+class _FakeConnection:
+    def __init__(self) -> None:
+        self.call_timeout = 0  # oracledb's default: no limit
+        self.call_timeout_at_execute = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def cursor(self) -> _FakeCursor:
+        return _FakeCursor(self)
+
+
+def test_live_feed_sets_call_and_connect_timeouts(monkeypatch):
+    import oracledb
+
+    from uta.refdb import oracle
+
+    calls: list[dict] = []
+    conn = _FakeConnection()
+
+    def fake_connect(**kwargs):
+        calls.append(kwargs)
+        return conn
+
+    monkeypatch.setattr(oracledb, "connect", fake_connect)
+    feed = oracle.OracleTrackingFeed("db.example", 1521, "svc", "reader", "secret")
+    assert (
+        feed.changes_in_window(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC))
+        == []
+    )
+
+    (kwargs,) = calls
+    assert kwargs["tcp_connect_timeout"] == oracle.TCP_CONNECT_TIMEOUT_S > 0
+    assert (kwargs["host"], kwargs["port"], kwargs["service_name"]) == ("db.example", 1521, "svc")
+    assert conn.call_timeout_at_execute == oracle.CALL_TIMEOUT_MS
+    assert 0 < oracle.CALL_TIMEOUT_MS <= 120_000
