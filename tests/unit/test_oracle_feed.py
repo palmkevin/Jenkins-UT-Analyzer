@@ -185,4 +185,6 @@ def test_live_feed_sets_call_and_connect_timeouts(monkeypatch):
     assert kwargs["tcp_connect_timeout"] == oracle.TCP_CONNECT_TIMEOUT_S > 0
     assert (kwargs["host"], kwargs["port"], kwargs["service_name"]) == ("db.example", 1521, "svc")
     assert conn.call_timeout_at_execute == oracle.CALL_TIMEOUT_MS
-    assert 0 < oracle.CALL_TIMEOUT_MS <= 120_000
+    # Long enough for a 30-day-lookback V_TRACKING scan, yet still bounded (oracle-call-timeout).
+    assert oracle.CALL_TIMEOUT_MS == 300_000
+    assert oracle.TCP_CONNECT_TIMEOUT_S == 20.0  # == the driver default, pinned on purpose

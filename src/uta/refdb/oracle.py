@@ -46,7 +46,13 @@ _QUERY = (
 # Bounds on every Oracle round-trip. Without them a hung ``V_TRACKING`` query (or an unreachable
 # listener) blocks the poller indefinitely while the Postgres ingest transaction stays open; with
 # them it raises, and the poller's retry/quarantine handling takes over.
-CALL_TIMEOUT_MS = 60_000  # per round-trip (python-oracledb ``Connection.call_timeout``, in ms)
+#
+# The call timeout is deliberately generous: a full 30-day-lookback ``V_TRACKING`` scan can take
+# minutes, and a timeout that trips on a legitimately slow query fails — and eventually quarantines
+# — every build. Five minutes still bounds a genuinely hung call.
+CALL_TIMEOUT_MS = 300_000  # per round-trip (python-oracledb ``Connection.call_timeout``, in ms)
+# Equals python-oracledb's own default (20 s), so today this changes nothing — pinned explicitly on
+# purpose, so the bound is visible here and survives a driver release that changes the default.
 TCP_CONNECT_TIMEOUT_S = 20.0  # establishing the TCP connection to the listener, in seconds
 
 
