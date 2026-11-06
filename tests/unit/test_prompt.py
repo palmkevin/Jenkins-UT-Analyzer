@@ -184,3 +184,24 @@ def test_is_deterministic():
         similar_cases=[_case()],
     )
     assert build_prompt(**args) == build_prompt(**args)
+
+
+def test_long_stack_keeps_its_tail_exception_line():
+    frames = "".join(
+        f'  File "/w/release/permanent/tests/dev/ut_a/mod_{i}.py", line {i}, in f{i}\n'
+        for i in range(200)
+    )
+    stack = "Traceback (most recent call last):\n" + frames + "KeyError: 'sample-ref'"
+    _, user = build_prompt(
+        test_id="t",
+        predicted_cause=None,
+        error_details=None,
+        error_stack_trace=stack,
+        code_candidates=[],
+        data_candidates=[],
+        similar_cases=[],
+    )
+    assert len(stack) > 2000
+    assert "KeyError: 'sample-ref'" in user  # the raised exception survives truncation
+    assert "[truncated]" in user
+    assert stack not in user

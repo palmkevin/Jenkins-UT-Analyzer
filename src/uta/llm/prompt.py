@@ -50,6 +50,17 @@ def _truncate(text: str | None, limit: int) -> str:
     return text[:limit] + " …[truncated]"
 
 
+def _truncate_tail(text: str | None, limit: int) -> str:
+    """Like :func:`_truncate` but keeps the **end**: a Python traceback raises its exception on the
+    last line, so a head-truncated stack would hide the very thing the model needs."""
+    if not text:
+        return "(none)"
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return "[truncated]… " + text[-limit:]
+
+
 def _render_cases(cases: Sequence[SimilarCase]) -> str:
     if not cases:
         return "(no similar past cases on record)"
@@ -125,7 +136,7 @@ def build_prompt(
         f"Candidate reference-data changes (most relevant to this test first):\n"
         f"{_render_data(data_candidates)}\n\n"
         f"Error:\n{_truncate(error_details, _MAX_ERROR_CHARS)}\n\n"
-        f"Stack trace:\n{_truncate(error_stack_trace, _MAX_STACK_CHARS)}\n\n"
+        f"Stack trace:\n{_truncate_tail(error_stack_trace, _MAX_STACK_CHARS)}\n\n"
         f"Similar past cases (most similar first):\n{_render_cases(similar_cases)}\n\n"
         "Give the single-sentence hypothesis."
     )

@@ -189,16 +189,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `prompt-stack-head-truncation` — LLM prompt drops the exception line of long stacks
-
-`area: llm` · found by the 2026-11 bug hunt
-
-`llm/prompt.py` truncates the stack to its first 2000 chars; the raised exception is the *last* line of a Python traceback, so the model often never sees it.
-
-**Acceptance:** a long stack keeps its tail (the exception line) in the prompt.
-
----
-
 ## `llm-call-timeout` — LLM calls use SDK defaults (600 s, 2 retries) inside the ingest transaction
 
 `area: llm` · found by the 2026-11 bug hunt
