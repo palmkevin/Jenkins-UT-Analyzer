@@ -9,8 +9,14 @@
 #
 # Usage:
 #   scripts/worktree.sh add <name>       # create .worktrees/<name>, its venv, DB, and migrate it
-#   scripts/worktree.sh remove <name>    # git worktree remove + dropdb (teardown)
+#   scripts/worktree.sh remove <name>    # git worktree remove + delete branch + dropdb (teardown)
+#   FORCE=1 scripts/worktree.sh remove <name>   # ... even with uncommitted/unpushed work
 #   scripts/worktree.sh list             # list existing worktrees
+#
+# `remove` refuses (before touching anything) when the worktree has uncommitted changes or the
+# branch has commits that are neither in origin/main nor pushed to origin/<name> — the work would
+# otherwise be gone for good. Squash-merged PR branches count as safe once pushed. FORCE=1 (or
+# `make worktree-rm name=<x> force=1`) overrides.
 #
 # <name> must match [a-z0-9][a-z0-9-]* (a valid git branch leaf). The throwaway DB is
 # `uta_<name>` with '-' mapped to '_' (a clean unquoted Postgres identifier).
@@ -126,13 +132,48 @@ worktree ready: $dir  (branch $name, db $db)
 EOF
 }
 
+# True (0) when the worktree at <dir> has uncommitted changes, including untracked files.
+worktree_is_dirty() {  # <dir>
+  [[ -d "$1" ]] || return 1
+  [[ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]]
+}
+
+# True (0) when branch <name> has commits that would be lost by deleting it: not contained in
+# origin/main (or local main) and not pushed to origin/<name>. A missing branch is never unsaved.
+branch_has_unsaved_commits() {  # <name>
+  local name="$1" ref
+  git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$name" || return 1
+  for ref in "refs/remotes/origin/main" "refs/heads/main" "refs/remotes/origin/$name"; do
+    if git -C "$REPO_ROOT" show-ref --verify --quiet "$ref" \
+      && git -C "$REPO_ROOT" merge-base --is-ancestor "refs/heads/$name" "$ref"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Refuse a teardown that would discard work, unless FORCE=1.
+guard_remove() {  # <name> <dir>
+  [[ "${FORCE:-}" == "1" ]] && return 0
+  if worktree_is_dirty "$2"; then
+    die "$2 has uncommitted changes — commit/push them, or re-run with force=1 to discard"
+  fi
+  if branch_has_unsaved_commits "$1"; then
+    die "branch '$1' has commits neither in origin/main nor pushed — push it, or re-run with" \
+      "force=1 to discard"
+  fi
+}
+
 cmd_remove() {
   local name="$1"
   validate_name "$name"
   local dir="$WORKTREES_DIR/$name"
   local db; db="$(db_name "$name")"
+  guard_remove "$name" "$dir"
 
   echo "==> git worktree remove $dir (and branch $name)"
+  # --force only after guard_remove vouched for the worktree (or FORCE=1 asked for it): it is still
+  # needed for the untracked, gitignored .venv/.env every worktree carries.
   git -C "$REPO_ROOT" worktree remove --force "$dir" 2>/dev/null || echo "    (no worktree at $dir)"
   git -C "$REPO_ROOT" branch -D "$name" 2>/dev/null || true
 

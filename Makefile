@@ -12,8 +12,8 @@ help: ## Show this help
 worktree: ## Create a worktree: make worktree name=<x>  (branch <x>, db uta_<x>)
 	@scripts/worktree.sh add "$(name)"
 
-worktree-rm: ## Tear down a worktree: make worktree-rm name=<x>  (removes worktree, branch, db)
-	@scripts/worktree.sh remove "$(name)"
+worktree-rm: ## Tear down a worktree: make worktree-rm name=<x> [force=1]  (worktree, branch, db)
+	@FORCE="$(force)" scripts/worktree.sh remove "$(name)"
 
 worktree-ls: ## List worktrees
 	@scripts/worktree.sh list

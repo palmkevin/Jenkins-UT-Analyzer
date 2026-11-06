@@ -120,3 +120,87 @@ def test_url_for_db_swaps_only_the_database_name() -> None:
     result = _call_fn(f"url_for_db {base} uta_demo")
     assert result.returncode == 0
     assert result.stdout.strip() == "postgresql+psycopg://uta:uta@db:5432/uta_demo"
+
+
+# ── remove refuses to discard work (worktree-rm-discards-work) ───────────────
+# A throwaway repo with one worktree; every check runs before any Postgres side effect.
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+@pytest.fixture
+def sandbox(tmp_path: Path) -> Path:
+    import os
+
+    env = {**os.environ, **_GIT_ENV}
+
+    def git(*args: str, cwd: Path = tmp_path) -> None:
+        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main")
+    (tmp_path / "README").write_text("x\n")
+    git("add", "README")
+    git("commit", "-q", "-m", "init")
+    git("worktree", "add", "-q", ".worktrees/wt", "-b", "wt")
+    return tmp_path
+
+
+def _remove(repo: Path, *, force: bool = False) -> subprocess.CompletedProcess[str]:
+    import os
+
+    env = {**os.environ, **_GIT_ENV, "FORCE": "1" if force else ""}
+    return subprocess.run(
+        ["bash", "-c", f"source {_SCRIPT!s}; guard_remove wt {repo / '.worktrees' / 'wt'}"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_remove_refuses_a_dirty_worktree(sandbox: Path) -> None:
+    (sandbox / ".worktrees" / "wt" / "wip.py").write_text("unsaved\n")
+    result = _remove(sandbox)
+    assert result.returncode != 0
+    assert "uncommitted changes" in result.stderr and "force=1" in result.stderr
+    assert _remove(sandbox, force=True).returncode == 0
+
+
+def test_remove_refuses_an_unpushed_unmerged_branch(sandbox: Path) -> None:
+    import os
+
+    wt = sandbox / ".worktrees" / "wt"
+    (wt / "feature.py").write_text("work\n")
+    env = {**os.environ, **_GIT_ENV}
+    subprocess.run(["git", "add", "feature.py"], cwd=wt, env=env, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "wip"], cwd=wt, env=env, check=True)
+    result = _remove(sandbox)
+    assert result.returncode != 0
+    assert "branch 'wt' has commits" in result.stderr
+    assert _remove(sandbox, force=True).returncode == 0
+
+
+def test_remove_allows_a_clean_branch_already_in_main(sandbox: Path) -> None:
+    assert _remove(sandbox).returncode == 0
+
+
+def test_cmd_remove_runs_the_guard_before_any_side_effect(sandbox: Path) -> None:
+    import os
+
+    (sandbox / ".worktrees" / "wt" / "wip.py").write_text("unsaved\n")
+    result = subprocess.run(
+        ["bash", str(_SCRIPT), "remove", "wt"],
+        cwd=sandbox,
+        env={**os.environ, **_GIT_ENV},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0 and "uncommitted changes" in result.stderr
+    assert (sandbox / ".worktrees" / "wt" / "wip.py").exists()  # nothing was removed

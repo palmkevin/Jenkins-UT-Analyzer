@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `worktree-rm-discards-work` — `make worktree-rm` force-deletes dirty worktrees and unmerged branches
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`scripts/worktree.sh` uses `worktree remove --force` + `branch -D`.
-
-**Acceptance:** refuses on a dirty worktree / unmerged branch unless `force=1`.
-
----
-
 ## `cold-start-poll-alerts-history` — a fresh deploy mails alerts for the whole back-fill window
 
 `area: alert` · found by the 2026-11 bug hunt · **needs owner input**
