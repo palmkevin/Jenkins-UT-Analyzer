@@ -189,16 +189,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `incident-infra-masked-away` — infra errors in stage logs are lost to signature masking
-
-`area: analysis` · found by the 2026-11 bug hunt
-
-`classify_incident` derives the error type from the masked signature text, where digits are `<NUM>`, so `ORA-03113` / `HTTP 502` never match the INFRA patterns and the incident is mis-classified.
-
-**Acceptance:** a stage log ending in `ORA-03113…` classifies the incident as INFRASTRUCTURE.
-
----
-
 ## `prompt-stack-head-truncation` — LLM prompt drops the exception line of long stacks
 
 `area: llm` · found by the 2026-11 bug hunt

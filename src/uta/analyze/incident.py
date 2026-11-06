@@ -35,6 +35,7 @@ from uta.analyze.classify import _sole_author
 from uta.analyze.error_type import derive_error_type
 from uta.analyze.relevance import rank_candidates
 from uta.kb.retrieval import similar_cases
+from uta.kb.signature import _INCIDENT_TAIL_LINES as INCIDENT_TAIL_LINES
 from uta.kb.store import record_incident_signature
 from uta.llm import HypothesisProvider, NoopHypothesisProvider
 from uta.llm.prompt import build_prompt
@@ -83,19 +84,38 @@ def _open_incident(session: Session) -> BuildIncident | None:
     )
 
 
-def classify_incident(session: Session, build: Build, incident: BuildIncident) -> Classification:
+def _raw_incident_tail(log_text: str | None) -> str:
+    """The unmasked counterpart of :func:`normalize_incident`'s text: the same tail lines, before
+    the value masks turn ``ORA-03113`` / ``HTTP 502`` into ``<NUM>``."""
+    lines = [ln.rstrip() for ln in (log_text or "").splitlines() if ln.strip()]
+    return "\n".join(lines[-INCIDENT_TAIL_LINES:])
+
+
+def classify_incident(
+    session: Session,
+    build: Build,
+    incident: BuildIncident,
+    failing_stage_log: str | None = None,
+) -> Classification:
     """Deterministic cause for a pipeline-failure incident (reuses the classifier's vocabulary).
 
-    Rule (ordered): an INFRA-looking failing-stage signature outranks any coincidental change; else
+    Rule (ordered): an INFRA-looking failing-stage log outranks any coincidental change; else
     a single candidate kind in the window wins (code-only → CODE_CHANGE, data-only → DATA_CHANGE);
     both kinds or none → UNKNOWN (there is no per-test relevance ranking to break a build-level
     tie). A suggested contact rides along when the winning kind has exactly one author. Append-only.
+
+    The error type is derived from the **raw** failing-stage log tail when the caller has it: the
+    signature's normalized text masks digits (``ORA-<NUM>``), which the INFRA patterns can't match.
+    The stored signature text is only the fallback.
     """
     code_n = len(build.code_changes)
     data_n = len(build.data_changes)
 
     infra = False
-    if incident.signature_id is not None:
+    raw_tail = _raw_incident_tail(failing_stage_log)
+    if raw_tail:
+        infra = derive_error_type("FAILED", None, raw_tail) == ErrorType.INFRA
+    elif incident.signature_id is not None:
         sig = session.get(FailureSignature, incident.signature_id)
         if sig is not None:
             infra = (
@@ -261,7 +281,7 @@ def apply_build_incident(
 
     if kind == IncidentKind.PIPELINE_FAILURE:
         record_incident_signature(session, incident, failing_stage_log)
-        classify_incident(session, build, incident)
+        classify_incident(session, build, incident, failing_stage_log)
         hypothesize_incident(
             session,
             build,

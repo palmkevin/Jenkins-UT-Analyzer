@@ -174,6 +174,38 @@ def test_classification_infrastructure_outranks_changes(session_factory):
         assert c.predicted_cause == PredictedCause.INFRASTRUCTURE
 
 
+def test_classification_infra_survives_signature_masking(session_factory):
+    """ORA-03113 / HTTP 502 are masked to <NUM> in the signature; the raw log still reads INFRA."""
+    for n, log in enumerate(
+        [
+            "stage step\ncx_Oracle.DatabaseError: ORA-03113: end-of-file on communication channel",
+            "deploying\nurllib.error.HTTPError: HTTP Error 502: Bad Gateway",
+        ],
+        start=1,
+    ):
+        with session_scope(session_factory) as s:
+            b = make_build(s, n, {})
+            b.code_changes.append(
+                CodeChangeCandidate(
+                    commit_id=f"r{n}",
+                    revision=f"r{n}",
+                    author="dev-dana",
+                    message="x",
+                    committed_at=datetime(2026, 6, 1, tzinfo=UTC),
+                )
+            )
+            s.flush()
+            out = apply_build_incident(
+                s, b, "FAILURE", failing_stage="Deploy", failing_stage_log=log
+            )
+            c = s.scalar(
+                select(Classification).where(Classification.incident_id == out.incident.id)
+            )
+            assert c.predicted_cause == PredictedCause.INFRASTRUCTURE, log
+            # Recover so the next iteration opens a fresh incident.
+            apply_build_incident(s, make_build(s, n + 100, {}), "SUCCESS")
+
+
 def test_classification_code_change_with_sole_author(session_factory):
     with session_scope(session_factory) as s:
         b = make_build(s, 1, {})
