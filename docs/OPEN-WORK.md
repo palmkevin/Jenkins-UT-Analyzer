@@ -283,16 +283,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `flaky-leaderboard-tie-order` — flaky leaderboard order is nondeterministic on ties
-
-`area: flakiness` · found by the 2026-11 bug hunt
-
-Rows sort by `(flaky, score, transitions)` over an unordered query.
-
-**Acceptance:** ties break deterministically by identity.
-
----
-
 ## `signature-mask-gaps` — signature masking misses `SMP_000123`-style ids and temp paths
 
 `area: kb` · found by the 2026-11 bug hunt · **needs owner input**

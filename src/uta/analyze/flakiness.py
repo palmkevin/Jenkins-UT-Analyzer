@@ -254,7 +254,9 @@ def leaderboard_candidates(
                 "pattern": stats.pattern,
             }
         )
-    rows.sort(key=lambda r: (r["flaky"], r["score"], r["transitions"]), reverse=True)
+    # Most-unstable first; ties break on identity id (ascending) so the order is deterministic
+    # over the unordered lifecycle query.
+    rows.sort(key=lambda r: (-r["flaky"], -r["score"], -r["transitions"], r["identity_id"]))
     return rows
 
 

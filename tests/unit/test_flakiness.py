@@ -195,6 +195,23 @@ def test_recompute_sets_flag_and_leaderboard(session_factory):
     assert board and board[0]["test_id"] == T and board[0]["flaky"] is True
 
 
+def test_leaderboard_ties_break_by_identity_id(session_factory):
+    """Equal (flaky, score, transitions) rows order by identity id, whatever the lifecycle
+    row order."""
+    names = [f"ut_pkg.mod.test_{i}" for i in range(4)]
+    with session_factory() as s:
+        for b, st in enumerate(["PASSED", "FAILED", "PASSED", "FAILED"], start=1):
+            make_build(s, b, {n: st for n in names})
+        ids = [get_identity(s, n).id for n in names]
+        for ident_id in reversed(ids):  # lifecycle rows inserted in reverse identity order
+            s.add(TestLifecycle(test_identity_id=ident_id))
+        s.commit()
+
+        board = leaderboard(s, window_days=30, threshold=0.3, now=NOW)
+
+    assert [r["identity_id"] for r in board] == sorted(ids)
+
+
 def test_leaderboard_candidates_total_is_independent_of_limit(session_factory):
     """The full candidate count is the true total; ``limit`` only caps the displayed rows."""
     names = [f"ut_pkg.mod.test_{i}" for i in range(3)]
