@@ -88,3 +88,693 @@ wherever CI lands.
 **Acceptance:** either Pipelines is kept deliberately as the pre-merge gate with Jenkins doing
 post-merge deploy, or `bitbucket-pipelines.yml` is dropped and both the gate **and the mirror sync**
 move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
+
+---
+
+<!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
+
+## `testreport-404-quarantines-failed-builds` — a missing JUnit report quarantines the build as "rotated"
+
+`area: ingest` · found by the 2026-11 bug hunt
+
+Jenkins answers 404 on `/<n>/testReport/api/json` when a run published no JUnit results (a FAILURE/ABORTED build that died before devUTs). `HttpJenkinsClient` raises, and the poller (`poller.py` ~l.221) treats *any* 404 as "rotated out of retention" and quarantines immediately — so exactly the builds Build Incidents (GH#171) exist for leave no Build row, no incident, and a misleading ops alert.
+
+**Acceptance:** a build whose testReport 404s is stored (incomplete, zero results) and gets its Build Incident; only a `build_meta` 404 counts as rotation.
+
+---
+
+## `complete-without-junit-tracks` — a build missing a JUnit track is still marked complete
+
+`area: ingest` · found by the 2026-11 bug hunt
+
+Completeness (`pipeline.py` ~l.312) only checks wfapi `devUTs: Execute - <track>` stage statuses, never that the parsed report actually contains every expected track. If a `Collect test results - <track>` step fails to publish, the half-empty build becomes the baseline and every missing test turns into a phantom transition (the GH#83 failure mode).
+
+**Acceptance:** a report lacking an expected track yields `complete=False`.
+
+---
+
+## `unittest-log-subtests-and-printing-tests` — console-log parser drops subTest failures and tests that print
+
+`area: ingest` · found by the 2026-11 bug hunt
+
+`_STATUS_RE` in `ingest/unittest_log.py` needs a non-empty tail after `... `, so a test whose output starts on its own line vanishes; subTest failure headers `FAIL: test_x (m.C.test_x) (i=1)` defeat `_BLOCK_HEADER_RE`, so real failures are silently lost.
+
+**Acceptance:** real `python -m unittest -v` output with a printing test and a failing subTest parses to the right outcomes (subtest failures collapse to the parent test as FAILED).
+
+---
+
+## `unknown-junit-suite-fails-every-ingest` — an unrecognised JUnit suite fails every ingest
+
+`area: ingest` · found by the 2026-11 bug hunt
+
+`ut_report._track_of` raises `ValueError` for any suite outside `permanent`/`permanent_py39`. One new junit-publishing stage makes every build fail and get quarantined, i.e. ingest stops.
+
+**Acceptance:** unknown-track suites are skipped with a warning; a missing expected track is caught by the completeness check instead.
+
+---
+
+## `oracle-call-timeout` — Oracle queries have no call timeout
+
+`area: ingest` · found by the 2026-11 bug hunt
+
+`refdb/oracle.py` sets no `call_timeout`, so a hung `V_TRACKING` query blocks the poller indefinitely while holding the Postgres ingest transaction open.
+
+**Acceptance:** the Oracle connection carries a bounded call timeout (and connect timeout).
+
+---
+
+## `data-change-lower-bound-uses-devuts-start` — data-change window lower bound starts at devUTs, not at the build
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+`Build.started_at` is the devUTs Execute start (`timing.window[0]`), and the next build's data-change lower bound is the previous build's `started_at` (ADR-0004). The console-log suites (ITF/LXS/SMB/Uniface) run ~5 min earlier, so a data change made between N-1's ITF stage and its devUTs is never a candidate for N.
+
+**Needs owner input:** changing what `started_at` means (or adding a separate build-start column) touches the build page, durations and ADR-0004 — decide which.
+
+**Acceptance:** a data change made during N-1's console-log stages is a candidate for build N.
+
+---
+
+## `wfapi-log-truncated-hasmore` — stage logs truncated by wfapi (`hasMore`) are parsed as if complete
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+`wfapi/log` returns `hasMore`/`consoleUrl` and caps the text; nothing in `src/` reads `hasMore`. Verbose stages could lose early `... ok` lines and the build is still complete → console-log tests flicker as removed/fixed.
+
+**Needs owner input:** confirm against a real stage log whether `hasMore: true` occurs and how large the cap is; then fetch the full `/execution/node/<id>/log` when it does.
+
+**Acceptance:** a stage log with `hasMore: true` is either fetched in full or marks the build incomplete.
+
+---
+
+## `execute-stage-failed-semantics` — does a FAILED devUTs Execute stage count as finished?
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+Completeness treats a FAILED `devUTs: Execute` stage as finished. The #1702 fixture suggests FAILED there may mean a crash rather than test failures (results are published by separate Collect stages).
+
+**Needs owner input:** real job semantics of FAILED on the Execute stage.
+
+**Acceptance:** documented decision, and `complete` reflects it.
+
+---
+
+## `enrichment-source-outage-policy` — an Oracle or stage-log outage fails (and eventually quarantines) the whole build
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+An `oracledb.DatabaseError` or a stage-log fetch error propagates out of `ingest_build`; three ticks later the build is quarantined and its (fine) devUTs results are lost. SVN blame and incident-log fetch are already best-effort.
+
+**Needs owner input:** degrade (store devUTs results, mark incomplete/skip the source) vs. fail-and-retry.
+
+**Acceptance:** documented policy, implemented in `ingest_build`.
+
+---
+
+## `not-executed-log-stage-blocks-analysis` — a when-skipped console-log stage makes every build incomplete
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+Any selected console-log stage reported NOT_EXECUTED marks the build incomplete; declarative `when`-skipped stages report NOT_EXECUTED too. If a listed suite is conditionally skipped on every build, no build is ever complete and lifecycle/alerts stop silently.
+
+**Needs owner input:** does the real job conditionally skip any `UNITTEST_SUITES` stage?
+
+**Acceptance:** conditionally-skipped stages don't block completeness.
+
+---
+
+## `first-shell-script-step-only` — only the first `Shell Script` step of a log stage is parsed
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+`wfapi.find_log_step_node` picks the first `Shell Script` step; a setup `sh` before the test `sh` would yield 0 cases while the build stays complete.
+
+**Needs owner input:** do any real log stages run more than one `sh` step?
+
+**Acceptance:** multi-step stages parse every step's output.
+
+---
+
+## `testreport-tree-filter` — testReport fetched without a `tree=` filter
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+`test_report` pulls stdout/stderr for ~25k cases — a large payload that may carry patient text (not persisted, but transferred and held in memory). A `tree=suites[...]` filter would cut it.
+
+**Needs owner input:** none for the idea, but the exact field list must be verified against a live Jenkins before shipping (it's a `live`-only check).
+
+**Acceptance:** ingest requests only the fields the parser reads; a live test confirms parity.
+
+---
+
+## `svn-password-on-argv` — SVN password passed on the command line
+
+`area: ingest` · found by the 2026-11 bug hunt · **needs owner input**
+
+`refdb/svn.py` passes `--password` on argv, visible in `ps` on the host. Use `--password-from-stdin` (svn ≥ 1.10).
+
+**Needs owner input:** confirm the svn client version in the deployed image supports it.
+
+**Acceptance:** the password is never on argv.
+
+---
+
+## `flaky-single-transition` — a single pass↔fail change is flagged flaky
+
+`area: flakiness` · found by the 2026-11 bug hunt
+
+`flakiness.py` ~l.126: `flaky = 0 < fail_rate < 1 and score >= threshold` flags P,P,F (score 0.33) and a clean fix F,P (0.5) as flaky on short histories — contradicting CONTEXT.md ("a clean regression is not flaky").
+
+**Acceptance:** flaky additionally requires ≥ 2 transitions; P,P,F and F,P are not flaky.
+
+---
+
+## `incident-reingest-double-extend` — re-ingesting the newest build extends its own Build Incident
+
+`area: analysis` · found by the 2026-11 bug hunt
+
+`apply_build_incident` (`analyze/incident.py` ~l.230) isn't idempotent: re-ingesting the newest build bumps the open incident's `build_count` 1→2 with no new build.
+
+**Acceptance:** re-applying the same build to an incident is a no-op.
+
+---
+
+## `incident-infra-masked-away` — infra errors in stage logs are lost to signature masking
+
+`area: analysis` · found by the 2026-11 bug hunt
+
+`classify_incident` derives the error type from the masked signature text, where digits are `<NUM>`, so `ORA-03113` / `HTTP 502` never match the INFRA patterns and the incident is mis-classified.
+
+**Acceptance:** a stage log ending in `ORA-03113…` classifies the incident as INFRASTRUCTURE.
+
+---
+
+## `error-type-5xx-false-infra` — numbers like `12.504 ` are typed as HTTP 5xx infra errors
+
+`area: analysis` · found by the 2026-11 bug hunt
+
+`error_type.py` `\b503 |\b502 |\b504 ` matches inside decimals and lists; INFRA outranks code/data in `classify_episode`, so a numeric assertion regression is labelled INFRASTRUCTURE at 0.9.
+
+**Acceptance:** `Decimal('12.504 ')` is not INFRA; `HTTP Error 502: Bad Gateway` still is.
+
+---
+
+## `error-type-timeout-in-path` — `timeout` in a file path types the failure as TIMEOUT
+
+`area: analysis` · found by the 2026-11 bug hunt
+
+`_TIMEOUT_RE` scans the whole stack including `File "...test_timeout_rules.py"` frames.
+
+**Acceptance:** an AssertionError raised from `test_timeout_rules.py` is not TIMEOUT.
+
+---
+
+## `prompt-stack-head-truncation` — LLM prompt drops the exception line of long stacks
+
+`area: llm` · found by the 2026-11 bug hunt
+
+`llm/prompt.py` truncates the stack to its first 2000 chars; the raised exception is the *last* line of a Python traceback, so the model often never sees it.
+
+**Acceptance:** a long stack keeps its tail (the exception line) in the prompt.
+
+---
+
+## `llm-call-timeout` — LLM calls use SDK defaults (600 s, 2 retries) inside the ingest transaction
+
+`area: llm` · found by the 2026-11 bug hunt
+
+`llm/claude.py` / `openai_provider.py` build clients with default timeouts; a slow API stalls the poller with the ingest transaction open.
+
+**Acceptance:** LLM clients use a bounded timeout and retry count.
+
+---
+
+## `llm-hypotheses-per-build-cap` — no cap on LLM hypotheses per build
+
+`area: llm` · found by the 2026-11 bug hunt · **needs owner input**
+
+`hypothesize_build` calls the model once per new episode, sequentially, inside the ingest transaction — a mass regression means hundreds of calls (cost + a long-held transaction).
+
+**Needs owner input:** what cap, and should hypotheses move after commit?
+
+**Acceptance:** decided cap implemented.
+
+---
+
+## `llm-raw-error-text-to-third-party` — raw error text (possibly patient data) is sent to the external LLM
+
+`area: llm` · found by the 2026-11 bug hunt · **needs owner input**
+
+Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit messages) to Anthropic/OpenAI, unfenced; incidents send only masked text. The prompt docstring's "only already-redacted fields" holds for fixtures, not production. Also a prompt-injection channel.
+
+**Needs owner input:** is sending raw LIMS error text to an external provider an accepted risk? If not: send the masked signature text + a masked exception line, and fence untrusted fields.
+
+**Acceptance:** decision recorded (ADR) and the prompt matches it.
+
+---
+
+## `relevance-third-party-frames-match` — stdlib/site-packages frames anchor data/code relevance
+
+`area: analysis` · found by the 2026-11 bug hunt
+
+`relevance._reference_paths` uses every stack frame; `site-packages/sqlalchemy/engine/base.py` matches a changed `lx/lims/engine/base.py` at SCORE_MODULE, skewing classification and the LLM's top candidate.
+
+**Acceptance:** only in-tree frames (same markers as `kb/signature.py`) anchor relevance.
+
+---
+
+## `flaky-leaderboard-tie-order` — flaky leaderboard order is nondeterministic on ties
+
+`area: flakiness` · found by the 2026-11 bug hunt
+
+Rows sort by `(flaky, score, transitions)` over an unordered query.
+
+**Acceptance:** ties break deterministically by identity.
+
+---
+
+## `signature-mask-gaps` — signature masking misses `SMP_000123`-style ids and temp paths
+
+`area: kb` · found by the 2026-11 bug hunt · **needs owner input**
+
+`kb/signature.py` `\b\d+\b` can't mask digits after `_`/letters and there's no `/tmp/...` mask (the docstring claims there is) → the same bug gets distinct signatures and identifier-like values are persisted unmasked.
+
+**Needs owner input:** fixing changes every affected signature hash — re-hash existing signatures via a backfill migration, or let old/new coexist?
+
+**Acceptance:** masks fixed and the backfill decision applied.
+
+---
+
+## `kb-occurrence-count-per-track` — "seen N×" counts each track separately
+
+`area: kb` · found by the 2026-11 bug hunt · **needs owner input**
+
+`kb/store.py` counts result rows, so one failing build in two tracks shows "seen 2×" (pinned by `test_kb.py:44`).
+
+**Needs owner input:** should occurrences count builds or (build, track) results?
+
+**Acceptance:** decided semantics shown consistently.
+
+---
+
+## `confirm-clobbers-human-reason` — Confirm erases a human-entered reason
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`web/actions.py` `confirm` / `confirm_incident` always overwrite both `causing_person` and `reason_text` from the AI, even when the AI value is `None`, and stamp AI_CONFIRMED on a null reason.
+
+**Acceptance:** Confirm only overwrites (and stamps) fields the AI actually suggested.
+
+---
+
+## `save-restamps-provenance` — saving any field re-derives attribution provenance
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+The edit form pre-fills `causing_person`/`reason_text`, so every Save resubmits them and `set_attribution` re-derives provenance against the *current* AI suggestion — an assignee-only change turns AI_CONFIRMED into HUMAN_CORRECTED and restamps `validated_by`.
+
+**Acceptance:** submitting unchanged values leaves provenance and validation stamps untouched.
+
+---
+
+## `triage-status-unvalidated` — triage status accepted as an arbitrary string
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+The attribute routes write `triage_status` unvalidated into a `String(16)` column: garbage is saved on SQLite, >16 chars is a 500 on Postgres.
+
+**Acceptance:** invalid values are rejected with a flash error.
+
+---
+
+## `unbounded-form-input` — form inputs longer than their columns 500 on Postgres
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+Tickets are `String(32)`, assignee/person/actor `String(128)`; no `maxlength` and no server check. A pasted Jira URL as cause ticket → 500 on Postgres and a broken link on SQLite.
+
+**Acceptance:** over-long input is rejected (or a ticket key extracted from a pasted URL) with a flash; inputs carry `maxlength`.
+
+---
+
+## `format-ts-mislabels-non-utc` — timestamps are labelled UTC without being converted
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`format_ts`/`format_reltime` append " UTC" without `astimezone(UTC)`; on a Postgres with a non-UTC `TimeZone`, 12:00 UTC renders as "14:00:00 UTC".
+
+**Acceptance:** aware datetimes are converted to UTC before formatting.
+
+---
+
+## `auth-actor-falls-back-to-cookie` — with auth on, a session without username falls back to the self-declared actor cookie
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`auth_callback` stores a user even without `preferred_username`; `current_actor` then uses the `uta_actor` cookie and `/identity` stays routable.
+
+**Acceptance:** login without a username is rejected; with auth on the cookie is never used.
+
+---
+
+## `auth-callback-error-500` — a stale/replayed OIDC callback is a raw 500
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`authorize_access_token` errors (state mismatch, user cancelled) are uncaught in `web/auth.py`.
+
+**Acceptance:** callback errors redirect to login instead of 500.
+
+---
+
+## `nan-tunable-accepted` — `nan` passes tunable bounds checks
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`control/tunables.coerce`: `float("nan")` passes `min <= v <= max` (all NaN comparisons are False), silently disabling flaky/KB/overrun detection.
+
+**Acceptance:** non-finite values are rejected.
+
+---
+
+## `bulk-ids-int-parse-500` — non-numeric ids in bulk forms are a 500
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`int(v)` on form values in `/tests/bulk/acknowledge` and `/episodes/bulk/attribute`.
+
+**Acceptance:** bad ids get a 400/flash, not a 500.
+
+---
+
+## `path-id-overflow-500` — huge path ids are a 500
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`/tests/99999999999999999999` → OverflowError / out-of-range.
+
+**Acceptance:** out-of-range ids 404.
+
+---
+
+## `incident-kb-ignores-tunables` — incident similar-cases ignore the KB tunables
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`views._incident_dict` hardcodes `k=5, cutoff=0.3` instead of the effective `kb_top_k`/`pgtrgm_similarity_cutoff`.
+
+**Acceptance:** control-panel overrides apply to incident pages too.
+
+---
+
+## `incident-tickets-not-linked` — incident tickets aren't rendered as Jira links
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`_macros.incident_summary` takes `jira`/`fisheye` but never uses them; incident cause/resolution tickets appear only inside form inputs.
+
+**Acceptance:** incident tickets render as Jira deep-links like episodes do.
+
+---
+
+## `attribute-by-signature-blank-claims-update` — signature-wide attribute reports updates when nothing changed
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+Unlike the bulk route (GH#150), the signature route counts every matched episode and creates empty `Attribution` rows on a blank submit.
+
+**Acceptance:** a blank submit changes nothing and says so.
+
+---
+
+## `search-like-wildcards` — `_` and `%` in search act as wildcards
+
+`area: dashboard` · found by the 2026-11 bug hunt
+
+`/search` uses `ilike(f"%{q}%")` unescaped; `_` is in every `ut_…` name.
+
+**Acceptance:** search matches `_`/`%` literally.
+
+---
+
+## `ondemand-ingest-jumps-high-water` — an on-demand ingest above the high-water mark skips the gap forever
+
+`area: infra` · found by the 2026-11 bug hunt
+
+The high-water mark is `max(build_number)`. Ingesting build N+2 from the control panel or `uta backfill` while the poller is on N makes N and N+1 never ingested.
+
+**Acceptance:** on-demand/back-fill ingest can't create a gap the poller then skips.
+
+---
+
+## `compose-no-restart-policy` — services don't restart; the poller's first tick is unguarded
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`docker-compose.yml` has no `restart:`; `run_scheduler`'s first `_tick()` and `poll_tick`'s override load / failure-heartbeat aren't guarded, so a DB blip at start kills the poller until someone notices.
+
+**Acceptance:** services restart `unless-stopped`; a failing first tick doesn't kill the poller.
+
+---
+
+## `job-poller-no-mutual-exclusion` — control-panel ingest jobs and the poller can ingest concurrently
+
+`area: infra` · found by the 2026-11 bug hunt
+
+Nothing serialises `run_ingest_job` and `poll_once`; both can `apply_build` against the same lifecycle/episode rows → lost updates or unique violations.
+
+**Acceptance:** ingests are serialised (Postgres advisory lock); SQLite unaffected.
+
+---
+
+## `backfill-paths-drop-incidents` — back-fill paths skip Build Incidents, SVN blame and DB overrides
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`uta backfill`, `uta bootstrap` and the control-panel job don't pass `ingest_build_incidents` (and two don't pass the blame client); the CLI ignores DB setting overrides.
+
+**Acceptance:** all ingest entry points use the same effective settings and enrichers as the poller.
+
+---
+
+## `config-int-validation` — zero/negative poller settings break every tick
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`POLL_RETRY_ATTEMPTS=0` raises `AssertionError("unreachable")` every tick; same lack of bounds on `QUARANTINE_AFTER_ATTEMPTS`, `POLL_INTERVAL_SECONDS`, `BACKFILL_DEPTH`.
+
+**Acceptance:** these settings are validated `>= 1` at startup.
+
+---
+
+## `migration-drift-nullable-timestamps` — migrations leave model-NOT-NULL timestamps nullable
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`created_at`/`updated_at` on `setting_overrides`, `ingest_jobs`, `poller_heartbeats`, `build_quarantines`, `build_incidents` are nullable in Postgres but NOT NULL in the models → autogenerate isn't empty.
+
+**Acceptance:** a migration tightens them; autogenerate against the upgraded schema is empty.
+
+---
+
+## `health-stale-during-long-tick` — /health reports stale while a long tick is working
+
+`area: infra` · found by the 2026-11 bug hunt
+
+The heartbeat is stamped only at tick end; a catch-up tick over 5 min raises a false "poller is stale" alert.
+
+**Acceptance:** liveness is stamped per ingested build.
+
+---
+
+## `post-commit-error-leaves-stale-attempt` — an error after a build commits leaves a phantom "retrying" row
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`clear_failure` and `prune` run outside the per-build try in `poll_once`; a blip there records the tick as failed with nothing processed and leaves the attempt row.
+
+**Acceptance:** post-commit bookkeeping failures are contained and logged.
+
+---
+
+## `worktree-rm-discards-work` — `make worktree-rm` force-deletes dirty worktrees and unmerged branches
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`scripts/worktree.sh` uses `worktree remove --force` + `branch -D`.
+
+**Acceptance:** refuses on a dirty worktree / unmerged branch unless `force=1`.
+
+---
+
+## `stale-health-alert-race` — concurrent /health probes can send duplicate stale alerts
+
+`area: alert` · found by the 2026-11 bug hunt
+
+`control/health.py` reads the latch, dispatches (slow SMTP), then writes the latch — no compare-and-set.
+
+**Acceptance:** the latch is claimed atomically before dispatch.
+
+---
+
+## `cold-start-poll-alerts-history` — a fresh deploy mails alerts for the whole back-fill window
+
+`area: alert` · found by the 2026-11 bug hunt · **needs owner input**
+
+On an empty store the poller ingests the last `BACKFILL_DEPTH` builds with live channels and the LLM; `uta bootstrap` deliberately doesn't. Up to 10 regression alerts + LLM spend on day one.
+
+**Needs owner input:** desired cold-start alert behaviour (silent, or only the newest build?).
+
+**Acceptance:** decided behaviour implemented.
+
+---
+
+## `inprogress-build-below-lastcompleted` — a still-running build below `lastCompletedBuild` is ingested partial and never revisited
+
+`area: infra` · found by the 2026-11 bug hunt · **needs owner input**
+
+Selection is `range(highest+1, lastCompletedBuild+1)` with no `building` check.
+
+**Needs owner input:** can the job run concurrent builds?
+
+**Acceptance:** running builds are not ingested (or are re-ingested on completion).
+
+---
+
+## `unbounded-catch-up-after-outage` — no per-tick build cap after a poller outage
+
+`area: infra` · found by the 2026-11 bug hunt · **needs owner input**
+
+After a long outage one tick ingests everything, with live alerts and LLM spend.
+
+**Needs owner input:** cap per tick, and should old builds alert?
+
+**Acceptance:** decided cap/alert policy implemented.
+
+---
+
+## `alembic-rename-leftover-constraint-names` — renamed tables keep `runs_*` constraint/sequence names
+
+`area: infra` · found by the 2026-11 bug hunt
+
+The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `runs_id_seq`, `run_shards_pkey`. A future migration that names them conventionally fails on Postgres only. Deferred: needs a real Postgres to verify the rename migration, which this cloud session didn't have.
+
+**Acceptance:** a migration renames them; verified on Postgres.
+
+---
+
+## `teams-webhook-secret-logged` — Teams webhook URL (with its `sig=` token) leaks into logs
+
+`area: alert` · found by the 2026-11 bug hunt
+
+`raise_for_status()` in `delivery/teams.py` builds an `HTTPStatusError` whose message contains the full URL; `dispatch` logs it with `exc_info`. README/.env.example promise it's never logged.
+
+**Acceptance:** a non-2xx Teams reply logs only the status; a test asserts the token never appears.
+
+---
+
+## `email-null-sender` — SMTP mail goes out with an empty sender and no Date/Message-ID
+
+`area: email` · found by the 2026-11 bug hunt
+
+With `SMTP_FROM` unset the channel still enables and sends `MAIL FROM:<>`; many relays reject it and `dispatch` only warns.
+
+**Acceptance:** the channel requires `SMTP_FROM`; messages carry `Date` and `Message-ID`.
+
+---
+
+## `teams-card-markdown-injection` — Teams card text is unescaped Markdown and unbounded
+
+`area: alert` · found by the 2026-11 bug hunt
+
+Hypothesis/test names go raw into Markdown-rendering TextBlocks/FactSets (a hypothesis can carry a clickable link) and there's no length cap (Teams drops payloads over ~28 KB).
+
+**Acceptance:** values are Markdown-escaped and truncated.
+
+---
+
+## `demo-import-side-effect` — importing `uta.demo.app` seeds a demo and leaks a temp dir
+
+`area: demo` · found by the 2026-11 bug hunt
+
+Module-level `app = create_demo_app()` seeds into a fresh `mkdtemp` on every import (never cleaned); `uta demo` seeds twice. Docs call it in-memory.
+
+**Acceptance:** one seed per process, temp storage cleaned up, docs accurate; `uvicorn uta.demo.app:app` still works.
+
+---
+
+## `seed-demo-prints-db-password` — `uta seed-demo` prints DATABASE_URL with its password
+
+`area: infra` · found by the 2026-11 bug hunt
+
+`cli.py` echoes the full URL into logs.
+
+**Acceptance:** the password is masked.
+
+---
+
+## `env-example-defaults-diverge` — `.env.example` disagrees with config defaults
+
+`area: docs` · found by the 2026-11 bug hunt
+
+`JENKINS_JOB_PATH` (extra `view/Build/`) and `WEB_PORT=8088` differ from `config.py`/README/compose.
+
+**Acceptance:** values aligned or the difference explained.
+
+---
+
+## `readme-config-table-missing-settings` — 16 settings have no README Configuration row
+
+`area: docs` · found by the 2026-11 bug hunt
+
+`JENKINS_VERIFY_TLS`, `JENKINS_CA_BUNDLE`, `SVN_*`, `UI_ROW_LIMIT`, `BACKFILL_DEPTH`, `*_RETENTION_DAYS`, `JIRA_BASE_URL`, `FISHEYE_CHANGELOG_URL`, `ZEPHYR_TEST_CASE_URL_PREFIX`, `POLL_RETRY_*`, `QUARANTINE_AFTER_ATTEMPTS`.
+
+**Acceptance:** every `config.py` field has a README row.
+
+---
+
+## `demo-links-into-real-internal-systems` — public demo deep-links to real internal Jira/FishEye/Jenkins hosts
+
+`area: demo` · found by the 2026-11 bug hunt · **needs owner input**
+
+`render.yaml` sets no link env vars, so the demo renders `labsolution.atlassian.net/browse/LX-8842`, `fisheye.labsolution.lu/…` and the real Jenkins host for synthetic data.
+
+**Needs owner input:** acceptable, or point them at `*.example.invalid`?
+
+**Acceptance:** decision applied in the demo app or `render.yaml`.
+
+---
+
+## `demo-unittest-log-suites` — the demo never shows console-log suites
+
+`area: demo` · found by the 2026-11 bug hunt · **needs owner input**
+
+`seed.py` passes `ingest_unittest_logs=False`, so LXS/SMB/ITF/Uniface suites never appear in the public demo.
+
+**Needs owner input:** worth seeding?
+
+**Acceptance:** decision recorded / suites seeded.
+
+---
+
+## `public-repo-personal-email` — a personal email address sits in a public doc
+
+`area: docs` · found by the 2026-11 bug hunt · **needs owner input**
+
+`docs/BITBUCKET-MIGRATION.md` contains a real work email address.
+
+**Needs owner input:** keep or redact?
+
+**Acceptance:** decision applied.
+
+---
+
+## `mirror-pipeline-race` — two quick merges can make the mirror step fail non-fast-forward
+
+`area: infra` · found by the 2026-11 bug hunt · **needs owner input**
+
+The older `main` pipeline's `git push … HEAD:main` to the GitHub mirror fails when a newer one already pushed; spurious red `main` build, no data harm.
+
+**Needs owner input:** acceptable, or switch the step to push only when HEAD is the branch tip?
+
+**Acceptance:** decision applied.
