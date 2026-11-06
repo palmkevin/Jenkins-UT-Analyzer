@@ -129,6 +129,8 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `JENKINS_JOB_PATH` | `job/Development/job/lsdevbuild-build-release-permanent` | Path to the Permanent Pipeline job (runs one build per commit, not on a schedule). |
 | `JENKINS_USER` | *(empty)* | Optional — anonymous read works on the target job. |
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
+| `JENKINS_VERIFY_TLS` | `true` | Verify Jenkins' TLS certificate. Only set `false` as a stopgap for an internal CA the host doesn't trust yet — prefer `JENKINS_CA_BUNDLE`. |
+| `JENKINS_CA_BUNDLE` | *(empty)* | Path to a CA bundle (PEM) to verify Jenkins' cert against (e.g. an internal CA). Takes precedence over `JENKINS_VERIFY_TLS` when set — verification stays on, against this bundle. |
 | `EXPECTED_TRACKS` | `2` | Tracks a build must report to count as **complete**. |
 | `INGEST_UNITTEST_STAGES` | `true` | Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS, Uniface), parsed from each stage's `wfapi/log` behind the same interface as the JUnit report. |
 | `UNITTEST_SUITES` | `LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests` | Allowlist of stage names (a `"<suite> - <track>"` stage → suite) treated as test stages. |
@@ -145,6 +147,13 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `UT_REF_USER` | `utestref01` | Read-only user. |
 | `UT_REF_PASSWORD` | *(empty)* | **Enables the data-change feed when set.** Empty ⇒ data candidates are skipped. |
 | `UT_REF_THICK` | `false` | Use `oracledb` thick mode (wallet/client); thin by default. |
+
+### SVN blame (test ownership, optional)
+| Variable | Default | Purpose |
+|---|---|---|
+| `SVN_BLAME_ENABLED` | `false` | Populate the dashboard **Owner** (the modal blame author of each test's source file). Off ⇒ no blame client is built, so the offline gate, local dev and the demo never shell out to `svn`. One-shot back-fill of existing data: `uta reattribute-owners`. |
+| `SVN_REPO_BASE_URL` | *(empty)* | SVN URL under which a test's repo-relative `tests/dev/…` path resolves. |
+| `SVN_USER` / `SVN_PASSWORD` | *(empty)* | Optional SVN credentials — anonymous read works on some repos. |
 
 ### PostgreSQL (the app store)
 | Variable | Default | Purpose |
@@ -218,6 +227,17 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 | `PGTRGM_SIMILARITY_CUTOFF` | `0.3` | Minimum trigram similarity for KB "similar past cases". |
 | `KB_TOP_K` | `5` | How many similar past cases to surface per failure. |
 | `RECENTLY_FIXED_DAYS` | `7` | How long a fixed test stays in the "recently fixed" bucket. |
+| `UI_ROW_LIMIT` | `50` | Max test rows rendered per dashboard section before it is capped behind a "Load all N Tests" link. `0` disables the cap. |
+| `BACKFILL_DEPTH` | `10` | Cold-start back-fill: on a fresh (empty) store, ingest the last N completed builds oldest-first before incremental polling takes over. Also the default depth for `uta bootstrap`. |
+| `RESULT_RETENTION_DAYS` | `90` | Raw passing/skipped results are pruned once their build is older than this (failing results, builds, episodes, lifecycles, attributions and KB signatures are kept forever); `0` keeps everything. Keep it above `FLAKY_WINDOW_DAYS`. Runs on every poll tick and via `uta prune`. |
+| `INGEST_JOB_RETENTION_DAYS` | `30` | Finished (done/error) on-demand ingest jobs are pruned after this many days; `0` keeps all. |
+
+### External deep links (surfaced in the UI)
+| Variable | Default | Purpose |
+|---|---|---|
+| `JIRA_BASE_URL` | `https://labsolution.atlassian.net` | Jira base for episode ticket links: `{JIRA_BASE_URL}/browse/<TICKET>`. |
+| `FISHEYE_CHANGELOG_URL` | `https://fisheye.labsolution.lu/changelog/LS_TRUNK` | FishEye changelog for SVN revisions: `{FISHEYE_CHANGELOG_URL}?cs=<revision>`. |
+| `ZEPHYR_TEST_CASE_URL_PREFIX` | `https://labsolution.atlassian.net/projects/LX?selectedItem=…/v2/testCase/` | ZEPHYR (Kanoah) test-case deep link: `{ZEPHYR_TEST_CASE_URL_PREFIX}<LX-T…>`. |
 
 ### Ingest / correlation windows
 | Variable | Default | Purpose |
@@ -225,6 +245,14 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 | `DATA_CHANGE_MAX_LOOKBACK_DAYS` | `30` | Cap on how far **before** a build's start to look for `ut_ref` changes; the window's lower bound is normally the previous build's start, and this cap is also the fallback when there is no previous build (first-ever build / cold start). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
 | `POLL_INTERVAL_SECONDS` | `60` | Cadence of the `uta poll` scheduler. Dropped from `300` (issue #184) for a near-real-time overrunning-build banner; an idle tick stays cheap. Since `POLLER_STALE_AFTER_INTERVALS` counts in intervals, `/health` now flags a stale poller after ~5 minutes rather than ~25. |
+
+### Poller resilience
+| Variable | Default | Purpose |
+|---|---|---|
+| `POLL_RETRY_ATTEMPTS` | `3` | In-tick attempts per build for transient errors (network / HTTP 5xx / DB blips). |
+| `POLL_RETRY_BASE_SECONDS` | `2.0` | Base of the exponential backoff between those attempts (base, 2×base, 4×base, …). |
+| `QUARANTINE_AFTER_ATTEMPTS` | `3` | Failing ticks (one attempt per tick) before a build is **quarantined** — recorded on the control panel, sent as an `ops` alert, and skipped so ingest advances past it. |
+| `POLLER_STALE_AFTER_INTERVALS` | `5` | `/health` reports the poller **stale** (HTTP 503 + one `ops` alert) after this many poll intervals without a successful tick. |
 
 ### Compose-only
 | Variable | Default | Purpose |

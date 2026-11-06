@@ -513,16 +513,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `readme-config-table-missing-settings` — 16 settings have no README Configuration row
-
-`area: docs` · found by the 2026-11 bug hunt
-
-`JENKINS_VERIFY_TLS`, `JENKINS_CA_BUNDLE`, `SVN_*`, `UI_ROW_LIMIT`, `BACKFILL_DEPTH`, `*_RETENTION_DAYS`, `JIRA_BASE_URL`, `FISHEYE_CHANGELOG_URL`, `ZEPHYR_TEST_CASE_URL_PREFIX`, `POLL_RETRY_*`, `QUARANTINE_AFTER_ATTEMPTS`.
-
-**Acceptance:** every `config.py` field has a README row.
-
----
-
 ## `demo-links-into-real-internal-systems` — public demo deep-links to real internal Jira/FishEye/Jenkins hosts
 
 `area: demo` · found by the 2026-11 bug hunt · **needs owner input**

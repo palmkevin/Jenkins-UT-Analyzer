@@ -42,3 +42,23 @@ def test_env_example_value_matches_the_config_default(key):
     if value == "" and default in ("", None):
         return  # an empty placeholder for an unset-by-default key
     assert parsed == default, f"{key}: .env.example has {value!r}, config.py defaults {default!r}"
+
+
+def _readme_config_vars() -> set[str]:
+    """Every ``VAR`` named in a README Configuration table row's first cell."""
+    text = (ROOT / "README.md").read_text()
+    section = text.split("## Configuration", 1)[1].split("\n## ", 1)[0]
+    names: set[str] = set()
+    for line in section.splitlines():
+        if line.startswith("| `"):
+            first_cell = line.split("|")[1]
+            names.update(re.findall(r"`([A-Z0-9_]+)`", first_cell))
+    return names
+
+
+def test_every_setting_has_a_readme_configuration_row():
+    """Every ``config.py`` field has a README row (readme-config-table-missing-settings)."""
+    missing = sorted(
+        f.upper() for f in Settings.model_fields if f.upper() not in _readme_config_vars()
+    )
+    assert missing == [], f"settings with no README Configuration row: {missing}"
