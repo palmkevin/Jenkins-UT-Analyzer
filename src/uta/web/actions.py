@@ -179,6 +179,41 @@ def _provenance(submitted: str, ai_value: str | None) -> str:
     return Provenance.HUMAN_ENTERED
 
 
+def _apply_human_edit(
+    attr: Attribution,
+    causing_person: str | None,
+    reason_text: str | None,
+    ai_cause: str | None,
+    ai_reason: str | None,
+) -> bool:
+    """Write a human's submitted cause/reason onto ``attr``, deriving provenance from the AI.
+
+    Blank submissions are ignored (a partial form never clears a field), and so is a submission
+    **equal to the stored value**: the edit forms pre-fill both fields, so every Save resubmits
+    them, and re-deriving provenance for an unchanged value would turn ``AI_CONFIRMED`` into
+    ``HUMAN_CORRECTED`` and restamp the validator on, say, an assignee-only change. Returns whether
+    either field actually changed.
+    """
+    touched = False
+    cause = (causing_person or "").strip()
+    if cause and cause != (attr.causing_person or "").strip():
+        provenance = _provenance(cause, ai_cause)
+        attr.causing_person = cause
+        attr.cause_provenance = provenance
+        if provenance == Provenance.HUMAN_CORRECTED:
+            attr.original_ai_cause = ai_cause
+        touched = True
+    reason = (reason_text or "").strip()
+    if reason and reason != (attr.reason_text or "").strip():
+        provenance = _provenance(reason, ai_reason)
+        attr.reason_text = reason
+        attr.reason_provenance = provenance
+        if provenance == Provenance.HUMAN_CORRECTED:
+            attr.original_ai_reason = ai_reason
+        touched = True
+    return touched
+
+
 def _apply_confirm(
     attr: Attribution, ai_cause: str | None, ai_reason: str | None, actor: str
 ) -> bool:
@@ -256,25 +291,7 @@ def set_attribution(
     ai_reason = classification.llm_hypothesis if classification else None
 
     attr = _get_or_create_attribution(session, episode_id)
-    touched = False
-
-    if causing_person and causing_person.strip():
-        value = causing_person.strip()
-        provenance = _provenance(value, ai_cause)
-        attr.causing_person = value
-        attr.cause_provenance = provenance
-        if provenance == Provenance.HUMAN_CORRECTED:
-            attr.original_ai_cause = ai_cause
-        touched = True
-
-    if reason_text and reason_text.strip():
-        value = reason_text.strip()
-        provenance = _provenance(value, ai_reason)
-        attr.reason_text = value
-        attr.reason_provenance = provenance
-        if provenance == Provenance.HUMAN_CORRECTED:
-            attr.original_ai_reason = ai_reason
-        touched = True
+    touched = _apply_human_edit(attr, causing_person, reason_text, ai_cause, ai_reason)
 
     if triage_status:
         episode.triage_status = triage_status
@@ -466,23 +483,7 @@ def set_incident_attribution(
     ai_reason = classification.llm_hypothesis if classification else None
 
     attr = _get_or_create_incident_attribution(session, incident_id)
-    touched = False
-    if causing_person and causing_person.strip():
-        value = causing_person.strip()
-        provenance = _provenance(value, ai_cause)
-        attr.causing_person = value
-        attr.cause_provenance = provenance
-        if provenance == Provenance.HUMAN_CORRECTED:
-            attr.original_ai_cause = ai_cause
-        touched = True
-    if reason_text and reason_text.strip():
-        value = reason_text.strip()
-        provenance = _provenance(value, ai_reason)
-        attr.reason_text = value
-        attr.reason_provenance = provenance
-        if provenance == Provenance.HUMAN_CORRECTED:
-            attr.original_ai_reason = ai_reason
-        touched = True
+    touched = _apply_human_edit(attr, causing_person, reason_text, ai_cause, ai_reason)
 
     if triage_status:
         incident.triage_status = triage_status

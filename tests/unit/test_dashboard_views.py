@@ -1521,3 +1521,48 @@ def test_confirm_with_no_ai_suggestion_changes_nothing(session_factory):
         assert attr.causing_person == "carol" and attr.reason_text == "fixture"
         assert attr.cause_provenance == Provenance.HUMAN_ENTERED
         assert attr.validated_by == "bob"
+
+
+def test_save_with_unchanged_values_keeps_provenance_and_stamps(session_factory):
+    """save-restamps-provenance: the edit form resubmits the pre-filled cause/reason on every Save;
+    an unchanged value must not re-derive provenance or restamp the validator."""
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"t": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        ep_id = _episode_id(s, "t")
+        s.add(
+            Classification(
+                episode_id=ep_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact="dev-dave",
+                llm_hypothesis="trunk commit r123",
+            )
+        )
+        s.flush()
+        attr = actions.confirm(s, ep_id, "alice")
+        stamped_at = attr.validated_at
+        # A newer classification arrives with a different suggestion…
+        s.add(
+            Classification(
+                episode_id=ep_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact="dev-erin",
+                llm_hypothesis="something else",
+                created_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        )
+        s.flush()
+        # …and bob changes only the assignee; the form resubmits the stored cause/reason.
+        attr = actions.set_attribution(
+            s,
+            ep_id,
+            "bob",
+            causing_person="dev-dave",
+            reason_text=" trunk commit r123 ",
+            assignee="ann",
+        )
+        assert attr.cause_provenance == Provenance.AI_CONFIRMED
+        assert attr.reason_provenance == Provenance.AI_CONFIRMED
+        assert attr.validated_by == "alice"
+        assert attr.validated_at == stamped_at
+        assert s.get(FailureEpisode, ep_id).assignee == "ann"

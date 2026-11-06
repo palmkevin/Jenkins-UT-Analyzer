@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `save-restamps-provenance` — saving any field re-derives attribution provenance
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-The edit form pre-fills `causing_person`/`reason_text`, so every Save resubmits them and `set_attribution` re-derives provenance against the *current* AI suggestion — an assignee-only change turns AI_CONFIRMED into HUMAN_CORRECTED and restamps `validated_by`.
-
-**Acceptance:** submitting unchanged values leaves provenance and validation stamps untouched.
-
----
-
 ## `triage-status-unvalidated` — triage status accepted as an arbitrary string
 
 `area: dashboard` · found by the 2026-11 bug hunt
