@@ -10,8 +10,11 @@ It never touches the network; feed it a parsed JSON dict.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 # A track is the bare element among enclosingBlockNames, e.g. "permanent" / "permanent_py39".
 _TRACK_RE = re.compile(r"^permanent(?:_py39)?$")
@@ -73,7 +76,8 @@ class ParsedReport:
         return [c for c in self.cases if c.failed]
 
 
-def _track_of(enclosing_block_names: list[str]) -> str:
+def _track_of(enclosing_block_names: list[str]) -> str | None:
+    """The suite's track, or ``None`` when no known track appears in its enclosing blocks."""
     for block in enclosing_block_names or []:
         if _TRACK_RE.match(block):
             return block
@@ -82,9 +86,7 @@ def _track_of(enclosing_block_names: list[str]) -> str:
         m = re.match(r"Tests for (permanent(?:_py39)?)$", block)
         if m:
             return m.group(1)
-    raise ValueError(
-        f"could not determine track from enclosingBlockNames={enclosing_block_names!r}"
-    )
+    return None
 
 
 def _extract_location(stack_trace: str | None) -> tuple[str | None, int | None]:
@@ -123,6 +125,16 @@ def parse_test_report(report: dict) -> ParsedReport:
     for suite in report.get("suites", []):
         track = _track_of(suite.get("enclosingBlockNames", []))
         suite_name = suite.get("name", "")
+        if track is None:
+            # A new junit-publishing stage outside the known tracks must not fail every ingest
+            # (and so stop the poller). Skip it loudly; a *missing* expected track is caught by
+            # the pipeline's completeness check instead.
+            logger.warning(
+                "ut_report: skipping suite %r — no known track in enclosingBlockNames=%r",
+                suite_name,
+                suite.get("enclosingBlockNames", []),
+            )
+            continue
         for case in suite.get("cases", []):
             trace = case.get("errorStackTrace")
             file_path, line = _extract_location(trace)

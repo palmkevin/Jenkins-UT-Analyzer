@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from uta.ingest.ut_report import extract_zephyr, parse_test_report
 
 
@@ -91,3 +93,21 @@ def test_extract_zephyr_multiple_cases_deduped_in_order():
     ids, owner = extract_zephyr(trace)
     assert ids == ("LX-T4792", "LX-T5001")  # deduped, first-seen order
     assert owner == "tha"  # first owner-bearing detail line
+
+
+def test_unknown_track_suite_is_skipped_with_a_warning(test_report_1702, caplog):
+    """unknown-junit-suite-fails-every-ingest: a new junit-publishing stage outside the known
+    tracks is skipped (loudly), not a ValueError that fails every ingest."""
+    report = copy.deepcopy(test_report_1702)
+    report["suites"].append(
+        {
+            "name": "nose2-junit",
+            "enclosingBlockNames": ["Tests for lint", "lint", "devUTs"],
+            "cases": [{"className": "x.Y", "name": "test_z", "status": "PASSED"}],
+        }
+    )
+    with caplog.at_level("WARNING"):
+        parsed = parse_test_report(report)
+    assert parsed.tracks == {"permanent", "permanent_py39"}
+    assert not any(c.class_name == "x.Y" for c in parsed.cases)
+    assert any("skipping suite" in r.getMessage() for r in caplog.records)

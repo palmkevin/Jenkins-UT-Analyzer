@@ -116,6 +116,27 @@ def test_ingest_report_missing_a_track_is_incomplete(session_factory, keep_suite
         assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
 
 
+class _UnknownSuiteFake(FakeJenkinsClient):
+    """The py39 suite's enclosing blocks name a track outside the known ones."""
+
+    def test_report(self, build: int) -> dict:
+        payload = super().test_report(build)
+        for suite in payload["suites"]:
+            if "permanent_py39" in suite["enclosingBlockNames"]:
+                suite["enclosingBlockNames"] = ["Tests for lint", "lint"]
+        return payload
+
+
+def test_ingest_unknown_suite_is_skipped_and_build_incomplete(session_factory):
+    """unknown-junit-suite-fails-every-ingest: the unknown suite no longer raises; the expected
+    track it displaced is caught by completeness."""
+    ingest_build(_UnknownSuiteFake(), session_factory, 1702, expected_tracks=2)
+    with session_scope(session_factory) as s:
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is False
+        assert set(s.scalars(select(TestResult.track)).all()) == {"permanent"}
+
+
 def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
     """The ZEPHYR test case(s) a failing test references are resolved onto its identity."""
     ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)

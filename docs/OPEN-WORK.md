@@ -93,16 +93,6 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 <!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
 
-## `unknown-junit-suite-fails-every-ingest` — an unrecognised JUnit suite fails every ingest
-
-`area: ingest` · found by the 2026-11 bug hunt
-
-`ut_report._track_of` raises `ValueError` for any suite outside `permanent`/`permanent_py39`. One new junit-publishing stage makes every build fail and get quarantined, i.e. ingest stops.
-
-**Acceptance:** unknown-track suites are skipped with a warning; a missing expected track is caught by the completeness check instead.
-
----
-
 ## `oracle-call-timeout` — Oracle queries have no call timeout
 
 `area: ingest` · found by the 2026-11 bug hunt
