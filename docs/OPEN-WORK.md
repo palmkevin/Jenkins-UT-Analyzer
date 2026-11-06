@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `format-ts-mislabels-non-utc` — timestamps are labelled UTC without being converted
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`format_ts`/`format_reltime` append " UTC" without `astimezone(UTC)`; on a Postgres with a non-UTC `TimeZone`, 12:00 UTC renders as "14:00:00 UTC".
-
-**Acceptance:** aware datetimes are converted to UTC before formatting.
-
----
-
 ## `auth-actor-falls-back-to-cookie` — with auth on, a session without username falls back to the self-declared actor cookie
 
 `area: dashboard` · found by the 2026-11 bug hunt

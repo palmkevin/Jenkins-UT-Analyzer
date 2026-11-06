@@ -7,7 +7,7 @@ server-side markup, no JS.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from markupsafe import Markup
 
@@ -70,3 +70,9 @@ def test_non_datetime_falls_through_to_str():
 
 def test_filter_registered_on_templates_env():
     assert _TEMPLATES.env.filters.get("reltime") is format_reltime
+
+
+def test_title_converts_non_utc_aware_datetime_to_utc():
+    """format-ts-mislabels-non-utc: the hover title is labelled UTC, so it must be converted."""
+    dt = datetime(2026, 6, 29, 14, 0, 0, tzinfo=timezone(timedelta(hours=2)))
+    assert 'title="2026-06-29 12:00:00 UTC"' in format_reltime(dt)

@@ -66,7 +66,14 @@ def _ts_text(value: datetime) -> str:
     an unlabelled wall-clock string is silently ambiguous (issue #144). Used for the visible text
     of :func:`format_ts` and for hover ``title`` attributes (:func:`format_reltime`).
     """
-    return value.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+    return _as_utc(value).strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+
+
+def _as_utc(value: datetime) -> datetime:
+    """``value`` as an aware UTC datetime: naive is taken as UTC (SQLite drops tzinfo; the app
+    normalizes to UTC), aware is **converted** — a Postgres session with a non-UTC ``TimeZone``
+    returns e.g. ``+02:00`` instants, which must not be labelled UTC with their local wall-clock."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def format_ts(value: object) -> str:
@@ -82,9 +89,10 @@ def format_ts(value: object) -> str:
         return "—"
     if not isinstance(value, datetime):
         return str(value)
+    # The title keeps the instant's own offset (lossless); the visible text is converted to UTC.
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     iso = aware.isoformat(timespec="seconds")
-    return Markup(f'<span title="{escape(iso)}">{escape(_ts_text(value))}</span>')
+    return Markup(f'<span title="{escape(iso)}">{escape(_ts_text(aware))}</span>')
 
 
 def format_duration(value: object) -> str:
@@ -139,7 +147,7 @@ def format_reltime(value: object) -> str:
     if not isinstance(value, datetime):
         return str(value)
     # SQLite (offline tests) drops tzinfo; the app normalizes to UTC, so treat naive as UTC.
-    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    aware = _as_utc(value)
     age = (datetime.now(UTC) - aware).total_seconds()
     return Markup(f'<span title="{escape(_ts_text(value))}">{escape(_relative_text(age))}</span>')
 

@@ -65,3 +65,10 @@ def test_visible_text_is_plain_wrappable_text():
 
 def test_filter_registered_on_templates_env():
     assert _TEMPLATES.env.filters.get("ts") is format_ts
+
+
+def test_non_utc_aware_datetime_is_converted_before_the_utc_label():
+    """format-ts-mislabels-non-utc: a Postgres session with a non-UTC TimeZone hands back +02:00
+    instants; 14:00+02:00 is 12:00 UTC and must not render as "14:00:00 UTC"."""
+    dt = datetime(2026, 6, 29, 14, 0, 0, tzinfo=timezone(timedelta(hours=2)))
+    assert ">2026-06-29 12:00:00 UTC</span>" in format_ts(dt)
