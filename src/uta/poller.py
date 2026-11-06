@@ -358,8 +358,13 @@ def poll_tick(
     that ingest nothing still keep the store trimmed (a tick cut short by a build failure skips it
     until the next clean tick).
     """
-    with session_scope(session_factory) as session:
-        cfg = effective_settings(base_settings, load_overrides(session))
+    try:
+        with session_scope(session_factory) as session:
+            cfg = effective_settings(base_settings, load_overrides(session))
+    except Exception as exc:  # noqa: BLE001 — a DB blip at tick start must not kill the scheduler
+        logger.exception("poll tick failed loading setting overrides")
+        _safe_heartbeat(session_factory, processed=[], error=repr(exc))
+        return []
 
     # Overrunning-build observation (issue #184): a live signal independent of ingest, so it runs
     # every tick *before* the ingest work — which may end the tick early on a build failure — and
@@ -399,14 +404,28 @@ def poll_tick(
             )
     except BuildIngestError as exc:
         logger.exception("poll tick ended early on build #%d", exc.build)
-        record_heartbeat(session_factory, processed=exc.processed, error=repr(exc.cause))
+        _safe_heartbeat(session_factory, processed=exc.processed, error=repr(exc.cause))
         return exc.processed
     except Exception as exc:  # noqa: BLE001 — surface on the heartbeat, keep the scheduler alive
         logger.exception("poll tick failed")
-        record_heartbeat(session_factory, processed=[], error=repr(exc))
+        _safe_heartbeat(session_factory, processed=[], error=repr(exc))
         return []
-    record_heartbeat(session_factory, processed=processed, error=None)
+    _safe_heartbeat(session_factory, processed=processed, error=None)
     return processed
+
+
+def _safe_heartbeat(
+    session_factory: sessionmaker[Session], *, processed: list[int], error: str | None
+) -> None:
+    """Stamp the heartbeat, logging (never raising) if the DB is unreachable.
+
+    The heartbeat is how the tick *reports* a failure — often a DB outage, in which case the write
+    fails too. Raising from here would turn a reported failure into a dead scheduler.
+    """
+    try:
+        record_heartbeat(session_factory, processed=processed, error=error)
+    except Exception:  # noqa: BLE001 — reporting must never break the tick
+        logger.exception("could not record the poller heartbeat")
 
 
 def run_scheduler(
@@ -426,15 +445,19 @@ def run_scheduler(
     """
 
     def _tick() -> list[int]:
-        return poll_tick(
-            client,
-            session_factory,
-            base_settings,
-            feed=feed,
-            channels=channels,
-            hypothesis_provider=hypothesis_provider,
-            svn_blame_client=svn_blame_client,
-        )
+        try:
+            return poll_tick(
+                client,
+                session_factory,
+                base_settings,
+                feed=feed,
+                channels=channels,
+                hypothesis_provider=hypothesis_provider,
+                svn_blame_client=svn_blame_client,
+            )
+        except Exception:  # noqa: BLE001 — the startup tick runs outside APScheduler's guard
+            logger.exception("poll tick raised — the scheduler keeps running")
+            return []
 
     scheduler = build_scheduler(_tick, base_settings.poll_interval_seconds)
     # Run an immediate pass on startup so a fresh poller doesn't idle until the first interval;

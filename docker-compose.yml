@@ -14,8 +14,12 @@
 # stays isolated from this one.
 name: jenkins-ut-analyzer
 services:
+  # `restart: unless-stopped` on the long-lived services: a crash (or a Docker daemon / host
+  # reboot) brings them back instead of leaving the poller dead until someone notices. Not on the
+  # one-shot `migrate`, which must run once and exit.
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-uta}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uta}
@@ -40,6 +44,7 @@ services:
 
   web:
     build: .
+    restart: unless-stopped
     env_file: .env
     # Schema is applied by the `migrate` service; this just serves (no init-db, so no migrate race).
     # --proxy-headers/--forwarded-allow-ips: trust the ingress proxy's X-Forwarded-* so the OIDC
@@ -60,6 +65,7 @@ services:
 
   poller:
     build: .
+    restart: unless-stopped
     env_file: .env
     # The scheduled poll + ingest loop (was a Slice-0 `sleep infinity` placeholder).
     command: ["uta", "poll"]

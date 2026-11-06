@@ -276,3 +276,32 @@ def test_poll_tick_swallows_error_and_records_it(session_factory):
     assert poll_tick(_Boom(), session_factory, Settings()) == []
     with session_scope(session_factory) as s:
         assert "network down" in read_heartbeat(s).last_error
+
+
+def test_poll_tick_survives_db_down_at_tick_start():
+    """A DB blip while loading overrides (and writing the failure heartbeat) is logged, not raised
+    — otherwise the poller dies at startup (compose-no-restart-policy)."""
+    from sqlalchemy.exc import OperationalError
+
+    def _broken_factory():
+        raise OperationalError("connect", {}, Exception("db down"))
+
+    assert poll_tick(_MultiBuildFake(), _broken_factory, Settings()) == []
+
+
+def test_run_scheduler_survives_a_raising_first_tick(monkeypatch, session_factory):
+    import uta.poller as poller
+
+    started: list[bool] = []
+
+    class _FakeScheduler:
+        def start(self) -> None:
+            started.append(True)
+
+    def _raise(*a, **k):
+        raise RuntimeError("first tick blew up")
+
+    monkeypatch.setattr(poller, "poll_tick", _raise)
+    monkeypatch.setattr(poller, "build_scheduler", lambda tick, interval: _FakeScheduler())
+    poller.run_scheduler(_MultiBuildFake(), session_factory, Settings())
+    assert started == [True]  # the scheduler still starts after a failing startup tick

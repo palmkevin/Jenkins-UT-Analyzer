@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `compose-no-restart-policy` — services don't restart; the poller's first tick is unguarded
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`docker-compose.yml` has no `restart:`; `run_scheduler`'s first `_tick()` and `poll_tick`'s override load / failure-heartbeat aren't guarded, so a DB blip at start kills the poller until someone notices.
-
-**Acceptance:** services restart `unless-stopped`; a failing first tick doesn't kill the poller.
-
----
-
 ## `job-poller-no-mutual-exclusion` — control-panel ingest jobs and the poller can ingest concurrently
 
 `area: infra` · found by the 2026-11 bug hunt
