@@ -14,6 +14,7 @@ These are pure DB mutations on persisted facts; the route handlers commit via ``
 from __future__ import annotations
 
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -30,6 +31,25 @@ from uta.models import (
     TestResult,
 )
 from uta.models.enums import LifecycleState, Provenance
+
+
+@dataclass(frozen=True)
+class ConfirmOutcome:
+    """What a **Confirm** actually accepted — so the caller reports that, not the stored row.
+
+    ``cause`` / ``reason`` are the AI values that were confirmed (``None`` for a field the AI left
+    empty — a human value already there is kept, but it was not *confirmed*). ``attribution`` is
+    the row after the confirm; ``None`` when there was nothing to confirm and no row existed (a
+    Confirm with no AI suggestion creates none).
+    """
+
+    attribution: Attribution | None
+    cause: str | None = None
+    reason: str | None = None
+
+    @property
+    def confirmed(self) -> bool:
+        return self.cause is not None or self.reason is not None
 
 
 def _now() -> datetime:
@@ -240,12 +260,14 @@ def _apply_confirm(
     return confirmed
 
 
-def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None:
+def confirm(session: Session, episode_id: int, actor: str) -> ConfirmOutcome | None:
     """One-click **Confirm** of the AI suggestion for an episode (cheap → high label volume).
 
     Accepts the AI's suggested contact + hypothesis as the conclusion, tier ``AI_CONFIRMED``,
     retaining the original AI values for audit. Only fields the AI actually suggested are written
-    (see :func:`_apply_confirm`). Returns None if the episode doesn't exist.
+    (see :func:`_apply_confirm`), and the outcome reports exactly those; with no AI suggestion
+    nothing is written and no Attribution row is created. Returns None if the episode doesn't
+    exist.
     """
     episode = session.get(FailureEpisode, episode_id)
     if episode is None:
@@ -253,11 +275,14 @@ def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None
     classification = _latest_classification(session, episode_id)
     ai_cause = classification.suggested_contact if classification else None
     ai_reason = classification.llm_hypothesis if classification else None
+    if ai_cause is None and ai_reason is None:
+        existing = session.scalar(select(Attribution).where(Attribution.episode_id == episode_id))
+        return ConfirmOutcome(existing)
 
     attr = _get_or_create_attribution(session, episode_id)
-    if _apply_confirm(attr, ai_cause, ai_reason, actor):
-        attr.signature_id = _episode_signature_id(session, episode)
-    return attr
+    _apply_confirm(attr, ai_cause, ai_reason, actor)
+    attr.signature_id = _episode_signature_id(session, episode)
+    return ConfirmOutcome(attr, cause=ai_cause, reason=ai_reason)
 
 
 def set_attribution(
@@ -446,19 +471,26 @@ def acknowledge_incident(session: Session, incident_id: int, actor: str) -> bool
     return True
 
 
-def confirm_incident(session: Session, incident_id: int, actor: str) -> Attribution | None:
-    """One-click **Confirm** of the AI suggestion for a Build Incident (tier ``AI_CONFIRMED``)."""
+def confirm_incident(session: Session, incident_id: int, actor: str) -> ConfirmOutcome | None:
+    """One-click **Confirm** of the AI suggestion for a Build Incident (tier ``AI_CONFIRMED``).
+
+    Mirrors :func:`confirm`: only AI-suggested fields are written and reported, and with no AI
+    suggestion no Attribution row is created. Returns None if the incident doesn't exist.
+    """
     incident = session.get(BuildIncident, incident_id)
     if incident is None:
         return None
     classification = _latest_incident_classification(session, incident_id)
     ai_cause = classification.suggested_contact if classification else None
     ai_reason = classification.llm_hypothesis if classification else None
+    if ai_cause is None and ai_reason is None:
+        existing = session.scalar(select(Attribution).where(Attribution.incident_id == incident_id))
+        return ConfirmOutcome(existing)
 
     attr = _get_or_create_incident_attribution(session, incident_id)
-    if _apply_confirm(attr, ai_cause, ai_reason, actor):
-        attr.signature_id = incident.signature_id
-    return attr
+    _apply_confirm(attr, ai_cause, ai_reason, actor)
+    attr.signature_id = incident.signature_id
+    return ConfirmOutcome(attr, cause=ai_cause, reason=ai_reason)
 
 
 def set_incident_attribution(

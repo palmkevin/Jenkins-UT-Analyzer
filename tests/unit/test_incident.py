@@ -482,7 +482,7 @@ def test_incident_actions_acknowledge_confirm_attribute(session_factory):
         assert actions.acknowledge_incident(s, inc.id, "kev") is True
         assert inc.acknowledged and inc.acknowledged_by == "kev"
 
-        attr = actions.confirm_incident(s, inc.id, "kev")
+        attr = actions.confirm_incident(s, inc.id, "kev").attribution
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.causing_person == "dev-dana"  # the suggested contact
 
@@ -557,7 +557,7 @@ def test_confirm_incident_keeps_human_reason_when_ai_has_no_hypothesis(session_f
         ).incident
         s.flush()
         actions.set_incident_attribution(s, inc.id, "kev", reason_text="disk full on agent")
-        attr = actions.confirm_incident(s, inc.id, "ann")
+        attr = actions.confirm_incident(s, inc.id, "ann").attribution
         assert attr.causing_person == "dev-dana"
         assert attr.reason_text == "disk full on agent"
         assert attr.reason_provenance == Provenance.HUMAN_ENTERED

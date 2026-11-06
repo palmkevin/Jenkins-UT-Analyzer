@@ -353,6 +353,18 @@ def _triage_filters(request: Request) -> dict[str, str]:
     return {k: v for k, v in request.query_params.items() if k in _TRIAGE_FILTER_KEYS and v}
 
 
+def _confirm_flash(outcome: actions.ConfirmOutcome | None, *, missing: str) -> tuple[str, str]:
+    """The flash ``(message, kind)`` for a Confirm — naming only what the AI suggested and was
+    actually confirmed, never a human value that Confirm left in place."""
+    if outcome is None:
+        return missing, "error"
+    if not outcome.confirmed:
+        return "Nothing to confirm — the AI made no suggestion", "error"
+    if outcome.cause is not None:
+        return f"AI suggestion confirmed — cause → {outcome.cause}", "success"
+    return "AI suggestion confirmed — hypothesis only (the AI suggested no cause)", "success"
+
+
 def create_app(
     session_factory=None, *, channels: list[AlertChannel] | None = None, demo_mode: bool = False
 ) -> FastAPI:
@@ -642,13 +654,9 @@ def create_app(
     def confirm_incident(request: Request, incident_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            attr = actions.confirm_incident(s, incident_id, actor)
+            outcome = actions.confirm_incident(s, incident_id, actor)
         resp = back(request, fallback=f"/incidents/{incident_id}", anchor=anchor)
-        set_flash(
-            resp,
-            "AI suggestion confirmed" if attr is not None else "Incident not found",
-            "" if attr is not None else "error",
-        )
+        set_flash(resp, *_confirm_flash(outcome, missing="Incident not found"))
         return resp
 
     @app.post("/incidents/{incident_id}/attribute")
@@ -1018,14 +1026,9 @@ def create_app(
     def confirm(request: Request, episode_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
-            attr = actions.confirm(s, episode_id, actor)
-            confirmed_cause = attr.causing_person if attr else None
+            outcome = actions.confirm(s, episode_id, actor)
         resp = back(request, anchor=anchor)
-        if attr is not None:
-            suffix = f" — cause → {confirmed_cause}" if confirmed_cause else ""
-            set_flash(resp, f"AI suggestion confirmed{suffix}")
-        else:
-            set_flash(resp, "Episode not found — nothing confirmed", "error")
+        set_flash(resp, *_confirm_flash(outcome, missing="Episode not found — nothing confirmed"))
         return resp
 
     @app.post("/episodes/{episode_id}/attribute")

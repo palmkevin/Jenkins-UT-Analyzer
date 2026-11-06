@@ -202,10 +202,100 @@ def test_attribute_message_lists_what_was_saved(client, seeded):
     assert "Saved — cause → frank, reason updated, triage status → INVESTIGATING" in page
 
 
+def _suggest(session_factory, *, contact=None, hypothesis=None, episode_id=None, incident_id=None):
+    from uta.models import Classification
+    from uta.models.enums import PredictedCause
+
+    with session_scope(session_factory) as s:
+        s.add(
+            Classification(
+                episode_id=episode_id,
+                incident_id=incident_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact=contact,
+                llm_hypothesis=hypothesis,
+            )
+        )
+
+
+def _attribution_count(session_factory) -> int:
+    from sqlalchemy import func, select
+
+    from uta.models import Attribution
+
+    with session_scope(session_factory) as s:
+        return s.scalar(select(func.count()).select_from(Attribution))
+
+
 def test_confirm_message(client, seeded):
     ep_id = _episode_id(seeded, "alpha")
+    _suggest(seeded, contact="dev-dave", hypothesis="trunk commit r1", episode_id=ep_id)
     client.post(f"/episodes/{ep_id}/confirm", headers={"referer": "/"})
-    assert "AI suggestion confirmed" in client.get("/").text
+    assert "AI suggestion confirmed — cause → dev-dave" in client.get("/").text
+
+
+def test_confirm_with_no_ai_suggestion_says_so_and_creates_no_row(client, seeded):
+    # confirm-clobbers-human-reason: nothing suggested ⇒ nothing confirmed, no empty Attribution.
+    ep_id = _episode_id(seeded, "alpha")
+    client.post(f"/episodes/{ep_id}/confirm", headers={"referer": "/"})
+    page = client.get("/").text
+    assert "Nothing to confirm — the AI made no suggestion" in page
+    assert "AI suggestion confirmed" not in page
+    assert _attribution_count(seeded) == 0
+
+
+def test_confirm_of_a_hypothesis_only_never_reports_the_human_cause(client, seeded):
+    # The AI suggested only a hypothesis; the human-entered cause is kept but was not *confirmed*,
+    # so the flash must not claim "cause → <human value>".
+    ep_id = _episode_id(seeded, "alpha")
+    client.post(
+        f"/episodes/{ep_id}/attribute", data={"causing_person": "carol"}, headers={"referer": "/"}
+    )
+    client.get("/")  # consume that flash
+    _suggest(seeded, hypothesis="trunk commit r1", episode_id=ep_id)
+    client.post(f"/episodes/{ep_id}/confirm", headers={"referer": "/"})
+    page = client.get("/").text
+    assert "AI suggestion confirmed — hypothesis only" in page
+    assert "cause → carol" not in page
+
+
+def _incident_id(session_factory) -> int:
+    from uta.analyze.incident import apply_build_incident
+
+    with session_scope(session_factory) as s:
+        b = make_build(s, 2, {})
+        s.flush()
+        inc = apply_build_incident(
+            s, b, "FAILURE", failing_stage="Compile", failing_stage_log="compilation failed\nexit 1"
+        ).incident
+        s.flush()
+        return inc.id
+
+
+def test_confirm_incident_with_no_ai_suggestion_says_so_and_creates_no_row(client, seeded):
+    from sqlalchemy import update
+
+    from uta.models import Classification
+
+    inc_id = _incident_id(seeded)
+    with session_scope(seeded) as s:  # whatever the classifier said, the AI suggested nothing
+        s.execute(
+            update(Classification)
+            .where(Classification.incident_id == inc_id)
+            .values(suggested_contact=None, llm_hypothesis=None)
+        )
+    client.post(f"/incidents/{inc_id}/confirm", headers={"referer": "/"})
+    page = client.get("/").text
+    assert "Nothing to confirm — the AI made no suggestion" in page
+    assert _attribution_count(seeded) == 0
+
+
+def test_confirm_incident_reports_the_confirmed_cause(client, seeded):
+    inc_id = _incident_id(seeded)
+    _suggest(seeded, contact="dev-dana", incident_id=inc_id)
+    client.post(f"/incidents/{inc_id}/confirm", headers={"referer": "/"})
+    assert "AI suggestion confirmed — cause → dev-dana" in client.get("/").text
+    assert _attribution_count(seeded) == 1
 
 
 def test_bulk_attribute_message_carries_count_and_status(client, seeded):

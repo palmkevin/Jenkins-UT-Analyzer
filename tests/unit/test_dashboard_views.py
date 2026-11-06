@@ -602,7 +602,7 @@ def test_confirm_accepts_ai_suggestion(session_factory):
             )
         )
         s.flush()
-        attr = actions.confirm(s, ep_id, "alice")
+        attr = actions.confirm(s, ep_id, "alice").attribution
         assert attr.causing_person == "dev-dave"
         assert attr.reason_text == "likely the trunk commit r123"
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
@@ -623,7 +623,7 @@ def test_confirm_stamps_classifier_suggested_contact(session_factory):
         classify_build(s, build, analysis.opened_episodes)
         s.flush()
         ep_id = _episode_id(s, "t")
-        attr = actions.confirm(s, ep_id, "alice")
+        attr = actions.confirm(s, ep_id, "alice").attribution
         assert attr.causing_person == "dev-dave"
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.original_ai_cause == "dev-dave"
@@ -1503,7 +1503,7 @@ def test_confirm_keeps_human_reason_when_ai_suggested_none(session_factory):
             )
         )
         s.flush()
-        attr = actions.confirm(s, ep_id, "alice")
+        attr = actions.confirm(s, ep_id, "alice").attribution
         assert attr.causing_person == "dev-dave"
         assert attr.cause_provenance == Provenance.AI_CONFIRMED
         assert attr.reason_text == "ut_ref row deleted"
@@ -1517,7 +1517,7 @@ def test_confirm_with_no_ai_suggestion_changes_nothing(session_factory):
         apply_build(s, r1, baseline=None)
         ep_id = _episode_id(s, "t")
         actions.set_attribution(s, ep_id, "bob", causing_person="carol", reason_text="fixture")
-        attr = actions.confirm(s, ep_id, "alice")
+        attr = actions.confirm(s, ep_id, "alice").attribution
         assert attr.causing_person == "carol" and attr.reason_text == "fixture"
         assert attr.cause_provenance == Provenance.HUMAN_ENTERED
         assert attr.validated_by == "bob"
@@ -1539,7 +1539,7 @@ def test_save_with_unchanged_values_keeps_provenance_and_stamps(session_factory)
             )
         )
         s.flush()
-        attr = actions.confirm(s, ep_id, "alice")
+        attr = actions.confirm(s, ep_id, "alice").attribution
         stamped_at = attr.validated_at
         # A newer classification arrives with a different suggestion…
         s.add(
