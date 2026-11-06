@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from uta.kb.signature import _is_our_frame
+
 if TYPE_CHECKING:
     from uta.models.signals import CodeChangeCandidate, DataChangeCandidate
 
@@ -136,7 +138,10 @@ def _reference_paths(
     if file_path:
         raw.append(file_path)
     if error_stack_trace:
-        raw.extend(_FRAME_PATH.findall(error_stack_trace))
+        # Only in-tree frames anchor relevance: a stdlib/site-packages frame
+        # (``…/site-packages/sqlalchemy/engine/base.py``) would otherwise module-match an unrelated
+        # in-tree change (``lx/lims/engine/base.py``). Same markers as the signature normalizer.
+        raw.extend(p for p in _FRAME_PATH.findall(error_stack_trace) if _is_our_frame(p))
     module = _module_file(class_name)
     if module:
         raw.append(module)

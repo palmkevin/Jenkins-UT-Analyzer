@@ -77,6 +77,32 @@ def test_module_path_match_scores_highest():
     assert ranked.code_relevant
 
 
+def test_third_party_frames_do_not_anchor_relevance():
+    """A site-packages/stdlib frame must not module-match an unrelated in-tree change."""
+    stack = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.9/unittest/case.py", line 59, in testPartExecutor\n'
+        '  File "/opt/ls/lx/release/permanent/tests/dev/ut_billing/bi_round.py", line 77, '
+        "in test_invoice_rounding\n"
+        '  File "/opt/venv/lib/python3.9/site-packages/sqlalchemy/engine/base.py", line 1, '
+        "in execute\n"
+        "AssertionError: values differ\n"
+    )
+    ranked = _rank(
+        code=[
+            _code(["/trunk/lx/lims/engine/base.py"], revision="r1"),
+            _code(["/trunk/lx/reports/case.py"], revision="r2"),
+            _code(["/trunk/lx/ut_billing/bi_round.py"], revision="r3"),
+        ],
+        error_stack_trace=stack,
+        file_path=None,
+    )
+    scores = {c.revision: c.score for c in ranked.code}
+    assert scores["r1"] == 0  # site-packages/sqlalchemy/engine/base.py is not our engine/base.py
+    assert scores["r2"] == 0  # stdlib unittest/case.py is not our reports/case.py
+    assert scores["r3"] == SCORE_MODULE  # the in-tree frame still anchors
+
+
 def test_file_name_only_match_is_weaker():
     ranked = _rank(code=[_code(["/trunk/other_pkg/bi_round.py"])])
     [c] = ranked.code

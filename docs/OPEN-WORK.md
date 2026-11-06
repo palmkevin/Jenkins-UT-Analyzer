@@ -213,16 +213,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `relevance-third-party-frames-match` — stdlib/site-packages frames anchor data/code relevance
-
-`area: analysis` · found by the 2026-11 bug hunt
-
-`relevance._reference_paths` uses every stack frame; `site-packages/sqlalchemy/engine/base.py` matches a changed `lx/lims/engine/base.py` at SCORE_MODULE, skewing classification and the LLM's top candidate.
-
-**Acceptance:** only in-tree frames (same markers as `kb/signature.py`) anchor relevance.
-
----
-
 ## `signature-mask-gaps` — signature masking misses `SMP_000123`-style ids and temp paths
 
 `area: kb` · found by the 2026-11 bug hunt · **needs owner input**
