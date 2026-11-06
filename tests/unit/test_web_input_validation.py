@@ -210,3 +210,34 @@ def test_forms_carry_maxlength(client, seeded):
     inc_page = client.get(f"/incidents/{_incident_id(seeded)}").text
     assert 'name="causing_person" maxlength="128"' in inc_page
     assert 'name="resolution_ticket" maxlength="512"' in inc_page
+
+
+# ── bulk-ids-int-parse-500 ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("bad", ["abc", "1.5", "-3", "", "99999999999999999999", "٣"])
+def test_bulk_acknowledge_bad_id_is_an_error_flash(client, seeded, bad):
+    good = _episode(seeded, "alpha").test_identity_id
+    resp = client.post(
+        "/tests/bulk/acknowledge",
+        data={"identity_ids": [str(good), bad]},
+        headers={"referer": "/"},
+    )
+    assert resp.status_code == 303
+    page = _flash_page(client)
+    assert "Invalid test selection — nothing acknowledged" in page
+    with session_scope(seeded) as s:
+        assert get_identity(s, "alpha").lifecycle.acknowledged is False
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "2147483648"])
+def test_bulk_attribute_bad_id_is_an_error_flash(client, seeded, bad):
+    resp = client.post(
+        "/episodes/bulk/attribute",
+        data={"episode_ids": [str(_episode_id(seeded, "alpha")), bad], "causing_person": "frank"},
+        headers={"referer": "/"},
+    )
+    assert resp.status_code == 303
+    assert "Invalid test selection — nothing updated" in _flash_page(client)
+    with session_scope(seeded) as s:
+        assert s.scalar(select(Attribution)) is None

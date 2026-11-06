@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `bulk-ids-int-parse-500` — non-numeric ids in bulk forms are a 500
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`int(v)` on form values in `/tests/bulk/acknowledge` and `/episodes/bulk/attribute`.
-
-**Acceptance:** bad ids get a 400/flash, not a 500.
-
----
-
 ## `path-id-overflow-500` — huge path ids are a 500
 
 `area: dashboard` · found by the 2026-11 bug hunt

@@ -310,6 +310,29 @@ def _length_error(**fields: str | None) -> str | None:
     return None
 
 
+# Primary keys are 32-bit INTEGER columns; anything outside this range can't name a row (and
+# Postgres rejects it outright rather than matching nothing).
+MAX_DB_ID = 2**31 - 1
+
+
+def _parse_ids(values: list) -> list[int] | None:
+    """Bulk-form checkbox values → row ids, or ``None`` if any isn't a positive in-range integer.
+
+    The values are request input: a hand-crafted or corrupted form must get an error flash, not
+    a 500 from ``int()``.
+    """
+    ids: list[int] = []
+    for raw in values:
+        text = str(raw).strip()
+        if not text.isascii() or not text.isdigit():
+            return None
+        value = int(text)
+        if not 1 <= value <= MAX_DB_ID:
+            return None
+        ids.append(value)
+    return ids
+
+
 _TRIAGE_FILTER_KEYS = ("owner", "track", "cause", "triage_status", "failure", "flaky")
 
 
@@ -812,7 +835,13 @@ def create_app(
     @app.post("/tests/bulk/acknowledge")
     async def bulk_acknowledge(request: Request):
         form = await request.form()
-        identity_ids = [int(v) for v in form.getlist("identity_ids")]
+        identity_ids = _parse_ids(form.getlist("identity_ids"))
+        if identity_ids is None:
+            return rejected(
+                request,
+                "Invalid test selection — nothing acknowledged",
+                anchor=str(form.get("anchor", "")),
+            )
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.bulk_acknowledge(s, identity_ids, actor)
@@ -904,7 +933,13 @@ def create_app(
     @app.post("/episodes/bulk/attribute")
     async def bulk_attribute(request: Request):
         form = await request.form()
-        episode_ids = [int(v) for v in form.getlist("episode_ids")]
+        episode_ids = _parse_ids(form.getlist("episode_ids"))
+        if episode_ids is None:
+            return rejected(
+                request,
+                "Invalid test selection — nothing updated",
+                anchor=str(form.get("anchor", "")),
+            )
         actor = current_actor(request)
         causing_person = str(form.get("causing_person", ""))
         reason_text = str(form.get("reason_text", ""))
