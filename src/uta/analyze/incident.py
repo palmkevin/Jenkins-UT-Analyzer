@@ -227,6 +227,11 @@ def apply_build_incident(
         # NOT_BUILT / null / in-progress — neither opens nor recovers.
         return IncidentOutcome(incident=open_incident)
 
+    if open_incident is not None and open_incident.last_build_id == build.id:
+        # Re-applying the build already at the head of the streak (a re-ingest) — idempotent no-op,
+        # not a second build in the streak.
+        return IncidentOutcome(incident=open_incident)
+
     if open_incident is not None:
         # Extend the streak — one incident spans consecutive non-green builds. The kind stays
         # whatever opened it; a different kind is noted (mixed streak) but does not split it.

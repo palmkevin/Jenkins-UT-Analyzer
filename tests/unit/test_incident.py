@@ -65,6 +65,30 @@ def test_streak_collapses_consecutive_non_green_into_one_incident(session_factor
         assert s.query(BuildIncident).count() == 1
 
 
+def test_reapplying_the_same_build_is_a_noop(session_factory):
+    """Re-ingesting the newest build must not count it twice in its own incident."""
+    with session_scope(session_factory) as s:
+        b1 = make_build(s, 1, {})
+        b2 = make_build(s, 2, {})
+        first = apply_build_incident(
+            s, b1, "FAILURE", failing_stage="Compile", failing_stage_log=_LOG
+        )
+        again = apply_build_incident(
+            s, b1, "FAILURE", failing_stage="Compile", failing_stage_log=_LOG
+        )
+        assert first.opened is True and again.opened is False
+        assert again.incident.id == first.incident.id
+        assert again.incident.build_count == 1
+
+        apply_build_incident(s, b2, "ABORTED")
+        apply_build_incident(s, b2, "ABORTED")
+        inc = s.scalar(select(BuildIncident))
+        assert inc.build_count == 2
+        assert inc.last_build_id == b2.id
+        assert inc.mixed_kinds == IncidentKind.ABORTED
+        assert s.query(BuildIncident).count() == 1
+
+
 def test_mixed_kind_streak_stays_one_incident(session_factory):
     with session_scope(session_factory) as s:
         b1 = make_build(s, 1, {})

@@ -189,16 +189,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `incident-reingest-double-extend` — re-ingesting the newest build extends its own Build Incident
-
-`area: analysis` · found by the 2026-11 bug hunt
-
-`apply_build_incident` (`analyze/incident.py` ~l.230) isn't idempotent: re-ingesting the newest build bumps the open incident's `build_count` 1→2 with no new build.
-
-**Acceptance:** re-applying the same build to an incident is a no-op.
-
----
-
 ## `incident-infra-masked-away` — infra errors in stage logs are lost to signature masking
 
 `area: analysis` · found by the 2026-11 bug hunt
