@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `config-int-validation` — zero/negative poller settings break every tick
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`POLL_RETRY_ATTEMPTS=0` raises `AssertionError("unreachable")` every tick; same lack of bounds on `QUARANTINE_AFTER_ATTEMPTS`, `POLL_INTERVAL_SECONDS`, `BACKFILL_DEPTH`.
-
-**Acceptance:** these settings are validated `>= 1` at startup.
-
----
-
 ## `migration-drift-nullable-timestamps` — migrations leave model-NOT-NULL timestamps nullable
 
 `area: infra` · found by the 2026-11 bug hunt

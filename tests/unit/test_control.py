@@ -305,3 +305,24 @@ def test_run_scheduler_survives_a_raising_first_tick(monkeypatch, session_factor
     monkeypatch.setattr(poller, "build_scheduler", lambda tick, interval: _FakeScheduler())
     poller.run_scheduler(_MultiBuildFake(), session_factory, Settings())
     assert started == [True]  # the scheduler still starts after a failing startup tick
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        "POLL_RETRY_ATTEMPTS",
+        "QUARANTINE_AFTER_ATTEMPTS",
+        "POLL_INTERVAL_SECONDS",
+        "BACKFILL_DEPTH",
+    ],
+)
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_poller_int_settings_must_be_positive(env, value, monkeypatch):
+    """0 retry attempts raised AssertionError("unreachable") every tick (config-int-validation)."""
+    from pydantic import ValidationError
+
+    monkeypatch.setenv(env, value)
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        Settings()
+    monkeypatch.setenv(env, "1")
+    assert getattr(Settings(), env.lower()) == 1

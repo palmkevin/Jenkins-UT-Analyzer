@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # Cold-start back-fill: on an empty store, ingest the last N completed builds oldest-first
     # (age N → age 1) before incremental polling takes over. Caps the bootstrap so a fresh DB does
     # not try to ingest every historical build from #1.
-    backfill_depth: int = 10
+    backfill_depth: int = Field(default=10, ge=1)
     # Retention (issue #52): raw *passing/skipped* results are dropped once their build is older
     # than
     # this many days (failing results, builds, episodes, lifecycles, attributions and KB signatures
@@ -168,16 +168,17 @@ class Settings(BaseSettings):
     data_change_tolerance_minutes: int = 5
     # Scheduled poll cadence (seconds) for `uta poll`. Dropped 300 → 60 for a near-real-time
     # overrunning-build banner (issue #184); an idle tick stays cheap (a couple of Jenkins calls).
-    poll_interval_seconds: int = 60
+    poll_interval_seconds: int = Field(default=60, ge=1)
 
     # ── Poller resilience (issue #51) ──────────────────────────────────────────
     # In-tick attempts per build for *transient* errors (network/5xx/DB blips) — exponential
     # backoff between attempts, base doubling each time (2s, 4s, 8s, …).
-    poll_retry_attempts: int = 3
+    poll_retry_attempts: int = Field(default=3, ge=1)  # 1 = no retry; 0 would never try
     poll_retry_base_seconds: float = 2.0
+    # These four are validated >= 1 at startup: 0/negative would raise or stall on every tick.
     # Failing ticks (one attempt per tick) before a build is quarantined: recorded, alerted, and
     # skipped so the high-water mark advances past it.
-    quarantine_after_attempts: int = 3
+    quarantine_after_attempts: int = Field(default=3, ge=1)
     # /health flags the poller stale after this many poll intervals without a *successful* tick.
     poller_stale_after_intervals: int = 5
 
