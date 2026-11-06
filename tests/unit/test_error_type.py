@@ -94,6 +94,26 @@ def test_timeout():
     assert derive_error_type("FAILED", "Operation timed out after 30s", None) == ErrorType.TIMEOUT
 
 
+def test_timeout_in_frame_path_is_not_timeout():
+    trace = (
+        "Traceback (most recent call last):\n"
+        '  File "/w/release/permanent/tests/dev/ut_a/test_timeout_rules.py", line 12, in '
+        "test_session_timeout\n"
+        "    self.assertEqual(rule.minutes, 30)\n"
+        "AssertionError: 15 != 30"
+    )
+    assert derive_error_type("FAILED", "test failure", trace) == ErrorType.ASSERTION
+
+
+def test_timeout_exception_line_still_typed_timeout():
+    trace = (
+        "Traceback (most recent call last):\n"
+        '  File "/w/release/permanent/tests/dev/ut_a/test_x.py", line 3, in test_x\n'
+        "TimeoutError: lock wait exceeded"
+    )
+    assert derive_error_type("FAILED", None, trace) == ErrorType.TIMEOUT
+
+
 def test_generic_exception():
     trace = "ValueError: bad input"
     assert derive_error_type("FAILED", None, trace) == ErrorType.EXCEPTION

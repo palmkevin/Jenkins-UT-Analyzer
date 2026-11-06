@@ -209,16 +209,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `error-type-timeout-in-path` — `timeout` in a file path types the failure as TIMEOUT
-
-`area: analysis` · found by the 2026-11 bug hunt
-
-`_TIMEOUT_RE` scans the whole stack including `File "...test_timeout_rules.py"` frames.
-
-**Acceptance:** an AssertionError raised from `test_timeout_rules.py` is not TIMEOUT.
-
----
-
 ## `prompt-stack-head-truncation` — LLM prompt drops the exception line of long stacks
 
 `area: llm` · found by the 2026-11 bug hunt

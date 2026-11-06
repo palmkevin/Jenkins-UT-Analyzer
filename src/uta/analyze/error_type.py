@@ -43,6 +43,9 @@ _INFRA_RE = re.compile(
     re.IGNORECASE,
 )
 _TIMEOUT_RE = re.compile(r"timeout|timed out|timeouterror|deadline exceeded", re.IGNORECASE)
+# Traceback frame lines (``File "/…/test_timeout_rules.py", line 3, in …``) carry file paths and
+# function names, not the failure: "timeout" there must not type the result as TIMEOUT.
+_FRAME_LINE_RE = re.compile(r'^\s*File "[^"\n]*", line \d+.*$', re.MULTILINE)
 _ASSERTION_RE = re.compile(r"assertionerror|assertion failed|\bassert\b", re.IGNORECASE)
 # Any "SomethingError"/"SomethingException" token signals a thrown exception.
 _EXCEPTION_RE = re.compile(r"\b\w+(?:Error|Exception)\b")
@@ -61,7 +64,7 @@ def derive_error_type(
     blob = f"{error_details or ''}\n{error_stack_trace or ''}"
     if _INFRA_RE.search(blob):
         return ErrorType.INFRA
-    if _TIMEOUT_RE.search(blob):
+    if _TIMEOUT_RE.search(_FRAME_LINE_RE.sub("", blob)):
         return ErrorType.TIMEOUT
     if _ASSERTION_RE.search(blob):
         return ErrorType.ASSERTION
