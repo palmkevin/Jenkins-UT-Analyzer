@@ -19,13 +19,14 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from uta.clients import build_client, build_feed, windows
+from uta.clients import build_client, build_feed, build_svn_blame_client, windows
 from uta.config import Settings
 from uta.db import session_scope
 from uta.ingest.jenkins import JenkinsClient
 from uta.models import Build, IngestJob
 from uta.models.enums import IngestJobStatus
 from uta.refdb.oracle import TrackingFeed
+from uta.refdb.svn import SvnBlameClient
 
 logger = logging.getLogger(__name__)
 _MAX_ERROR = 2000
@@ -91,6 +92,32 @@ def create_ingest_job(
     return job
 
 
+def backfill_ingest_kwargs(
+    settings: Settings, *, svn_blame_client: SvnBlameClient | None = None
+) -> dict:
+    """The ``ingest_build`` keyword arguments every back-fill entry point shares.
+
+    One place for the control-panel job, ``uta backfill`` and ``uta bootstrap`` so they ingest with
+    the same enrichers as the poller (Build Incidents, SVN blame, console-log stages) — only the
+    live-path extras (Alert Channels, LLM hypotheses) are left out, and flaky flags are deferred to
+    one pass after the range. ``settings`` should already carry the DB overrides
+    (:func:`~uta.control.tunables.effective_settings`).
+    """
+    max_lookback, tolerance = windows(settings)
+    return {
+        "expected_tracks": settings.expected_tracks,
+        "data_change_max_lookback": max_lookback,
+        "data_change_tolerance": tolerance,
+        "flaky_window_days": settings.flaky_window_days,
+        "flaky_threshold": settings.flaky_transition_threshold,
+        "ingest_unittest_logs": settings.ingest_unittest_stages,
+        "unittest_suites": settings.unittest_suite_set,
+        "recompute_flaky": False,
+        "svn_blame_client": svn_blame_client,
+        "ingest_build_incidents": settings.ingest_build_incidents,
+    }
+
+
 def run_ingest_job(
     session_factory: sessionmaker[Session],
     job_id: int,
@@ -98,6 +125,7 @@ def run_ingest_job(
     settings: Settings,
     client: JenkinsClient,
     feed: TrackingFeed | None,
+    svn_blame_client: SvnBlameClient | None = None,
 ) -> None:
     """Execute a persisted job: ingest each build with back-fill semantics, tracking status.
 
@@ -109,7 +137,7 @@ def run_ingest_job(
     from uta.control.quarantine import clear_failure
     from uta.ingest.pipeline import ingest_build
 
-    max_lookback, tolerance = windows(settings)
+    ingest_kwargs = backfill_ingest_kwargs(settings, svn_blame_client=svn_blame_client)
     with session_scope(session_factory) as session:
         job = session.get(IngestJob, job_id)
         if job is None:
@@ -121,20 +149,7 @@ def run_ingest_job(
     try:
         for n in range(start, end + 1):
             # No channels, no hypothesis provider ⇒ back-fill semantics (never re-alert history).
-            ingest_build(
-                client,
-                session_factory,
-                n,
-                expected_tracks=settings.expected_tracks,
-                feed=feed,
-                data_change_max_lookback=max_lookback,
-                data_change_tolerance=tolerance,
-                flaky_window_days=settings.flaky_window_days,
-                flaky_threshold=settings.flaky_transition_threshold,
-                ingest_unittest_logs=settings.ingest_unittest_stages,
-                unittest_suites=settings.unittest_suite_set,
-                recompute_flaky=False,
-            )
+            ingest_build(client, session_factory, n, feed=feed, **ingest_kwargs)
             # An on-demand re-ingest is the recovery path for a quarantined build (issue #51):
             # success means the cause is fixed, so drop its quarantine record.
             clear_failure(session_factory, n)
@@ -173,13 +188,15 @@ def trigger_ingest(
     actor: str | None = None,
     client: JenkinsClient | None = None,
     feed: TrackingFeed | None = None,
+    svn_blame_client: SvnBlameClient | None = None,
     run_in_thread: bool = True,
 ) -> int:
     """Create a job and run it (in a background daemon thread by default). Returns the job id.
 
-    The Jenkins client and Oracle feed are built from ``settings`` the same way the CLI back-fill
-    runs them, unless injected (tests). With ``run_in_thread=False`` the job runs synchronously —
-    used by tests so assertions see the terminal state without racing a thread.
+    The Jenkins client, Oracle feed and SVN blame client are built from ``settings`` the same way
+    the CLI back-fill builds them, unless injected (tests). With ``run_in_thread=False`` the job
+    runs synchronously — used by tests so assertions see the terminal state without racing a
+    thread.
     """
     with session_scope(session_factory) as session:
         job = create_ingest_job(session, build_start, build_end, actor=actor)
@@ -190,9 +207,18 @@ def trigger_ingest(
         client = build_client(settings)
     if feed is None:
         feed = build_feed(settings)
+    if svn_blame_client is None:
+        svn_blame_client = build_svn_blame_client(settings)
 
     def _build() -> None:
-        run_ingest_job(session_factory, job_id, settings=settings, client=client, feed=feed)
+        run_ingest_job(
+            session_factory,
+            job_id,
+            settings=settings,
+            client=client,
+            feed=feed,
+            svn_blame_client=svn_blame_client,
+        )
 
     if run_in_thread:
         threading.Thread(target=_build, name=f"ingest-job-{job_id}", daemon=True).start()

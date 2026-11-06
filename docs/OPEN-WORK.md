@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `backfill-paths-drop-incidents` — back-fill paths skip Build Incidents, SVN blame and DB overrides
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`uta backfill`, `uta bootstrap` and the control-panel job don't pass `ingest_build_incidents` (and two don't pass the blame client); the CLI ignores DB setting overrides.
-
-**Acceptance:** all ingest entry points use the same effective settings and enrichers as the poller.
-
----
-
 ## `config-int-validation` — zero/negative poller settings break every tick
 
 `area: infra` · found by the 2026-11 bug hunt

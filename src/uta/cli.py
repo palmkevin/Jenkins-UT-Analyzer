@@ -12,7 +12,6 @@ from uta.clients import build_client as _build_client
 from uta.clients import build_feed as _build_feed
 from uta.clients import build_hypothesis_provider as _build_hypothesis_provider
 from uta.clients import build_svn_blame_client as _build_svn_blame_client
-from uta.clients import windows as _windows
 from uta.config import get_settings
 from uta.db import assert_pg_trgm, make_engine, make_session_factory
 
@@ -52,6 +51,15 @@ def _run_migrations() -> None:
     command.upgrade(Config(str(_ALEMBIC_INI)), "head")
 
 
+def _effective_settings(base, session_factory):
+    """The env settings with the control panel's DB overrides applied — what the poller uses."""
+    from uta.control.tunables import effective_settings, load_overrides
+    from uta.db import session_scope
+
+    with session_scope(session_factory) as session:
+        return effective_settings(base, load_overrides(session))
+
+
 @app.command("migrate")
 def migrate() -> None:
     """Bring the database schema to head (Alembic) and assert ``pg_trgm`` is installed."""
@@ -74,16 +82,17 @@ def backfill(build: int, to: int | None = None) -> None:
     the mark over builds the poller then never ingests.
     """
     from uta.analyze.flakiness import recompute_flaky_flags
-    from uta.control.jobs import IngestGapError, check_no_gap
+    from uta.control.jobs import IngestGapError, backfill_ingest_kwargs, check_no_gap
     from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
-    settings = get_settings()
+    base_settings = get_settings()
     _run_migrations()
     _configure_logging()
-    engine = make_engine(settings.database_url)
+    engine = make_engine(base_settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
+    settings = _effective_settings(base_settings, session_factory)
     with session_scope(session_factory) as session:
         try:
             check_no_gap(session, build)
@@ -92,27 +101,14 @@ def backfill(build: int, to: int | None = None) -> None:
             raise typer.Exit(code=1) from None
     client = _build_client(settings)
     feed = _build_feed(settings)
-    svn_blame_client = _build_svn_blame_client(settings)
-    max_lookback, tolerance = _windows(settings)
+    ingest_kwargs = backfill_ingest_kwargs(
+        settings, svn_blame_client=_build_svn_blame_client(settings)
+    )
     for n in range(build, (to or build) + 1):
         # No email sender on back-fill: historical regressions must not be (re-)mailed. Flaky flags
         # are display-only and derived purely from results, so defer them to a single pass after the
         # loop rather than recomputing the whole failing set every build.
-        ingest_build(
-            client,
-            session_factory,
-            n,
-            expected_tracks=settings.expected_tracks,
-            feed=feed,
-            data_change_max_lookback=max_lookback,
-            data_change_tolerance=tolerance,
-            flaky_window_days=settings.flaky_window_days,
-            flaky_threshold=settings.flaky_transition_threshold,
-            ingest_unittest_logs=settings.ingest_unittest_stages,
-            unittest_suites=settings.unittest_suite_set,
-            recompute_flaky=False,
-            svn_blame_client=svn_blame_client,
-        )
+        ingest_build(client, session_factory, n, feed=feed, **ingest_kwargs)
         typer.echo(f"ingested build #{n}")
     with session_scope(session_factory) as session:
         recompute_flaky_flags(
@@ -163,25 +159,27 @@ def bootstrap(depth: int | None = None) -> None:
     rather than strand the builds in between.
     """
     from uta.analyze.flakiness import recompute_flaky_flags
-    from uta.control.jobs import IngestGapError, check_no_gap
+    from uta.control.jobs import IngestGapError, backfill_ingest_kwargs, check_no_gap
     from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
-    settings = get_settings()
-    depth = depth if depth is not None else settings.backfill_depth
+    base_settings = get_settings()
     _run_migrations()
     _configure_logging()
-    engine = make_engine(settings.database_url)
+    engine = make_engine(base_settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
+    settings = _effective_settings(base_settings, session_factory)
+    depth = depth if depth is not None else settings.backfill_depth
     client = _build_client(settings)
     latest = client.last_completed_build()
     if latest is None:
         typer.echo("no completed build to ingest")
         return
     feed = _build_feed(settings)
-    svn_blame_client = _build_svn_blame_client(settings)
-    max_lookback, tolerance = _windows(settings)
+    ingest_kwargs = backfill_ingest_kwargs(
+        settings, svn_blame_client=_build_svn_blame_client(settings)
+    )
     start = max(1, latest - depth + 1)
     with session_scope(session_factory) as session:
         try:
@@ -192,21 +190,7 @@ def bootstrap(depth: int | None = None) -> None:
     for n in range(start, latest + 1):
         # Defer flaky flags to a single post-loop pass (see `backfill`) — they are display-only and
         # derived purely from results, so recomputing per build is wasted work during bootstrap.
-        ingest_build(
-            client,
-            session_factory,
-            n,
-            expected_tracks=settings.expected_tracks,
-            feed=feed,
-            data_change_max_lookback=max_lookback,
-            data_change_tolerance=tolerance,
-            flaky_window_days=settings.flaky_window_days,
-            flaky_threshold=settings.flaky_transition_threshold,
-            ingest_unittest_logs=settings.ingest_unittest_stages,
-            unittest_suites=settings.unittest_suite_set,
-            recompute_flaky=False,
-            svn_blame_client=svn_blame_client,
-        )
+        ingest_build(client, session_factory, n, feed=feed, **ingest_kwargs)
         typer.echo(f"ingested build #{n}")
     with session_scope(session_factory) as session:
         recompute_flaky_flags(
