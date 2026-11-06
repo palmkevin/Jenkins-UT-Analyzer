@@ -1363,6 +1363,12 @@ def _search_order_by(stmt, ep_agg, sort: str | None):
     )
 
 
+def _like_escape(text: str) -> str:
+    """Escape LIKE metacharacters (``\\``, ``%``, ``_``) so ``text`` matches literally under
+    ``ESCAPE '\\'``."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def test_search(
     session: Session, query: str, *, limit: int = 20, sort: str | None = None
 ) -> list[dict]:
@@ -1413,7 +1419,9 @@ def test_search(
         )
         .outerjoin(ep_agg, ep_agg.c.tid == TestIdentity.id)
         .outerjoin(TestLifecycle, TestLifecycle.test_identity_id == TestIdentity.id)
-        .where(TestIdentity.canonical_name.ilike(f"%{query}%"))
+        # The query is matched literally: `_` (in every `ut_…` name) and `%` are LIKE wildcards
+        # unless escaped.
+        .where(TestIdentity.canonical_name.ilike(f"%{_like_escape(query)}%", escape="\\"))
     )
     stmt = _search_order_by(stmt, ep_agg, sort)
     if limit > 0:

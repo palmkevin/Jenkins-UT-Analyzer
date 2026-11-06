@@ -1566,3 +1566,24 @@ def test_save_with_unchanged_values_keeps_provenance_and_stamps(session_factory)
         assert attr.validated_by == "alice"
         assert attr.validated_at == stamped_at
         assert s.get(FailureEpisode, ep_id).assignee == "ann"
+
+
+def test_test_search_treats_like_wildcards_literally(session_factory):
+    """search-like-wildcards: `_` and `%` in the query match themselves, not any character."""
+    with session_scope(session_factory) as s:
+        get_identity(s, "ut_pricing.pr_engine.TestClass.test_margin_calc")
+        get_identity(s, "utXpricing.prXengine.TestClass.test_margin")
+        get_identity(s, "ut_misc.TestClass.test_100%_coverage")
+        get_identity(s, "ut_misc.TestClass.test_100x_coverage")
+        get_identity(s, "ut_misc.TestClass.test_back\\slash")
+
+        assert [r["test_id"] for r in views.test_search(s, "ut_pricing")] == [
+            "ut_pricing.pr_engine.TestClass.test_margin_calc"
+        ]
+        assert [r["test_id"] for r in views.test_search(s, "100%")] == [
+            "ut_misc.TestClass.test_100%_coverage"
+        ]
+        assert len(views.test_search(s, "%")) == 1  # literal %: only the name containing it
+        assert [r["test_id"] for r in views.test_search(s, "back\\s")] == [
+            "ut_misc.TestClass.test_back\\slash"
+        ]

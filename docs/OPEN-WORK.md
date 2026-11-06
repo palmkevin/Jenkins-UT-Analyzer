@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `search-like-wildcards` — `_` and `%` in search act as wildcards
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`/search` uses `ilike(f"%{q}%")` unescaped; `_` is in every `ut_…` name.
-
-**Acceptance:** search matches `_`/`%` literally.
-
----
-
 ## `cold-start-poll-alerts-history` — a fresh deploy mails alerts for the whole back-fill window
 
 `area: alert` · found by the 2026-11 bug hunt · **needs owner input**
