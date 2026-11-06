@@ -467,16 +467,6 @@ The heartbeat is stamped only at tick end; a catch-up tick over 5 min raises a f
 
 ---
 
-## `stale-health-alert-race` — concurrent /health probes can send duplicate stale alerts
-
-`area: alert` · found by the 2026-11 bug hunt
-
-`control/health.py` reads the latch, dispatches (slow SMTP), then writes the latch — no compare-and-set.
-
-**Acceptance:** the latch is claimed atomically before dispatch.
-
----
-
 ## `cold-start-poll-alerts-history` — a fresh deploy mails alerts for the whole back-fill window
 
 `area: alert` · found by the 2026-11 bug hunt · **needs owner input**

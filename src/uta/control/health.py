@@ -8,7 +8,9 @@ healthy — absence is a topology, staleness is a fault.
 
 Going stale also dispatches **one** ops Alert through the same Alert Channels as every other alert
 (ADR-0007), latched on the heartbeat row (``stale_alerted_at``) so a monitor probing ``/health``
-every few seconds doesn't re-alert; recovery clears the latch.
+every few seconds doesn't re-alert; recovery clears the latch. The latch is **claimed atomically
+before dispatch** (a conditional ``UPDATE … WHERE stale_alerted_at IS NULL``), so concurrent probes
+racing a slow SMTP dial send one alert, not one each; it is released if nothing was delivered.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.config import Settings
@@ -24,6 +26,7 @@ from uta.control.heartbeat import read_heartbeat
 from uta.db import session_scope
 from uta.delivery.alert import AlertChannel, dispatch
 from uta.delivery.email import build_ops_alert
+from uta.models import PollerHeartbeat
 
 
 @dataclass(frozen=True)
@@ -103,13 +106,37 @@ def check_health(
                 f"Check the poller service/container and its last error on the control panel.\n"
             ),
         )
-        # Latch only when the alert actually went out (≥1 channel delivered); an outage or no
-        # subscribed channel leaves it unlatched so the next probe re-tries (issue #121).
-        if dispatch(alert, channels) > 0:
-            _set_stale_alerted(session_factory, now)
+        # Claim the latch *before* the (possibly slow) dispatch with a compare-and-set, so only one
+        # of several concurrent probes sends. If nothing was delivered (an outage, or no subscribed
+        # channel) release our claim so the next probe re-tries (issue #121).
+        if _claim_stale_alert(session_factory, now) and dispatch(alert, channels) == 0:
+            _release_stale_alert(session_factory, now)
     return HealthReport(
         ok=False, db="ok", poller="stale", last_success_at=last_success, detail=detail
     )
+
+
+def _claim_stale_alert(session_factory: sessionmaker[Session], when: datetime) -> bool:
+    """Atomically latch ``stale_alerted_at`` iff it is unset; ``True`` when this caller won."""
+    with session_scope(session_factory) as session:
+        result = session.execute(
+            update(PollerHeartbeat)
+            .where(PollerHeartbeat.stale_alerted_at.is_(None))
+            .values(stale_alerted_at=when)
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
+
+
+def _release_stale_alert(session_factory: sessionmaker[Session], when: datetime) -> None:
+    """Undo our own claim (only if it is still ours) so a later probe re-tries the alert."""
+    with session_scope(session_factory) as session:
+        session.execute(
+            update(PollerHeartbeat)
+            .where(PollerHeartbeat.stale_alerted_at == when)
+            .values(stale_alerted_at=None)
+            .execution_options(synchronize_session=False)
+        )
 
 
 def _set_stale_alerted(session_factory: sessionmaker[Session], when: datetime | None) -> None:

@@ -385,6 +385,27 @@ def test_health_stale_with_failing_smtp_still_reports_and_realerts_later(session
         assert read_heartbeat(s).stale_alerted_at is not None
 
 
+def test_health_concurrent_stale_probes_alert_once(session_factory):
+    """A second probe arriving while the first is still dispatching (a slow SMTP dial) must see the
+    latch already claimed and not send a duplicate (stale-health-alert-race)."""
+    record_heartbeat(session_factory, processed=[1], error=None)
+    late = datetime.now(UTC) + timedelta(hours=2)
+    inner = RecordingAlertChannel()
+
+    class _ProbeDuringSend(RecordingAlertChannel):
+        def send(self, alert):
+            # Mid-dispatch, another /health probe evaluates the same stale heartbeat.
+            check_health(session_factory, _client_settings(), channels=[inner], now=late)
+            super().send(alert)
+
+    outer = _ProbeDuringSend()
+    check_health(session_factory, _client_settings(), channels=[outer], now=late)
+    assert len(outer.sent) == 1
+    assert inner.sent == []  # the concurrent probe found the latch claimed
+    with session_scope(session_factory) as s:
+        assert read_heartbeat(s).stale_alerted_at is not None
+
+
 def test_health_poller_that_ticks_but_never_succeeds_goes_stale(session_factory):
     record_heartbeat(session_factory, processed=[1], error=None)
     # From then on every tick fails: last_poll_at stays fresh, last_success_at doesn't move.
