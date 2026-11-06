@@ -689,13 +689,17 @@ def create_app(
             return resp
         with session_scope(session_factory) as s:
             cfg = effective(s)
-        job_id = jobs.trigger_ingest(
-            session_factory,
-            build_start=build_start,
-            build_end=end,
-            settings=cfg,
-            actor=current_actor(request),
-        )
+        try:
+            job_id = jobs.trigger_ingest(
+                session_factory,
+                build_start=build_start,
+                build_end=end,
+                settings=cfg,
+                actor=current_actor(request),
+            )
+        except jobs.IngestGapError as exc:
+            set_flash(resp, str(exc), "error")
+            return resp
         builds = f"build #{build_start}" if end == build_start else f"builds #{build_start}–#{end}"
         set_flash(resp, f"Ingest job #{job_id} queued for {builds}")
         return resp

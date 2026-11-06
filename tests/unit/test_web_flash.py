@@ -302,3 +302,12 @@ def test_ingest_non_numeric_range_is_an_error_flash(client):
     client.post("/control/ingest", data={"build_start": "5", "build_end": "x"})
     page = client.get("/control").text
     assert "Build range must be numeric" in page and "alert-danger" in page
+
+
+def test_ingest_above_high_water_is_an_error_flash(client, monkeypatch):
+    """Store tops out at #1: queueing #5 would strand #2-#4 (ondemand-ingest-jumps-high-water)."""
+    monkeypatch.setattr(jobs, "build_client", lambda settings: object())
+    monkeypatch.setattr(jobs, "build_feed", lambda settings: None)
+    client.post("/control/ingest", data={"build_start": "5"})
+    page = client.get("/control").text
+    assert "above the high-water mark" in page and "alert-danger" in page

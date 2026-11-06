@@ -8,7 +8,13 @@ from sqlalchemy import func, select
 from tests.fakes import FakeJenkinsClient
 from uta.config import Settings
 from uta.control.heartbeat import read_heartbeat, record_heartbeat
-from uta.control.jobs import create_ingest_job, run_ingest_job, trigger_ingest
+from uta.control.jobs import (
+    IngestGapError,
+    create_ingest_job,
+    first_unreached_build,
+    run_ingest_job,
+    trigger_ingest,
+)
 from uta.control.tunables import (
     TUNABLES_BY_KEY,
     clear_override,
@@ -19,7 +25,7 @@ from uta.control.tunables import (
 from uta.db import session_scope
 from uta.models import Build, IngestJob, SettingOverride
 from uta.models.enums import IngestJobStatus
-from uta.poller import poll_tick
+from uta.poller import builds_to_ingest, poll_once, poll_tick
 
 
 class _MultiBuildFake(FakeJenkinsClient):
@@ -189,6 +195,49 @@ def test_trigger_ingest_runs_synchronously_when_asked(session_factory):
     )
     with session_scope(session_factory) as s:
         assert s.get(IngestJob, job_id).status == IngestJobStatus.DONE
+
+
+def test_ingest_job_above_high_water_is_refused(session_factory):
+    """Ingesting #5 while the store tops out at #2 would strand #3–#4 below the new high-water
+    mark — the poller would never select them (ondemand-ingest-jumps-high-water)."""
+    poll_once(_MultiBuildFake(2), session_factory)
+    with pytest.raises(IngestGapError, match="#3"):
+        trigger_ingest(
+            session_factory,
+            build_start=5,
+            build_end=5,
+            settings=Settings(ingest_unittest_stages=False),
+            client=_MultiBuildFake(5),
+            feed=None,
+            run_in_thread=False,
+        )
+    with session_scope(session_factory) as s:
+        assert s.scalar(select(func.count()).select_from(IngestJob)) == 0  # no job row created
+    assert builds_to_ingest(_MultiBuildFake(5), session_factory) == [3, 4, 5]
+
+
+def test_ingest_job_at_or_below_high_water_plus_one_is_allowed(session_factory):
+    poll_once(_MultiBuildFake(2), session_factory)
+    with session_scope(session_factory) as s:
+        assert first_unreached_build(s, 1) is None  # re-ingest of an older build
+        assert first_unreached_build(s, 3) is None  # contiguous with the mark
+        assert first_unreached_build(s, 4) == 3
+        create_ingest_job(s, 3, 9)  # a range starting at mark + 1 never leaves a hole
+
+
+def test_ingest_gap_ignores_quarantined_builds(session_factory):
+    from uta.control.quarantine import quarantine_immediately
+
+    poll_once(_MultiBuildFake(2), session_factory)
+    quarantine_immediately(session_factory, 3, "rotated")
+    with session_scope(session_factory) as s:
+        assert first_unreached_build(s, 4) is None  # #3 is skipped by the poller anyway
+        assert first_unreached_build(s, 5) == 4
+
+
+def test_ingest_gap_allowed_on_empty_store(session_factory):
+    with session_scope(session_factory) as s:
+        assert first_unreached_build(s, 500) is None
 
 
 # ── Poller heartbeat + tick ──────────────────────────────────────────────────

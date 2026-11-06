@@ -16,13 +16,14 @@ import logging
 import threading
 from datetime import UTC, datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.clients import build_client, build_feed, windows
 from uta.config import Settings
 from uta.db import session_scope
 from uta.ingest.jenkins import JenkinsClient
-from uta.models import IngestJob
+from uta.models import Build, IngestJob
 from uta.models.enums import IngestJobStatus
 from uta.refdb.oracle import TrackingFeed
 
@@ -30,11 +31,54 @@ logger = logging.getLogger(__name__)
 _MAX_ERROR = 2000
 
 
+class IngestGapError(ValueError):
+    """An on-demand ingest would jump the high-water mark and strand the builds below it."""
+
+
+def first_unreached_build(session: Session, start: int) -> int | None:
+    """The lowest build an ingest starting at ``start`` would strand forever, or ``None``.
+
+    The poller's high-water mark is ``max(build_number)``: it only ever selects builds *above* it.
+    So ingesting a build more than one past the mark (on demand, or via ``uta backfill``) moves the
+    mark over every not-yet-ingested build in between, and the poller never revisits them. Builds
+    at or below the mark (a re-ingest, the quarantine-recovery path) and the mark + 1 (a range
+    ingested ascending stops at its first failure, so it never leaves a hole) are always safe, as
+    is anything on an empty store (the cold-start window starts wherever the first ingest lands).
+    Quarantined builds are skipped by the poller anyway, so they don't count as stranded.
+    """
+    from uta.control.quarantine import quarantined_build_numbers
+
+    highest = session.scalar(select(func.max(Build.build_number))) or 0
+    if not highest or start <= highest + 1:
+        return None
+    quarantined = quarantined_build_numbers(session)
+    candidate = highest + 1
+    while candidate < start and candidate in quarantined:  # bounded by the quarantine ledger
+        candidate += 1
+    return candidate if candidate < start else None
+
+
+def check_no_gap(session: Session, start: int) -> None:
+    """Raise :class:`IngestGapError` if ingesting from ``start`` upward would leave a gap."""
+    first = first_unreached_build(session, start)
+    if first is not None:
+        raise IngestGapError(
+            f"build #{start} is above the high-water mark: builds from #{first} have not been "
+            f"ingested yet and the poller would skip them for good — start the range at "
+            f"#{first} (or let the poller catch up)"
+        )
+
+
 def create_ingest_job(
     session: Session, build_start: int, build_end: int, *, actor: str | None = None
 ) -> IngestJob:
-    """Persist a queued job over the inclusive range (a reversed ``start > end`` is normalised)."""
+    """Persist a queued job over the inclusive range (a reversed ``start > end`` is normalised).
+
+    Refuses (:class:`IngestGapError`) a range that starts above the high-water mark + 1 — see
+    :func:`first_unreached_build`.
+    """
     lo, hi = min(build_start, build_end), max(build_start, build_end)
+    check_no_gap(session, lo)
     job = IngestJob(
         build_start=lo,
         build_end=hi,

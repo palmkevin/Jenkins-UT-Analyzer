@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `ondemand-ingest-jumps-high-water` — an on-demand ingest above the high-water mark skips the gap forever
-
-`area: infra` · found by the 2026-11 bug hunt
-
-The high-water mark is `max(build_number)`. Ingesting build N+2 from the control panel or `uta backfill` while the poller is on N makes N and N+1 never ingested.
-
-**Acceptance:** on-demand/back-fill ingest can't create a gap the poller then skips.
-
----
-
 ## `compose-no-restart-policy` — services don't restart; the poller's first tick is unguarded
 
 `area: infra` · found by the 2026-11 bug hunt

@@ -68,8 +68,13 @@ def init_db() -> None:
 
 @app.command("backfill")
 def backfill(build: int, to: int | None = None) -> None:
-    """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live)."""
+    """Fetch, parse, persist and analyse one build, or a ``build..to`` range (live).
+
+    Refused when ``build`` is above the high-water mark + 1 on a non-empty store: that would move
+    the mark over builds the poller then never ingests.
+    """
     from uta.analyze.flakiness import recompute_flaky_flags
+    from uta.control.jobs import IngestGapError, check_no_gap
     from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
@@ -79,6 +84,12 @@ def backfill(build: int, to: int | None = None) -> None:
     engine = make_engine(settings.database_url)
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
+    with session_scope(session_factory) as session:
+        try:
+            check_no_gap(session, build)
+        except IngestGapError as exc:
+            typer.echo(f"refusing to back-fill: {exc}", err=True)
+            raise typer.Exit(code=1) from None
     client = _build_client(settings)
     feed = _build_feed(settings)
     svn_blame_client = _build_svn_blame_client(settings)
@@ -148,9 +159,11 @@ def bootstrap(depth: int | None = None) -> None:
     Ingests ``last_completed - depth + 1 … last_completed`` in ascending order so lifecycle and
     episodes accrue chronologically (age N → age 1). Like ``backfill`` it passes no email sender and
     no hypothesis provider — back-filled history must not be (re-)mailed. ``depth`` defaults to
-    ``BACKFILL_DEPTH``.
+    ``BACKFILL_DEPTH``. On a non-empty store whose high-water mark is below the window, it refuses
+    rather than strand the builds in between.
     """
     from uta.analyze.flakiness import recompute_flaky_flags
+    from uta.control.jobs import IngestGapError, check_no_gap
     from uta.db import session_scope
     from uta.ingest.pipeline import ingest_build
 
@@ -170,6 +183,12 @@ def bootstrap(depth: int | None = None) -> None:
     svn_blame_client = _build_svn_blame_client(settings)
     max_lookback, tolerance = _windows(settings)
     start = max(1, latest - depth + 1)
+    with session_scope(session_factory) as session:
+        try:
+            check_no_gap(session, start)
+        except IngestGapError as exc:
+            typer.echo(f"refusing to bootstrap: {exc}", err=True)
+            raise typer.Exit(code=1) from None
     for n in range(start, latest + 1):
         # Defer flaky flags to a single post-loop pass (see `backfill`) — they are display-only and
         # derived purely from results, so recomputing per build is wasted work during bootstrap.
