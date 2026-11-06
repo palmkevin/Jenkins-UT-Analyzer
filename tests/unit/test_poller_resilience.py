@@ -634,3 +634,34 @@ def test_each_ingested_build_refreshes_liveness_mid_tick(session_factory, monkey
     monkeypatch.setattr(poller, "clear_failure", _probe)
     assert poll_once(_MultiBuildFake(2), session_factory) == [1, 2]
     assert seen == [True]
+
+
+# ── Post-commit bookkeeping (post-commit-error-leaves-stale-attempt) ─────────
+
+
+def test_clear_failure_error_after_commit_keeps_the_tick_progress(session_factory, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    import uta.poller as poller
+
+    def _blip(factory, build):
+        raise OperationalError("DELETE", {}, Exception("db blip"))
+
+    monkeypatch.setattr(poller, "clear_failure", _blip)
+    assert poll_tick(_MultiBuildFake(2), session_factory, Settings()) == [1, 2]
+    with session_scope(session_factory) as s:
+        hb = read_heartbeat(s)
+        assert hb.last_processed == "1,2" and hb.last_error is None
+
+
+def test_prune_error_does_not_erase_the_tick(session_factory, monkeypatch):
+    import uta.poller as poller
+
+    def _boom(*a, **k):
+        raise RuntimeError("prune exploded")
+
+    monkeypatch.setattr(poller, "prune", _boom)
+    assert poll_tick(_MultiBuildFake(2), session_factory, Settings()) == [1, 2]
+    with session_scope(session_factory) as s:
+        hb = read_heartbeat(s)
+        assert hb.last_processed == "1,2" and hb.last_error is None

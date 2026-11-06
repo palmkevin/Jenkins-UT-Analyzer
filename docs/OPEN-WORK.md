@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `post-commit-error-leaves-stale-attempt` — an error after a build commits leaves a phantom "retrying" row
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`clear_failure` and `prune` run outside the per-build try in `poll_once`; a blip there records the tick as failed with nothing processed and leaves the attempt row.
-
-**Acceptance:** post-commit bookkeeping failures are contained and logged.
-
----
-
 ## `worktree-rm-discards-work` — `make worktree-rm` force-deletes dirty worktrees and unmerged branches
 
 `area: infra` · found by the 2026-11 bug hunt

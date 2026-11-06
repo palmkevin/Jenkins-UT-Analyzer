@@ -281,8 +281,15 @@ def poll_once(
             # Not yet at the limit: end the tick so lifecycle order is preserved and the build is
             # retried on the next tick. Later builds wait behind it.
             raise BuildIngestError(build, exc, processed) from exc
-        clear_failure(session_factory, build)
+        # The build is committed: from here on it counts as processed whatever happens to the
+        # bookkeeping, so a DB blip clearing its attempt row is logged, not a failed tick.
         processed.append(build)
+        try:
+            clear_failure(session_factory, build)
+        except Exception:  # noqa: BLE001 — post-commit bookkeeping must not undo the progress
+            logger.warning(
+                "build #%d ingested but its attempt row was not cleared", build, exc_info=True
+            )
         _stamp_liveness(session_factory)
     return processed
 
@@ -405,12 +412,7 @@ def poll_tick(
             quarantine_attempts=cfg.quarantine_after_attempts,
             sleep=sleep,
         )
-        with session_scope(session_factory) as session:
-            prune(
-                session,
-                result_retention_days=cfg.result_retention_days,
-                ingest_job_retention_days=cfg.ingest_job_retention_days,
-            )
+        _safe_prune(session_factory, cfg)
     except BuildIngestError as exc:
         logger.exception("poll tick ended early on build #%d", exc.build)
         _safe_heartbeat(session_factory, processed=exc.processed, error=repr(exc.cause))
@@ -421,6 +423,23 @@ def poll_tick(
         return []
     _safe_heartbeat(session_factory, processed=processed, error=None)
     return processed
+
+
+def _safe_prune(session_factory: sessionmaker[Session], cfg: Settings) -> None:
+    """Run the retention pass, logging (never raising) a failure.
+
+    It runs after the tick's builds have committed; an error here used to be recorded as a failed
+    tick with *nothing* processed. Pruning is idempotent, so the next clean tick simply retries it.
+    """
+    try:
+        with session_scope(session_factory) as session:
+            prune(
+                session,
+                result_retention_days=cfg.result_retention_days,
+                ingest_job_retention_days=cfg.ingest_job_retention_days,
+            )
+    except Exception:  # noqa: BLE001 — housekeeping must not fail the tick
+        logger.warning("retention pass failed — retrying next tick", exc_info=True)
 
 
 def _safe_heartbeat(
