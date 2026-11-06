@@ -12,7 +12,7 @@ import pytest
 from uta.clients import build_channels
 from uta.config import Settings
 from uta.delivery.alert import Alert, AlertKind, AlertSeverity, dispatch
-from uta.delivery.teams import TeamsAlertChannel, build_card_message
+from uta.delivery.teams import TeamsAlertChannel, TeamsDeliveryError, build_card_message
 
 WEBHOOK = "https://example.webhook.office.com/workflows/abc?sig=secret"
 
@@ -100,10 +100,32 @@ def test_send_raises_on_non_2xx_so_dispatch_can_swallow_it():
         subscriptions={AlertKind.incident},
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(TeamsDeliveryError, match="HTTP 500"):
         channel.send(_incident_alert())
     # …and dispatch turns that raise into a swallowed, counted-as-not-delivered failure.
     assert dispatch(_incident_alert(), [channel]) == 0
+
+
+@pytest.mark.parametrize("fail", ["status", "transport"])
+def test_failed_send_never_logs_the_webhook_sig_token(fail, caplog):
+    # The webhook URL is the secret (its sig= token): a failure logged by dispatch with exc_info
+    # must name only the status / error class — never the URL (teams-webhook-secret-logged).
+    def handler(request: httpx.Request) -> httpx.Response:
+        if fail == "transport":
+            raise httpx.ConnectError(f"cannot reach {request.url}", request=request)
+        return httpx.Response(400)
+
+    channel = TeamsAlertChannel(
+        WEBHOOK,
+        subscriptions={AlertKind.incident},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with caplog.at_level("WARNING"):
+        assert dispatch(_incident_alert(), [channel]) == 0
+    logged = caplog.text  # message + formatted exc_info traceback
+    assert "TeamsDeliveryError" in logged
+    assert "secret" not in logged
+    assert "example.webhook.office.com" not in logged
 
 
 # ── build_channels(): enablement + subscriptions ─────────────────────────────────────────────

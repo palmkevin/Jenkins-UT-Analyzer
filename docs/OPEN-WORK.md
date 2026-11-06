@@ -523,16 +523,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `teams-webhook-secret-logged` — Teams webhook URL (with its `sig=` token) leaks into logs
-
-`area: alert` · found by the 2026-11 bug hunt
-
-`raise_for_status()` in `delivery/teams.py` builds an `HTTPStatusError` whose message contains the full URL; `dispatch` logs it with `exc_info`. README/.env.example promise it's never logged.
-
-**Acceptance:** a non-2xx Teams reply logs only the status; a test asserts the token never appears.
-
----
-
 ## `email-null-sender` — SMTP mail goes out with an empty sender and no Date/Message-ID
 
 `area: email` · found by the 2026-11 bug hunt

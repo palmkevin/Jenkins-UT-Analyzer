@@ -79,13 +79,18 @@ def build_card_message(alert: Alert) -> dict:
     }
 
 
+class TeamsDeliveryError(RuntimeError):
+    """A failed webhook POST, described without the (secret-bearing) webhook URL."""
+
+
 class TeamsAlertChannel:
     """The Teams Alert Channel — POSTs the Adaptive Card envelope to the webhook. See module doc.
 
     ``client`` injects an ``httpx.Client`` (the offline suite passes one backed by a
     ``MockTransport`` so no socket opens); when ``None`` a short-lived client is created per send. A
-    non-2xx response raises via ``raise_for_status`` and is swallowed by :func:`~uta.delivery.alert
-    .dispatch`, keeping the webhook best-effort like the SMTP dial.
+    non-2xx response (or a transport error) raises a URL-free :class:`TeamsDeliveryError` that
+    :func:`~uta.delivery.alert.dispatch` swallows, keeping the webhook best-effort like the SMTP
+    dial without ever logging the webhook's auth token.
     """
 
     def __init__(
@@ -102,13 +107,22 @@ class TeamsAlertChannel:
         self._timeout = timeout
 
     def send(self, alert: Alert) -> None:
-        payload = build_card_message(alert)
-        if self._client is not None:
-            response = self._client.post(self._webhook_url, json=payload, timeout=self._timeout)
-            response.raise_for_status()
-            return
         import httpx
 
-        with httpx.Client(timeout=self._timeout) as client:
-            response = client.post(self._webhook_url, json=payload)
-            response.raise_for_status()
+        payload = build_card_message(alert)
+        # httpx errors embed the request URL — and the webhook URL *is* the secret (its ``sig=``
+        # token). ``dispatch`` logs the raise with ``exc_info``, so re-raise a sanitized error that
+        # names only the status / error class, with ``from None`` so no chained traceback carries
+        # the original message either.
+        try:
+            if self._client is not None:
+                response = self._client.post(self._webhook_url, json=payload, timeout=self._timeout)
+            else:
+                with httpx.Client(timeout=self._timeout) as client:
+                    response = client.post(self._webhook_url, json=payload)
+        except httpx.HTTPError as exc:
+            raise TeamsDeliveryError(
+                f"Teams webhook request failed ({type(exc).__name__})"
+            ) from None
+        if not response.is_success:
+            raise TeamsDeliveryError(f"Teams webhook returned HTTP {response.status_code}")
