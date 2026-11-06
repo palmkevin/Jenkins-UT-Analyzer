@@ -120,9 +120,9 @@ def test_html_entities_and_tags_stripped_in_status_lines():
 
 def test_unrecognized_outcome_tail_does_not_default_to_passed(caplog):
     """A format drift must surface loudly, not silently turn a real failure green."""
-    text = "t_weird (m.C) ... xyzzy\n"
+    text = "t_weird (m.C) ... xyzzy\nt_next (m.C) ... ok\n"
     with caplog.at_level("WARNING"):
-        (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+        case, _ = parse_unittest_log(text, track="permanent", suite_name="LXS")
     assert case.status == "SKIPPED"
     assert case.status != "PASSED"
     warnings = [r.message for r in caplog.records if "unrecognized outcome tail" in r.message]
@@ -271,6 +271,21 @@ def test_several_failing_subtests_yield_one_failed_case_with_the_first_block():
     assert case.status == "FAILED"
     assert case.error_details == "AssertionError: first"
     assert case.line == 5
+
+
+@pytest.mark.parametrize("tail", ["", " printed before the crash"])
+def test_status_line_still_pending_when_the_log_ends_is_a_failure(tail, caplog):
+    """A process that crashes mid-test leaves its status line unresolved with no traceback block
+    or summary — that must surface as FAILED, not a neutral SKIPPED hole that hides the crash."""
+    text = f"t_ok (m.C) ... ok\nt_crash (m.C) ...{tail}\n"
+    with caplog.at_level("WARNING"):
+        ok, crashed = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert ok.status == "PASSED"
+    assert crashed.test_id == "m.C.t_crash"
+    assert crashed.status == "FAILED"
+    warnings = [r.message for r in caplog.records if "never reported an outcome" in r.message]
+    assert len(warnings) == 1 and "m.C.t_crash" in warnings[0]
+    assert "printed before the crash" not in warnings[0]  # tail withheld (medical data)
 
 
 def test_printed_text_that_looks_like_an_outcome_prefix_is_not_one():

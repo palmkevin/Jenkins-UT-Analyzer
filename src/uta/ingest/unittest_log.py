@@ -188,7 +188,8 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
     seen: set[tuple[str, str]] = set()
     # A status line whose tail isn't an outcome (empty, or stdout the test printed) leaves the test
     # *pending*: unittest writes the outcome word once the test finishes, on its own line after the
-    # printed output. A pending test never resolved falls back to ``_status_of`` (warn + SKIPPED).
+    # printed output. A pending test superseded mid-log falls back to ``_status_of`` (warn + the
+    # SKIPPED hole); one still pending when the log *ends* is settled FAILED (see below).
     pending: tuple[tuple[str, str], str] | None = None
 
     def _settle() -> None:
@@ -230,7 +231,18 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
             if status is not None:
                 outcomes[pending[0]] = status
                 pending = None
-    _settle()
+    if pending is not None:
+        # The log ended with a test still awaiting its outcome — no outcome word, no traceback
+        # block, no summary: the process crashed (or the log was truncated) mid-test. A neutral
+        # SKIPPED hole would hide that, so it is a failure. Tail withheld (medical-data invariant).
+        key, rest = pending
+        logger.warning(
+            "unittest_log: %s never reported an outcome before the log ended (%d-char tail, "
+            "content withheld) — treating it as FAILED (crashed or truncated run?)",
+            ".".join(key),
+            len(rest),
+        )
+        outcomes.setdefault(key, "FAILED")
 
     blocks = _parse_blocks(lines)
 
