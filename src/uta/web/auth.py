@@ -54,6 +54,18 @@ def make_oauth(settings: Settings) -> OAuth:
     return oauth
 
 
+def session_username(request: Request) -> str:
+    """The verified ``preferred_username`` of the session's user, or ``""`` when there is none.
+
+    A session user without a username is *not* logged in: every write is stamped with this name,
+    and with auth on there is deliberately no other source to fall back to.
+    """
+    user = request.session.get(SESSION_USER_KEY)
+    if not isinstance(user, dict):
+        return ""
+    return str(user.get("preferred_username") or "").strip()
+
+
 def _safe_return_target(target: object) -> str:
     """A stashed return target, constrained to a same-site path (no scheme-relative ``//host``)."""
     if isinstance(target, str) and target.startswith("/") and not target.startswith("//"):
@@ -74,9 +86,17 @@ def register_auth_routes(app: FastAPI, oauth: OAuth, settings: Settings) -> None
         # Exchanges the code AND validates the ID token (issuer/audience/signature/expiry).
         token = await oauth.keycloak.authorize_access_token(request)
         claims = token.get("userinfo") or {}
+        username = str(claims.get("preferred_username") or "").strip()
+        if not username:
+            # Every action is stamped with this name; a token without one can't log anyone in.
+            request.session.pop(SESSION_USER_KEY, None)
+            return PlainTextResponse(
+                "Login rejected: the identity provider returned no preferred_username.",
+                status_code=403,
+            )
         request.session[SESSION_USER_KEY] = {
             "sub": claims.get("sub", ""),
-            "preferred_username": claims.get("preferred_username", ""),
+            "preferred_username": username,
             "email": claims.get("email", ""),
             "name": claims.get("name", ""),
         }
@@ -116,11 +136,7 @@ def install_auth_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def require_auth(request: Request, call_next):
         path = request.url.path
-        if (
-            path in ALLOW_PATHS
-            or path.startswith(ALLOW_PREFIXES)
-            or request.session.get(SESSION_USER_KEY)
-        ):
+        if path in ALLOW_PATHS or path.startswith(ALLOW_PREFIXES) or session_username(request):
             return await call_next(request)
         if request.method == "GET":
             query = request.url.query

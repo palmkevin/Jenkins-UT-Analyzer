@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `auth-actor-falls-back-to-cookie` — with auth on, a session without username falls back to the self-declared actor cookie
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`auth_callback` stores a user even without `preferred_username`; `current_actor` then uses the `uta_actor` cookie and `/identity` stays routable.
-
-**Acceptance:** login without a username is rejected; with auth on the cookie is never used.
-
----
-
 ## `auth-callback-error-500` — a stale/replayed OIDC callback is a raw 500
 
 `area: dashboard` · found by the 2026-11 bug hunt

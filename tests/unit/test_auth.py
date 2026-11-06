@@ -204,3 +204,67 @@ def test_logout_clears_session_and_hits_keycloak_end_session(seeded, auth_on, mo
     assert "id_token_hint=fake-id-token" in loc
     # The local session is gone: the next page hit is challenged again.
     assert client.get("/", follow_redirects=False).status_code == 303
+
+
+# ── Flag on: the self-declared actor cookie never counts (auth-actor-falls-back-to-cookie) ──────
+
+
+def _fake_token(monkeypatch, userinfo: dict) -> None:
+    async def fake_authorize_access_token(self, request, **kwargs):
+        return {"userinfo": userinfo, "id_token": "fake-id-token"}
+
+    monkeypatch.setattr(StarletteOAuth2App, "authorize_access_token", fake_authorize_access_token)
+
+
+def test_callback_without_preferred_username_rejects_login(client, monkeypatch):
+    _fake_token(monkeypatch, {"sub": "abc", "email": "x@example.test"})
+    resp = client.get("/auth/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 403
+    assert "preferred_username" in resp.text
+    # No user landed in the session: the next page is still challenged.
+    assert client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_callback_with_preferred_username_logs_in(client, monkeypatch):
+    _fake_token(monkeypatch, {"sub": "abc", "preferred_username": " morgan "})
+    resp = client.get("/auth/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 303
+    page = client.get("/", follow_redirects=False)
+    assert page.status_code == 200 and "morgan" in page.text
+
+
+def test_session_user_without_username_is_not_logged_in(client, seeded):
+    client.cookies.set(
+        "session",
+        session_cookie({"user": {"sub": "abc", "preferred_username": ""}}),
+        domain="uta.test",
+    )
+    client.cookies.set("uta_actor", "impostor")
+    ident = _identity_id(seeded, "alpha")
+    resp = client.post(f"/tests/{ident}/acknowledge", follow_redirects=False)
+    assert resp.status_code == 401
+    with session_scope(seeded) as s:
+        lc = s.scalar(select(TestLifecycle).where(TestLifecycle.test_identity_id == ident))
+        assert lc.acknowledged_by is None
+
+
+def test_current_actor_ignores_cookie_when_auth_on(auth_on):
+    from starlette.requests import Request
+
+    from uta.web.identity import current_actor
+
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"cookie", b"uta_actor=impostor")],
+            "session": {},
+        }
+    )
+    assert current_actor(request) == "test-user"
+
+
+def test_identity_route_not_registered_when_auth_on(client):
+    login(client, "morgan")
+    resp = client.post("/identity", data={"actor": "impostor"}, follow_redirects=False)
+    assert resp.status_code in (404, 405)
+    assert "uta_actor" not in client.cookies

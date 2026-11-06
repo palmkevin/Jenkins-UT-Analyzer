@@ -6,8 +6,10 @@ Two sources, one string, no data-model difference:
   cookie, falling back to the configured default (``test-user``). "No trust is implied" — an
   honesty-system label for the dev phase, deliberately not access control.
 - **Phase-2 (``AUTH_ENABLED`` on):** the Keycloak-verified ``preferred_username`` from the login
-  session (see :mod:`uta.web.auth`). The auth middleware guarantees a session on every non-public
-  route, so the Phase-1 fallback below only ever fires on allowlisted paths (which stamp nothing).
+  session (see :mod:`uta.web.auth`). The ``uta_actor`` cookie is **never** consulted — it is
+  self-declared, so honouring it would let anyone stamp actions as anyone. The auth middleware
+  guarantees a username on every non-public route; the configured default only ever shows on
+  allowlisted paths (which stamp nothing).
 
 Role/group gating is deferred; when it comes, this stays the seam.
 """
@@ -18,7 +20,7 @@ from fastapi import Request
 
 from uta.config import get_settings
 from uta.models import Attribution
-from uta.web.auth import SESSION_USER_KEY
+from uta.web.auth import session_username
 
 ACTOR_COOKIE = "uta_actor"
 # The actor is stamped into String(128) *_by columns; a hand-edited cookie must not overflow them.
@@ -26,12 +28,11 @@ _ACTOR_MAX_LEN: int = Attribution.__table__.c.validated_by.type.length
 
 
 def current_actor(request: Request) -> str:
-    """The acting user for this request: verified session user, else cookie, else the default."""
+    """The acting user: the verified session user when auth is on, else the self-declared cookie;
+    the configured default when neither is present."""
     settings = get_settings()
-    if settings.auth_enabled and "session" in request.scope:
-        user = request.session.get(SESSION_USER_KEY) or {}
-        name = (user.get("preferred_username") or "").strip()
-        if name:
-            return name
+    if settings.auth_enabled:
+        name = session_username(request) if "session" in request.scope else ""
+        return name or settings.app_default_actor
     raw = request.cookies.get(ACTOR_COOKIE)
     return (raw or "").strip()[:_ACTOR_MAX_LEN].strip() or settings.app_default_actor

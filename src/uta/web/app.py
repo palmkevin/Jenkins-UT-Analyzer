@@ -788,19 +788,23 @@ def create_app(
         return resp
 
     # ── Actions (Post/Redirect/Get) ──────────────────────────────────────────
-    @app.post("/identity")
-    def set_identity(request: Request, actor: str = Form("")):
-        if error := _length_error(actor=actor):
-            return rejected(request, error.replace(" — nothing saved", ""))
-        resp = back(request)
-        name = actor.strip()
-        if name:
-            resp.set_cookie(ACTOR_COOKIE, name, max_age=60 * 60 * 24 * 365, samesite="lax")
-            set_flash(resp, f"Now acting as {name}")
-        else:
-            resp.delete_cookie(ACTOR_COOKIE)
-            set_flash(resp, "Acting identity cleared — back to the default actor")
-        return resp
+    # The self-declared actor form is the Phase-1 honesty system; with auth on the identity is
+    # the verified login, so the route doesn't exist at all (and the cookie is never read).
+    if not auth_settings.auth_enabled:
+
+        @app.post("/identity")
+        def set_identity(request: Request, actor: str = Form("")):
+            if error := _length_error(actor=actor):
+                return rejected(request, error.replace(" — nothing saved", ""))
+            resp = back(request)
+            name = actor.strip()
+            if name:
+                resp.set_cookie(ACTOR_COOKIE, name, max_age=60 * 60 * 24 * 365, samesite="lax")
+                set_flash(resp, f"Now acting as {name}")
+            else:
+                resp.delete_cookie(ACTOR_COOKIE)
+                set_flash(resp, "Acting identity cleared — back to the default actor")
+            return resp
 
     # Literal-path bulk routes are registered before their `{id}`-parametrized siblings — FastAPI
     # matches routes in registration order, so `/tests/bulk/acknowledge` must win over
