@@ -513,16 +513,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `seed-demo-prints-db-password` — `uta seed-demo` prints DATABASE_URL with its password
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`cli.py` echoes the full URL into logs.
-
-**Acceptance:** the password is masked.
-
----
-
 ## `env-example-defaults-diverge` — `.env.example` disagrees with config defaults
 
 `area: docs` · found by the 2026-11 bug hunt

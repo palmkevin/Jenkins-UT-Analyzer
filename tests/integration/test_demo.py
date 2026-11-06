@@ -607,3 +607,27 @@ def test_demo_temp_store_is_removed_at_exit(monkeypatch):
     ((fn, args),) = registered
     fn(*args)  # what the interpreter runs at exit
     assert not db_path.parent.exists()
+
+
+def test_seed_demo_cli_masks_the_database_password(monkeypatch):
+    """``uta seed-demo`` reports where it seeded without echoing DATABASE_URL's password."""
+    from sqlalchemy import create_engine
+    from typer.testing import CliRunner
+
+    from uta import cli
+    from uta.config import Settings
+
+    url = "postgresql+psycopg://uta:s3cr3t-pw@db.example:5432/uta"
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(database_url=url))
+    monkeypatch.setattr(cli, "_run_migrations", lambda: None)
+    monkeypatch.setattr(cli, "assert_pg_trgm", lambda engine: None)
+    # A real (never-connected) engine for the URL, so its rendering is the production one.
+    monkeypatch.setattr(cli, "make_engine", lambda u: create_engine(u))
+    monkeypatch.setattr("uta.demo.seed.seed_demo_data", lambda factory: 7)
+
+    result = CliRunner().invoke(cli.app, ["seed-demo"])
+    assert result.exit_code == 0, result.output
+    assert "s3cr3t-pw" not in result.output
+    assert "seeded 7 synthetic builds into postgresql+psycopg://uta:***@db.example:5432/uta" in (
+        result.output
+    )

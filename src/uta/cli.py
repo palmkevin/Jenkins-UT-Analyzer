@@ -271,7 +271,9 @@ def seed_demo() -> None:
     assert_pg_trgm(engine)
     session_factory = make_session_factory(engine)
     count = seed_demo_data(session_factory)
-    typer.echo(f"seeded {count} synthetic builds into {settings.database_url}")
+    # Never echo the DB password into logs: render the URL with it masked as ``***``.
+    target = engine.url.render_as_string(hide_password=True)
+    typer.echo(f"seeded {count} synthetic builds into {target}")
 
 
 @app.command("demo")
