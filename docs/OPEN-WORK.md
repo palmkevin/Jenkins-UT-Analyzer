@@ -523,16 +523,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `email-null-sender` — SMTP mail goes out with an empty sender and no Date/Message-ID
-
-`area: email` · found by the 2026-11 bug hunt
-
-With `SMTP_FROM` unset the channel still enables and sends `MAIL FROM:<>`; many relays reject it and `dispatch` only warns.
-
-**Acceptance:** the channel requires `SMTP_FROM`; messages carry `Date` and `Message-ID`.
-
----
-
 ## `teams-card-markdown-injection` — Teams card text is unescaped Markdown and unbounded
 
 `area: alert` · found by the 2026-11 bug hunt

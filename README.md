@@ -161,9 +161,9 @@ that kind. There are two channels today, Email and Microsoft Teams, each gated b
 ### Alerting: Email (SMTP) channel
 | Variable | Default | Purpose |
 |---|---|---|
-| `SMTP_HOST` | *(empty)* | SMTP server. **The email channel is enabled only when host *and* recipients are set.** |
+| `SMTP_HOST` | *(empty)* | SMTP server. **The email channel is enabled only when host, recipients *and* `SMTP_FROM` are set.** |
 | `SMTP_PORT` | `25` | SMTP port. |
-| `SMTP_FROM` | *(empty)* | From address. |
+| `SMTP_FROM` | *(empty)* | From (sender) address — **required**: with host + recipients set but no `SMTP_FROM`, the email channel stays disabled and a warning is logged. |
 | `SMTP_RECIPIENTS` | *(empty)* | Comma-separated recipients; empty disables email. |
 | `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | Relay credentials; when set, `SmtpEmailSender` negotiates STARTTLS and logs in. Empty ⇒ plain unauthenticated send. |
 | `SMTP_STARTTLS` | *(empty)* | Force STARTTLS on/off. Empty defaults it from the credentials (on when `SMTP_USER` is set). |

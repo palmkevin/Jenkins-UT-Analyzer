@@ -8,9 +8,12 @@ clients the CLI back-fill does, with the same "no credential ⇒ skip that sourc
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from uta.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def build_client(settings: Settings):
@@ -66,8 +69,19 @@ def windows(settings: Settings) -> tuple[timedelta, timedelta]:
 
 
 def build_email_sender(settings: Settings):
-    """The SMTP sender, or ``None`` when email is not configured (host + recipients required)."""
+    """The SMTP sender, or ``None`` when email is not configured (host + recipients + from).
+
+    ``SMTP_FROM`` is required: without it every message would go out as ``MAIL FROM:<>`` (the null
+    reverse-path), which most relays reject — so a host + recipients config missing the sender is
+    treated as not configured, with a warning naming the missing key.
+    """
     if not settings.smtp_host or not settings.email_recipients:
+        return None
+    if not settings.smtp_from.strip():
+        logger.warning(
+            "SMTP_HOST and SMTP_RECIPIENTS are set but SMTP_FROM is empty — "
+            "the email alert channel is disabled until a sender address is configured"
+        )
         return None
     from uta.delivery.email import SmtpEmailSender
 
@@ -85,7 +99,7 @@ def build_channels(settings: Settings) -> list:
     """The enabled Alert Channels (issue #181), shared by the ingest pipeline and the poller.
 
     Same "no credential ⇒ skip that channel" rule email already followed: the **Email** channel is
-    built iff SMTP is configured (host + recipients), the **Teams** channel iff
+    built iff SMTP is configured (host + recipients + from), the **Teams** channel iff
     ``TEAMS_WEBHOOK_URL`` is set. Each carries its own subscription set (``EMAIL_EVENTS`` /
     ``TEAMS_EVENTS``); a channel that subscribes to nothing is still returned (it simply never
     receives an Alert). Back-fill and the on-demand re-ingest job pass no channels at all, so

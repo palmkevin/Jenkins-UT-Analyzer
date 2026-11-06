@@ -17,7 +17,7 @@ from tests.builders import _EPOCH, make_build
 from tests.fakes.email import RecordingEmailSender
 from uta.analyze.classify import classify_build
 from uta.analyze.lifecycle import apply_build
-from uta.clients import build_email_sender
+from uta.clients import build_channels, build_email_sender
 from uta.config import Settings
 from uta.delivery.alert import Alert, AlertKind
 from uta.delivery.email import (
@@ -235,6 +235,7 @@ class _RecordingSmtp:
 
     def send_message(self, mime) -> None:
         self.calls.append(("send_message", mime["To"]))
+        self.mime = mime
 
 
 def _send_via_fake_smtp(monkeypatch, sender: SmtpEmailSender) -> _RecordingSmtp:
@@ -299,6 +300,23 @@ def test_build_email_sender_passes_credentials_through(monkeypatch):
     assert smtp.host == "relay"
     assert smtp.port == 587
     assert smtp.calls == [("starttls",), ("login", "bot", "hunter2"), ("send_message", RCPT[0])]
+
+
+def test_smtp_message_carries_from_date_and_message_id(monkeypatch):
+    """RFC 5322 wants Date + Message-ID; relays/spam filters penalise mail without them."""
+    smtp = _send_via_fake_smtp(monkeypatch, SmtpEmailSender("relay", 25, "uta@example.com"))
+    assert smtp.mime["From"] == "uta@example.com"
+    assert smtp.mime["Date"]
+    assert smtp.mime["Message-ID"].endswith("@example.com>")
+
+
+def test_email_channel_disabled_without_smtp_from(caplog):
+    """No SMTP_FROM ⇒ no sender (MAIL FROM:<> is widely rejected) — and a warning says why."""
+    settings = Settings(smtp_host="relay", smtp_recipients="team@example.com", smtp_from="")
+    with caplog.at_level("WARNING"):
+        assert build_email_sender(settings) is None
+    assert "SMTP_FROM" in caplog.text
+    assert build_channels(settings) == []
 
 
 def test_empty_smtp_starttls_env_means_unset():

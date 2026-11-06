@@ -27,6 +27,7 @@ import logging
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage as _MimeMessage
+from email.utils import formatdate, make_msgid
 from typing import Protocol
 
 from sqlalchemy import select
@@ -52,6 +53,12 @@ class EmailMessage:
 
 class EmailSender(Protocol):
     def send(self, message: EmailMessage) -> None: ...
+
+
+def _msgid_domain(sender: str) -> str | None:
+    """The right-hand side of the From address for the Message-ID (``None`` → the local FQDN)."""
+    _, _, domain = sender.rpartition("@")
+    return domain.strip(" >") or None
 
 
 class SmtpEmailSender:
@@ -87,6 +94,8 @@ class SmtpEmailSender:
         mime["From"] = self._sender
         mime["To"] = ", ".join(message.recipients)
         mime["Subject"] = message.subject
+        mime["Date"] = formatdate(localtime=False, usegmt=True)
+        mime["Message-ID"] = make_msgid(domain=_msgid_domain(self._sender))
         mime.set_content(message.body)
         with smtplib.SMTP(self._host, self._port, timeout=_SMTP_TIMEOUT_SECONDS) as smtp:
             if self._starttls:
