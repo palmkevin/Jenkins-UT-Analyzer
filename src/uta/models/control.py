@@ -75,8 +75,10 @@ class PollerHeartbeat(Base, TimestampMixin):
     stored here — it is derived from the max ingested build (``highest_ingested_build``), so there
     is no second copy to drift.
 
-    ``last_success_at`` moves only on an error-free tick — it is what ``/health`` evaluates for
-    staleness ("no successful poll in N intervals"), while ``last_poll_at`` moves on every tick.
+    ``last_success_at`` moves on an error-free tick **and** after every successfully ingested
+    build (so a long catch-up tick stays fresh while it makes progress) — it is what ``/health``
+    evaluates for staleness ("no successful poll in N intervals"), while ``last_poll_at`` moves on
+    every tick.
     ``stale_alerted_at`` latches the ops staleness alert so repeated health probes don't re-mail;
     it is cleared when the poller is fresh again (issue #51).
 

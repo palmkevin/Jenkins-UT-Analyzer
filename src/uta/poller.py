@@ -28,7 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.config import Settings
-from uta.control.heartbeat import record_heartbeat
+from uta.control.heartbeat import record_heartbeat, record_liveness
 from uta.control.overrunning import observe_overrunning
 from uta.control.quarantine import (
     clear_failure,
@@ -283,7 +283,16 @@ def poll_once(
             raise BuildIngestError(build, exc, processed) from exc
         clear_failure(session_factory, build)
         processed.append(build)
+        _stamp_liveness(session_factory)
     return processed
+
+
+def _stamp_liveness(session_factory: sessionmaker[Session]) -> None:
+    """Per-build liveness so ``/health`` stays fresh through a long tick (best-effort)."""
+    try:
+        record_liveness(session_factory)
+    except Exception:  # noqa: BLE001 — a liveness stamp must never fail the ingest
+        logger.warning("could not stamp poller liveness", exc_info=True)
 
 
 def observe_overrunning_tick(

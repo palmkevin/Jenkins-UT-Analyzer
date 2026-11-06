@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `health-stale-during-long-tick` — /health reports stale while a long tick is working
-
-`area: infra` · found by the 2026-11 bug hunt
-
-The heartbeat is stamped only at tick end; a catch-up tick over 5 min raises a false "poller is stale" alert.
-
-**Acceptance:** liveness is stamped per ingested build.
-
----
-
 ## `post-commit-error-leaves-stale-attempt` — an error after a build commits leaves a phantom "retrying" row
 
 `area: infra` · found by the 2026-11 bug hunt

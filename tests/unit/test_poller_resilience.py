@@ -304,7 +304,10 @@ def test_failing_tick_records_partial_progress_and_error(session_factory):
         hb = read_heartbeat(s)
         assert hb.last_processed == "1"
         assert "enclosingBlockNames" in hb.last_error
-        assert hb.last_success_at is None  # a failing tick is not a successful poll
+        assert hb.last_error_at is not None
+        # Build #1 landed, so the poller was alive and progressing (health-stale-during-long-tick);
+        # the failure itself is surfaced via last_error / last_error_at.
+        assert hb.last_success_at is not None
 
 
 def test_clean_tick_stamps_last_success(session_factory):
@@ -607,3 +610,27 @@ def test_every_ingest_takes_the_lock(session_factory, monkeypatch):
         session_factory, job_id, settings=Settings(), client=_MultiBuildFake(1), feed=None
     )
     assert locked == [True, True]
+
+
+# ── Per-build liveness (health-stale-during-long-tick) ───────────────────────
+
+
+def test_each_ingested_build_refreshes_liveness_mid_tick(session_factory, monkeypatch):
+    """A long catch-up tick must not look stale: liveness is stamped after every build."""
+    record_heartbeat(session_factory, processed=[], error=None)
+    long_ago = datetime.now(UTC) - timedelta(hours=2)
+    with session_scope(session_factory) as s:
+        read_heartbeat(s).last_success_at = long_ago
+    seen: list[bool] = []
+    import uta.poller as poller
+
+    real_clear = poller.clear_failure
+
+    def _probe(factory, build):
+        if build == 2:  # mid-tick, after build #1 ingested: /health must already be fresh
+            seen.append(check_health(session_factory, _client_settings()).ok)
+        real_clear(factory, build)
+
+    monkeypatch.setattr(poller, "clear_failure", _probe)
+    assert poll_once(_MultiBuildFake(2), session_factory) == [1, 2]
+    assert seen == [True]

@@ -36,8 +36,9 @@ def record_heartbeat(
 
     A successful tick leaves the previous ``last_error`` in place (it is the *last* error, not a
     per-tick flag), so a transient failure stays visible until the operator has seen it; a fresh
-    error overwrites it. ``last_success_at`` moves only on an error-free tick — it is the freshness
-    reference ``/health`` evaluates ("no successful poll in N intervals", issue #51).
+    error overwrites it. ``last_success_at`` moves on an error-free tick (and, via
+    :func:`record_liveness`, after each ingested build) — it is the freshness reference ``/health``
+    evaluates ("no successful poll in N intervals", issue #51).
     """
     now = datetime.now(UTC)
     with session_scope(session_factory) as session:
@@ -50,6 +51,18 @@ def record_heartbeat(
             hb.last_error_at = now
         else:
             hb.last_success_at = now
+
+
+def record_liveness(session_factory: sessionmaker[Session]) -> None:
+    """Stamp ``last_success_at`` mid-tick, after each successfully ingested build.
+
+    The heartbeat is otherwise only written at tick end, so a long catch-up tick (many builds,
+    each minutes long) looked stale to ``/health`` while it was making progress. A build that
+    ingested is proof the poller works, so it refreshes the freshness reference without touching
+    the per-tick fields (count / processed list / last error), which the tick-end stamp still owns.
+    """
+    with session_scope(session_factory) as session:
+        _get_or_create(session).last_success_at = datetime.now(UTC)
 
 
 def read_heartbeat(session: Session) -> PollerHeartbeat | None:
