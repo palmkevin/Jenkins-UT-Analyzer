@@ -93,16 +93,6 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 <!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
 
-## `unittest-log-subtests-and-printing-tests` — console-log parser drops subTest failures and tests that print
-
-`area: ingest` · found by the 2026-11 bug hunt
-
-`_STATUS_RE` in `ingest/unittest_log.py` needs a non-empty tail after `... `, so a test whose output starts on its own line vanishes; subTest failure headers `FAIL: test_x (m.C.test_x) (i=1)` defeat `_BLOCK_HEADER_RE`, so real failures are silently lost.
-
-**Acceptance:** real `python -m unittest -v` output with a printing test and a failing subTest parses to the right outcomes (subtest failures collapse to the parent test as FAILED).
-
----
-
 ## `unknown-junit-suite-fails-every-ingest` — an unrecognised JUnit suite fails every ingest
 
 `area: ingest` · found by the 2026-11 bug hunt

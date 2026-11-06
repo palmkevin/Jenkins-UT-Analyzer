@@ -1,0 +1,30 @@
+test_a_passes (demo_pkg.test_sample.SampleTests.test_a_passes) ... ok
+test_b_prints_then_passes (demo_pkg.test_sample.SampleTests.test_b_prints_then_passes) ... loading widget table
+done
+ok
+test_c_subtests (demo_pkg.test_sample.SampleTests.test_c_subtests) ... 
+  test_c_subtests (demo_pkg.test_sample.SampleTests.test_c_subtests) (i=1) ... FAIL
+test_d_prints_then_fails (demo_pkg.test_sample.SampleTests.test_d_prints_then_fails) ... computing price
+FAIL
+test_e_subtests_all_pass (demo_pkg.test_sample.SampleTests.test_e_subtests_all_pass) ... ok
+
+======================================================================
+FAIL: test_c_subtests (demo_pkg.test_sample.SampleTests.test_c_subtests) (i=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/opt/ls/lx/release/permanent/tests/demo_pkg/test_sample.py", line 16, in test_c_subtests
+    self.assertNotEqual(i, 1, "widget mismatch")
+AssertionError: 1 == 1 : widget mismatch
+
+======================================================================
+FAIL: test_d_prints_then_fails (demo_pkg.test_sample.SampleTests.test_d_prints_then_fails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/opt/ls/lx/release/permanent/tests/demo_pkg/test_sample.py", line 20, in test_d_prints_then_fails
+    self.assertEqual(2, 3)
+AssertionError: 2 != 3
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+FAILED (failures=2)

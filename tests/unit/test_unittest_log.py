@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from uta.ingest.unittest_log import parse_unittest_log
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "jenkins"
@@ -211,3 +213,68 @@ def test_non_verbose_failure_block_still_surfaces():
     assert case.status == "FAILED"
     assert case.error_details == "AssertionError: False is not true"
     assert case.line == 12
+
+
+# ── Printing tests and subTests (unittest-log-subtests-and-printing-tests) ───────────────────
+
+_UNITTEST_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "unittest"
+_SAMPLE = "demo_pkg.test_sample.SampleTests"
+
+
+@pytest.mark.parametrize("py", ["py312", "py313"])
+def test_real_verbose_output_with_printing_tests_and_subtests(py, caplog):
+    """Real ``python -m unittest -v`` output (synthetic test module, see the fixture): a test that
+    prints gets its outcome on a later line, and a failing subTest collapses onto its parent."""
+    text = (_UNITTEST_FIXTURES / f"verbose_subtests_printing_{py}.txt").read_text()
+    with caplog.at_level("WARNING"):
+        cases = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    by_id = {c.test_id: c for c in cases}
+    assert {k.removeprefix(_SAMPLE + "."): c.status for k, c in by_id.items()} == {
+        "test_a_passes": "PASSED",
+        "test_b_prints_then_passes": "PASSED",
+        "test_c_subtests": "FAILED",
+        "test_d_prints_then_fails": "FAILED",
+        "test_e_subtests_all_pass": "PASSED",
+    }
+    sub = by_id[f"{_SAMPLE}.test_c_subtests"]
+    assert sub.error_details == "AssertionError: 1 == 1 : widget mismatch"
+    assert sub.line == 16
+    assert by_id[f"{_SAMPLE}.test_d_prints_then_fails"].error_details == "AssertionError: 2 != 3"
+    assert not any("unrecognized outcome tail" in r.message for r in caplog.records)
+
+
+def test_several_failing_subtests_yield_one_failed_case_with_the_first_block():
+    text = (
+        "test_x (m.C.test_x) ... \n"
+        "  test_x (m.C.test_x) (i=1) ... FAIL\n"
+        "  test_x (m.C.test_x) [msg] (i=2) ... ERROR\n"
+        "\n"
+        "======================================================================\n"
+        "FAIL: test_x (m.C.test_x) (i=1)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/m.py", line 5, in test_x\n'
+        "AssertionError: first\n"
+        "\n"
+        "======================================================================\n"
+        "ERROR: test_x (m.C.test_x) [msg] (i=2)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        '  File "/opt/ls/lx/release/permanent/tests/m.py", line 7, in test_x\n'
+        "KeyError: 'second'\n"
+        "\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 1 test in 0.001s\n"
+    )
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.test_id == "m.C.test_x"
+    assert case.status == "FAILED"
+    assert case.error_details == "AssertionError: first"
+    assert case.line == 5
+
+
+def test_printed_text_that_looks_like_an_outcome_prefix_is_not_one():
+    """``Error loading …`` printed by a passing test must not be read as ERROR."""
+    text = "test_x (m.C) ... Error loading cache, retrying\nok\n"
+    (case,) = parse_unittest_log(text, track="permanent", suite_name="LXS")
+    assert case.status == "PASSED"

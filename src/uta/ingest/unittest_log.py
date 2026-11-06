@@ -13,7 +13,9 @@ It assumes **verbose** unittest output (``-v``): one ``method (dotted.path) ... 
 test. Failure/error tracebacks are read from the trailing ``====``-delimited blocks; a block is
 **authoritative** — it overrides the test's status-line outcome (stdout printed mid-test can garble
 the tail), and a test that appears only in a block (e.g. a non-verbose build) is still surfaced as
-FAILED. (Tests with docstrings
+FAILED. A test that prints gets its outcome word on a later line, after the printed output; a
+failing ``subTest`` gets an indented ``(params) ... FAIL`` line and a ``FAIL: … (params)`` block —
+both collapse onto the parent test, which is FAILED. (Tests with docstrings
 render the docstring on the status line in verbose mode; these stages don't use them, so that form
 is intentionally not parsed — such a test still surfaces from its failure block if it fails.)
 
@@ -38,10 +40,17 @@ _TS_SPAN_RE = re.compile(r'<span class="timestamp">.*?</span>\s*')
 _HIDDEN_SPAN_RE = re.compile(r'<span style="display: ?none">.*?</span>\s*')
 _TAG_RE = re.compile(r"<[^>]+>")
 
-# A verbose status line: ``test_method (dotted.path) ... <outcome>``.
-_STATUS_RE = re.compile(r"^(?P<name>\w+) \((?P<path>[\w.]+)\) \.\.\. (?P<rest>.+?)\s*$")
-# A failure/error block header: ``FAIL: test_method (dotted.path)``.
-_BLOCK_HEADER_RE = re.compile(r"^(?P<kind>FAIL|ERROR): (?P<name>\w+) \((?P<path>[\w.]+)\)\s*$")
+# A verbose status line: ``test_method (dotted.path) ... <outcome>``. The tail may be empty: a test
+# that prints (or has a failing subTest) gets its outcome on a later line.
+_STATUS_RE = re.compile(r"^(?P<name>\w+) \((?P<path>[\w.]+)\) \.\.\.(?: (?P<rest>.*?))?\s*$")
+# A failing subTest's verbose line, indented under its parent's status line:
+# ``  test_method (dotted.path) (i=1) ... FAIL`` (``[msg]`` and/or ``(params)`` after the path).
+_SUBTEST_RE = re.compile(r"^\s+(?P<name>\w+) \((?P<path>[\w.]+)\) .+ \.\.\. (?P<rest>.+?)\s*$")
+# A failure/error block header: ``FAIL: test_method (dotted.path)``, optionally followed by a
+# subTest description (``(i=1)``, ``[msg]``) — subTest failures collapse onto their parent test.
+_BLOCK_HEADER_RE = re.compile(
+    r"^(?P<kind>FAIL|ERROR): (?P<name>\w+) \((?P<path>[\w.]+)\)(?: .+?)?\s*$"
+)
 _SEP_RE = re.compile(r"^=+$")  # block separator (a build of '=')
 _RULE_RE = re.compile(r"^-+$")  # rule under a header / before the summary (a build of '-')
 _RAN_RE = re.compile(r"^Ran \d+ tests? in ")  # trailing summary line
@@ -65,6 +74,26 @@ def _strip_console_html(text: str) -> str:
     return html.unescape(text)
 
 
+def _outcome(rest: str) -> str | None:
+    """The status a unittest outcome word maps to, or ``None`` if ``rest`` isn't one.
+
+    Matched exactly (not by prefix) so text a test printed — ``Error loading …`` — is never read
+    as an outcome.
+    """
+    r = rest.strip().lower()
+    if r == "ok":
+        return "PASSED"
+    if r == "skipped" or r.startswith("skipped "):
+        return "SKIPPED"
+    if r == "expected failure":
+        return "PASSED"  # xfail: ran and failed as designed — not a regression, build stays green
+    if r == "unexpected success":
+        return "FAILED"  # an xfail that passed — unittest counts this as a failure
+    if r in ("fail", "error"):
+        return "FAILED"
+    return None
+
+
 def _status_of(rest: str, *, test_id: str) -> str:
     """Map a verbose-line outcome tail to our status vocabulary (PASSED/FAILED/SKIPPED).
 
@@ -76,17 +105,9 @@ def _status_of(rest: str, *, test_id: str) -> str:
     itself is **not** logged: in these legacy LIMS suites stdout may carry patient data (see the
     medical-data invariant), so only the test identity and the tail's size are recorded.
     """
-    r = rest.strip().lower()
-    if r == "ok":
-        return "PASSED"
-    if r.startswith("skip"):
-        return "SKIPPED"
-    if r.startswith("expected failure"):
-        return "PASSED"  # xfail: ran and failed as designed — not a regression, build stays green
-    if r.startswith("unexpected success"):
-        return "FAILED"  # an xfail that passed — unittest counts this as a failure
-    if r.startswith(("fail", "error")):
-        return "FAILED"
+    status = _outcome(rest)
+    if status is not None:
+        return status
     logger.warning(
         "unittest_log: unrecognized outcome tail (%d chars, content withheld) on status line of %s",
         len(rest),
@@ -142,7 +163,11 @@ def _parse_blocks(lines: list[str]) -> dict[tuple[str, str], _Block]:
                 frame = _FRAME_RE.search(stack)
                 file_path = frame.group(1) if frame else None
                 line = int(frame.group(2)) if frame else None
-                blocks[(cls, name)] = (_last_meaningful_line(body), stack, file_path, line)
+                # Several failing subTests of one test yield several blocks; the first one is kept
+                # so the test's details/signature don't depend on how many subTests failed.
+                blocks.setdefault(
+                    (cls, name), (_last_meaningful_line(body), stack, file_path, line)
+                )
                 i = j
                 continue
         i += 1
@@ -160,14 +185,52 @@ def parse_unittest_log(log: dict | str, *, track: str, suite_name: str) -> list[
 
     outcomes: dict[tuple[str, str], str] = {}
     order: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    # A status line whose tail isn't an outcome (empty, or stdout the test printed) leaves the test
+    # *pending*: unittest writes the outcome word once the test finishes, on its own line after the
+    # printed output. A pending test never resolved falls back to ``_status_of`` (warn + SKIPPED).
+    pending: tuple[tuple[str, str], str] | None = None
+
+    def _settle() -> None:
+        if pending is not None:
+            key, rest = pending
+            outcomes.setdefault(key, _status_of(rest, test_id=".".join(key)))
+
     for line in lines:
         m = _STATUS_RE.match(line)
-        if not m:
+        if m:
+            _settle()
+            pending = None
+            key = _split_identity(m.group("name"), m.group("path"))
+            if key not in seen:
+                seen.add(key)
+                order.append(key)
+            outcomes.pop(key, None)
+            rest = m.group("rest") or ""
+            status = _outcome(rest)
+            if status is None:
+                pending = (key, rest)
+            else:
+                outcomes[key] = status
             continue
-        key = _split_identity(m.group("name"), m.group("path"))
-        if key not in outcomes:
-            order.append(key)
-        outcomes[key] = _status_of(m.group("rest"), test_id=".".join(key))
+        sub = _SUBTEST_RE.match(line)
+        if sub:
+            key = _split_identity(sub.group("name"), sub.group("path"))
+            if key in seen and _outcome(sub.group("rest")) == "FAILED":
+                outcomes[key] = "FAILED"  # any failing subTest fails the parent test
+                if pending is not None and pending[0] == key:
+                    pending = None
+            continue
+        if pending is not None:
+            if _SEP_RE.match(line):  # the traceback blocks begin — nothing left to resolve it
+                _settle()
+                pending = None
+                continue
+            status = _outcome(line)
+            if status is not None:
+                outcomes[pending[0]] = status
+                pending = None
+    _settle()
 
     blocks = _parse_blocks(lines)
 
