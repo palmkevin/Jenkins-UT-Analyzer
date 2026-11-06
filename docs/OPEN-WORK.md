@@ -91,7 +91,7 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 ---
 
-<!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
+<!-- Bug-hunt 2026-11: one entry per finding; the fixable ones were closed by their own commits. What remains needs an owner decision (or, for alembic-rename-leftover-constraint-names, a real Postgres to verify). -->
 
 ## `data-change-lower-bound-uses-devuts-start` — data-change window lower bound starts at devUTs, not at the build
 
@@ -239,7 +239,7 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ## `cold-start-poll-alerts-history` — a fresh deploy mails alerts for the whole back-fill window
 
-`area: alert` · found by the 2026-11 bug hunt · **needs owner input**
+`area: email` · found by the 2026-11 bug hunt · **needs owner input**
 
 On an empty store the poller ingests the last `BACKFILL_DEPTH` builds with live channels and the LLM; `uta bootstrap` deliberately doesn't. Up to 10 regression alerts + LLM spend on day one.
 
@@ -285,7 +285,7 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ## `demo-links-into-real-internal-systems` — public demo deep-links to real internal Jira/FishEye/Jenkins hosts
 
-`area: demo` · found by the 2026-11 bug hunt · **needs owner input**
+`area: infra` · found by the 2026-11 bug hunt · **needs owner input**
 
 `render.yaml` sets no link env vars, so the demo renders `labsolution.atlassian.net/browse/LX-8842`, `fisheye.labsolution.lu/…` and the real Jenkins host for synthetic data.
 
@@ -297,7 +297,7 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ## `demo-unittest-log-suites` — the demo never shows console-log suites
 
-`area: demo` · found by the 2026-11 bug hunt · **needs owner input**
+`area: infra` · found by the 2026-11 bug hunt · **needs owner input**
 
 `seed.py` passes `ingest_unittest_logs=False`, so LXS/SMB/ITF/Uniface suites never appear in the public demo.
 
@@ -328,3 +328,25 @@ The older `main` pipeline's `git push … HEAD:main` to the GitHub mirror fails 
 **Needs owner input:** acceptable, or switch the step to push only when HEAD is the branch tip?
 
 **Acceptance:** decision applied.
+
+---
+
+## `track-rename-stalls-silently` — a renamed JUnit track makes every build incomplete without an alert
+
+`area: ingest` · found by the 2026-11 bug-hunt code review · **needs owner input**
+
+Unknown-track JUnit suites are now skipped with a WARNING (`ut_report.py`) and completeness requires every expected track (`pipeline.py`). If Jenkins ever renames the tracks in `enclosingBlockNames`, every build is stored incomplete, lifecycle and regression alerts stop, and nothing pages anyone — before, the ingest failed loudly and quarantined.
+
+**Needs owner input:** which signal — an ops alert when skipped suites carry cases, or after N consecutive incomplete builds?
+
+**Acceptance:** a track rename produces an ops alert within one or a few builds.
+
+---
+
+## `unittest-log-py39-subtests-glued` — Python 3.9 subTest failures glue the next test onto the same line
+
+`area: ingest` · found by the 2026-11 bug-hunt code review
+
+Python 3.9's `unittest -v` prints nothing on the status line for a failing subTest, so the next test's `name (path) ... ok` lands on the same line; that next test vanishes and later outcomes can be credited to the wrong test (pre-existing; the subTest fix covers 3.11+ output only). Relevant to the `permanent_py39` track if any console-log suite uses subTests there.
+
+**Acceptance:** real Python 3.9 `-v` output with a failing subTest followed by more tests parses every test with the right outcome.
