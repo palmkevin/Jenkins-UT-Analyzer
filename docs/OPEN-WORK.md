@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `path-id-overflow-500` — huge path ids are a 500
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`/tests/99999999999999999999` → OverflowError / out-of-range.
-
-**Acceptance:** out-of-range ids 404.
-
----
-
 ## `incident-kb-ignores-tunables` — incident similar-cases ignore the KB tunables
 
 `area: dashboard` · found by the 2026-11 bug hunt

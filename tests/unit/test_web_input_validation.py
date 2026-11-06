@@ -241,3 +241,46 @@ def test_bulk_attribute_bad_id_is_an_error_flash(client, seeded, bad):
     assert "Invalid test selection — nothing updated" in _flash_page(client)
     with session_scope(seeded) as s:
         assert s.scalar(select(Attribution)) is None
+
+
+# ── path-id-overflow-500 ───────────────────────────────────────────────────────
+
+_HUGE = "99999999999999999999"
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [
+        ("GET", f"/tests/{_HUGE}"),
+        ("GET", f"/builds/{_HUGE}"),
+        ("GET", f"/incidents/{_HUGE}"),
+        ("GET", "/tests/2147483648"),
+        ("GET", "/tests/0"),
+        ("GET", "/tests/abc"),
+        ("POST", f"/tests/{_HUGE}/acknowledge"),
+        ("POST", f"/episodes/{_HUGE}/confirm"),
+        ("POST", f"/episodes/{_HUGE}/attribute"),
+        ("POST", f"/signatures/{_HUGE}/acknowledge"),
+        ("POST", f"/signatures/{_HUGE}/attribute"),
+        ("POST", f"/incidents/{_HUGE}/acknowledge"),
+        ("POST", f"/incidents/{_HUGE}/confirm"),
+        ("POST", f"/incidents/{_HUGE}/attribute"),
+    ],
+)
+def test_out_of_range_path_id_is_a_404(seeded, method, url):
+    client = TestClient(
+        create_app(session_factory=seeded), follow_redirects=False, raise_server_exceptions=False
+    )
+    resp = client.request(method, url, headers={"referer": "/"})
+    assert resp.status_code == 404
+
+
+def test_in_range_path_id_still_resolves(client, seeded):
+    ident = _episode(seeded, "alpha").test_identity_id
+    assert client.get(f"/tests/{ident}").status_code == 200
+    assert client.get("/tests/2147483647").status_code == 200  # max id: the "not found" page
+
+
+def test_non_path_validation_errors_keep_the_422(client):
+    # /control/ingest's build_start is a required form field — still FastAPI's default 422.
+    assert client.post("/control/ingest", data={}).status_code == 422

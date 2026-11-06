@@ -18,9 +18,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request
+from fastapi import Path as PathParam
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -315,6 +319,12 @@ def _length_error(**fields: str | None) -> str | None:
 MAX_DB_ID = 2**31 - 1
 
 
+# A path id: bounded so an out-of-range value never reaches the database (SQLite raises
+# OverflowError, Postgres "integer out of range" — both were a 500). A violation is a 404 — see
+# the RequestValidationError handler in create_app.
+DbId = Annotated[int, PathParam(ge=1, le=MAX_DB_ID)]
+
+
 def _parse_ids(values: list) -> list[int] | None:
     """Bulk-form checkbox values → row ids, or ``None`` if any isn't a positive in-range integer.
 
@@ -394,6 +404,15 @@ def create_app(
     # ⇒ outermost, so cross-site writes are rejected even on auth-exempt paths; it never reads the
     # session, so sitting outside SessionMiddleware is fine. See uta.web.csrf for the design.
     install_csrf_middleware(app)
+
+    @app.exception_handler(RequestValidationError)
+    async def path_ids_not_found(request: Request, exc: RequestValidationError):
+        # A path that can't name a row (non-numeric or out-of-range id) is a missing resource, not
+        # a client-form error; everything else keeps FastAPI's default 422.
+        errors = exc.errors()
+        if errors and all(err.get("loc", ("",))[0] == "path" for err in errors):
+            return PlainTextResponse("Not found", status_code=404)
+        return await request_validation_exception_handler(request, exc)
 
     def effective(s) -> Settings:
         """Env settings with the DB threshold overrides applied — the live view of the tunables."""
@@ -499,7 +518,7 @@ def create_app(
         )
 
     @app.get("/tests/{identity_id}", response_class=HTMLResponse)
-    def test_record(request: Request, identity_id: int):
+    def test_record(request: Request, identity_id: DbId):
         # The breadcrumb's back target (issue #143): the referring triage-queue URL carried in
         # ?return= (sanitized — same-origin relative paths only), else the plain queue.
         back_url = _same_origin_path(request.query_params.get("return")) or "/"
@@ -540,12 +559,12 @@ def create_app(
         return RedirectResponse(f"/builds{query}", status_code=301)
 
     @app.get("/runs/{number}", include_in_schema=False)
-    def legacy_run_view(request: Request, number: int):
+    def legacy_run_view(request: Request, number: DbId):
         query = f"?{request.url.query}" if request.url.query else ""
         return RedirectResponse(f"/builds/{number}{query}", status_code=301)
 
     @app.get("/builds/{number}", response_class=HTMLResponse)
-    def build_view(request: Request, number: int, page: int = 1, failures_only: bool = False):
+    def build_view(request: Request, number: DbId, page: int = 1, failures_only: bool = False):
         expand = _expanded(request)
         with session_scope(session_factory) as s:
             cfg = effective(s)
@@ -586,7 +605,7 @@ def create_app(
         return render(request, "incidents.html", {"queue": queue}, cfg=cfg)
 
     @app.get("/incidents/{incident_id}", response_class=HTMLResponse)
-    def incident_view(request: Request, incident_id: int):
+    def incident_view(request: Request, incident_id: DbId):
         with session_scope(session_factory) as s:
             cfg = effective(s)
             incident = views.incident_detail(s, incident_id)
@@ -598,7 +617,7 @@ def create_app(
         )
 
     @app.post("/incidents/{incident_id}/acknowledge")
-    def acknowledge_incident(request: Request, incident_id: int, anchor: str = Form("")):
+    def acknowledge_incident(request: Request, incident_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             ok = actions.acknowledge_incident(s, incident_id, actor)
@@ -609,7 +628,7 @@ def create_app(
         return resp
 
     @app.post("/incidents/{incident_id}/confirm")
-    def confirm_incident(request: Request, incident_id: int, anchor: str = Form("")):
+    def confirm_incident(request: Request, incident_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             attr = actions.confirm_incident(s, incident_id, actor)
@@ -624,7 +643,7 @@ def create_app(
     @app.post("/incidents/{incident_id}/attribute")
     def attribute_incident(
         request: Request,
-        incident_id: int,
+        incident_id: DbId,
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         problem_text: str = Form(""),
@@ -853,7 +872,7 @@ def create_app(
         return resp
 
     @app.post("/tests/{identity_id}/acknowledge")
-    def acknowledge(request: Request, identity_id: int, anchor: str = Form("")):
+    def acknowledge(request: Request, identity_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             ok = actions.acknowledge(s, identity_id, actor)
@@ -865,7 +884,7 @@ def create_app(
         return resp
 
     @app.post("/signatures/{signature_id}/acknowledge")
-    def acknowledge_signature(request: Request, signature_id: int, anchor: str = Form("")):
+    def acknowledge_signature(request: Request, signature_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.acknowledge_by_signature(s, signature_id, actor)
@@ -879,7 +898,7 @@ def create_app(
     @app.post("/signatures/{signature_id}/attribute")
     def attribute_signature(
         request: Request,
-        signature_id: int,
+        signature_id: DbId,
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         triage_status: str = Form(""),
@@ -973,7 +992,7 @@ def create_app(
         return resp
 
     @app.post("/episodes/{episode_id}/confirm")
-    def confirm(request: Request, episode_id: int, anchor: str = Form("")):
+    def confirm(request: Request, episode_id: DbId, anchor: str = Form("")):
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             attr = actions.confirm(s, episode_id, actor)
@@ -989,7 +1008,7 @@ def create_app(
     @app.post("/episodes/{episode_id}/attribute")
     def attribute(
         request: Request,
-        episode_id: int,
+        episode_id: DbId,
         causing_person: str = Form(""),
         reason_text: str = Form(""),
         triage_status: str = Form(""),
