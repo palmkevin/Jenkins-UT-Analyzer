@@ -93,16 +93,6 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 <!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
 
-## `complete-without-junit-tracks` — a build missing a JUnit track is still marked complete
-
-`area: ingest` · found by the 2026-11 bug hunt
-
-Completeness (`pipeline.py` ~l.312) only checks wfapi `devUTs: Execute - <track>` stage statuses, never that the parsed report actually contains every expected track. If a `Collect test results - <track>` step fails to publish, the half-empty build becomes the baseline and every missing test turns into a phantom transition (the GH#83 failure mode).
-
-**Acceptance:** a report lacking an expected track yields `complete=False`.
-
----
-
 ## `unittest-log-subtests-and-printing-tests` — console-log parser drops subTest failures and tests that print
 
 `area: ingest` · found by the 2026-11 bug hunt

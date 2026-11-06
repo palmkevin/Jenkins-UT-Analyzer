@@ -519,6 +519,7 @@ def test_build_without_test_report_is_stored_with_its_incident(session_factory):
         build = s.scalar(select(Build).where(Build.build_number == 1))
         assert build.status == "FAILURE"
         assert build.total_passed == build.total_failed == 0
+        assert build.complete is False  # no JUnit tracks (complete-without-junit-tracks)
         assert s.scalar(select(func.count()).select_from(BuildIncident)) == 1
 
 

@@ -91,6 +91,31 @@ def test_ingest_aborted_track_run_is_incomplete_and_never_a_baseline(session_fac
         assert select_baseline(s, later) is None
 
 
+class _ReportTracksFake(FakeJenkinsClient):
+    """wfapi says both UT stages finished, but the JUnit report only carries ``keep_suites``
+    (a ``Collect test results`` step that never published; ``0`` ⇒ no report at all)."""
+
+    def __init__(self, keep_suites: int) -> None:
+        super().__init__()
+        self._keep = keep_suites
+
+    def test_report(self, build: int) -> dict:
+        payload = super().test_report(build)
+        payload["suites"] = payload["suites"][: self._keep]
+        return payload
+
+
+@pytest.mark.parametrize("keep_suites", [0, 1])
+def test_ingest_report_missing_a_track_is_incomplete(session_factory, keep_suites):
+    """complete-without-junit-tracks: finished wfapi stages alone don't make a build complete —
+    every expected track must also be present in the parsed report."""
+    ingest_build(_ReportTracksFake(keep_suites), session_factory, 1702, expected_tracks=2)
+    with session_scope(session_factory) as s:
+        build = s.scalar(select(Build).where(Build.build_number == 1702))
+        assert build.complete is False
+        assert s.scalar(select(func.count()).select_from(FailureEpisode)) == 0
+
+
 def test_ingest_stores_zephyr_test_cases_on_identity(session_factory):
     """The ZEPHYR test case(s) a failing test references are resolved onto its identity."""
     ingest_build(FakeJenkinsClient(), session_factory, 1702, expected_tracks=2)

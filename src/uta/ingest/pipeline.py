@@ -309,8 +309,14 @@ def ingest_build(
         # exactly the issue-#83 failure mode the track guard prevents. A suite stage absent from
         # the wfapi payload never affects completeness (job configuration varies over history);
         # the truncated results are still persisted below — analysis is gated on build.complete.
-        build.complete = timing.is_complete(expected_tracks) and all(
-            stage.status in FINISHED_STAGE_STATUSES for stage in log_stages
+        # The wfapi stages finishing is not enough on its own: the parsed JUnit report must also
+        # carry every track (a "Collect test results" step that failed to publish, or no report at
+        # all, would otherwise make a half-empty build the baseline — the same #83 failure mode).
+        build.complete = (
+            timing.is_complete(expected_tracks)
+            and len(report.tracks) >= expected_tracks
+            and set(timing.tracks) <= report.tracks
+            and all(stage.status in FINISHED_STAGE_STATUSES for stage in log_stages)
         )
         build.total_passed = sum(1 for c in cases if c.status in _PASSED)
         build.total_failed = sum(1 for c in cases if c.status in _FAILED)
