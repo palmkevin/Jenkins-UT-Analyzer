@@ -70,7 +70,8 @@ _Avoid_: Triaged (that is Triage Status)
 
 **Flakiness**:
 How much a test oscillates between pass and fail across builds (state transitions ÷ builds over a
-window) — not a fail-rate. A solidly failing test is a regression, not flaky.
+window) — not a fail-rate. A solidly failing test is a regression, not flaky; a test is flaky only
+with at least two transitions (a single flip is a clean regression or fix).
 _Avoid_: Fail rate, instability
 
 ### Build-level incidents

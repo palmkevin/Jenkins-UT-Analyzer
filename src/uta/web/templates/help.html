@@ -7,8 +7,8 @@
   This tool watches the unit-test build (one build per code commit, not on a schedule), gathers the evidence for every new failure, and
   presents it here for a human to triage. It is deliberately <strong>assistive</strong>: it
   gathers, correlates, predicts and suggests — a person always confirms the cause and reason.
-  Every action you take (Acknowledge, Confirm, Save) is stamped with the name in the
-  <strong>acting as</strong> box in the top right, so the triage history says who decided what.
+  Every action you take (Acknowledge, Confirm, Save) is stamped with your name (the
+  <strong>acting as</strong> box in the top right, or your sign-in name when login is enabled), so the triage history says who decided what.
 </p>
 
 <p class="mb-4">
@@ -238,7 +238,7 @@
   <table class="table table-sm align-middle mb-3">
     <tr>
       <td style="width: 14rem"><strong>Confirm AI suggestion</strong></td>
-      <td>One click. Takes the suggested contact and the LLM hypothesis exactly as given and
+      <td>One click. Takes the suggested contact and the LLM hypothesis exactly as given (only the fields the AI actually suggested are written) and
         saves them as the causing person / reason — cheap, so use it whenever the AI got it
         right.</td>
     </tr>
@@ -248,7 +248,7 @@
         triage status and hit Save. If what you type for causing person or reason happens to
         match the AI's suggestion, it's recorded the same as a Confirm; if it differs, your
         version is saved and the AI's original guess is kept alongside it (shown as "was (AI):
-        …") so nothing is lost.</td>
+        …") so nothing is lost. Re-saving a record without changing anything leaves its provenance untouched. A pasted Jira link in a ticket field is reduced to the ticket key.</td>
     </tr>
   </table>
   <p>

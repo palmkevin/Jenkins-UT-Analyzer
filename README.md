@@ -55,7 +55,7 @@ ephemeral SQLite store, so the whole ingest → analysis → dashboard stack ren
 coherent dashboard with zero configuration and zero secrets.
 
 ```bash
-uta demo                      # ephemeral in-memory store, seeded, served on http://0.0.0.0:8000
+uta demo                      # ephemeral temp-file SQLite store (fresh per process, deleted at exit), seeded, served on http://0.0.0.0:8000
 # or, equivalently, the hosting entrypoint:
 uvicorn uta.demo.app:app --host 0.0.0.0 --port 8000
 ```
@@ -131,7 +131,7 @@ and edit. **Every default below lets the app boot**; features turn on as you fil
 | `JENKINS_API_TOKEN` | *(empty)* | Optional API token (paired with `JENKINS_USER`). |
 | `JENKINS_VERIFY_TLS` | `true` | Verify Jenkins' TLS certificate. Only set `false` as a stopgap for an internal CA the host doesn't trust yet — prefer `JENKINS_CA_BUNDLE`. |
 | `JENKINS_CA_BUNDLE` | *(empty)* | Path to a CA bundle (PEM) to verify Jenkins' cert against (e.g. an internal CA). Takes precedence over `JENKINS_VERIFY_TLS` when set — verification stays on, against this bundle. |
-| `EXPECTED_TRACKS` | `2` | Tracks a build must report to count as **complete**. |
+| `EXPECTED_TRACKS` | `2` | Tracks a build must report in its JUnit report to count as **complete** (suites of an unknown track are skipped with a warning). |
 | `INGEST_UNITTEST_STAGES` | `true` | Also ingest the unittest console-log UT stages (SMB Pricing/Transform, ITF Highlevel, LXS, Uniface), parsed from each stage's `wfapi/log` behind the same interface as the JUnit report. |
 | `UNITTEST_SUITES` | `LXS,SMB Pricing,SMB Transform,ITF Highlevel,Uniface deploy unit tests` | Allowlist of stage names (a `"<suite> - <track>"` stage → suite) treated as test stages. |
 | `INGEST_BUILD_INCIDENTS` | `true` | Detect **Build Incidents** (issue #171): open/extend/recover a build-level triage entity when a build's own result is `FAILURE`/`ABORTED` (recovers on `SUCCESS`/`UNSTABLE`), folded into the same ingest pass. Off skips build-level incident detection entirely. |
@@ -197,7 +197,7 @@ With no key the deterministic predicted cause still works; `llm_hypothesis` simp
 chosen provider with no key falls back to a no-op. Only the live `uta poll` path calls the model.
 
 ### Auth / Keycloak OIDC (optional)
-Off by default the app runs the **Phase-1 self-declared actor** (the `uta_actor` cookie / `APP_DEFAULT_ACTOR`) and needs zero Keycloak access — which is what local dev, the demo, and the offline CI gate rely on. Flip `AUTH_ENABLED=true` **per environment** to require Keycloak login instead ([src/uta/web/auth.py](src/uta/web/auth.py): confidential client, Authorization Code + PKCE via Authlib).
+Off by default the app runs the **Phase-1 self-declared actor** (the `uta_actor` cookie / `APP_DEFAULT_ACTOR`; the "acting as" form exists only in this mode) and needs zero Keycloak access — which is what local dev, the demo, and the offline CI gate rely on. Flip `AUTH_ENABLED=true` **per environment** to require Keycloak login instead ([src/uta/web/auth.py](src/uta/web/auth.py): confidential client, Authorization Code + PKCE via Authlib).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -215,7 +215,7 @@ Off by default the app runs the **Phase-1 self-declared actor** (the `uta_actor`
 4. **Set the vars** — `OIDC_SERVER_METADATA_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_POST_LOGOUT_REDIRECT`, `SESSION_SECRET`.
 5. **Flip `AUTH_ENABLED=true`** and redeploy. Behind a reverse proxy, run uvicorn with `--proxy-headers` so the callback is built from the external `https` host, not the container address.
 
-Enforcement is **fail-closed** middleware (a new route is protected by default): the only public paths are `/health`, `/login`, `/auth/callback`, `/logout`, and `/static/*`. The verified `preferred_username` becomes the acting user, so routes and the data model are unchanged from Phase-1.
+Enforcement is **fail-closed** middleware (a new route is protected by default): the only public paths are `/health`, `/login`, `/auth/callback`, `/logout`, and `/static/*`. The verified `preferred_username` becomes the acting user (a login without one is rejected; the self-declared `/identity` form and cookie are gone), so routes and the data model are unchanged from Phase-1.
 
 ### App tuning
 | Variable | Default | Purpose |
@@ -228,7 +228,7 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 | `KB_TOP_K` | `5` | How many similar past cases to surface per failure. |
 | `RECENTLY_FIXED_DAYS` | `7` | How long a fixed test stays in the "recently fixed" bucket. |
 | `UI_ROW_LIMIT` | `50` | Max test rows rendered per dashboard section before it is capped behind a "Load all N Tests" link. `0` disables the cap. |
-| `BACKFILL_DEPTH` | `10` | Cold-start back-fill: on a fresh (empty) store, ingest the last N completed builds oldest-first before incremental polling takes over. Also the default depth for `uta bootstrap`. |
+| `BACKFILL_DEPTH` | `10` (min 1) | Cold-start back-fill: on a fresh (empty) store, ingest the last N completed builds oldest-first before incremental polling takes over. Also the default depth for `uta bootstrap`. |
 | `RESULT_RETENTION_DAYS` | `90` | Raw passing/skipped results are pruned once their build is older than this (failing results, builds, episodes, lifecycles, attributions and KB signatures are kept forever); `0` keeps everything. Keep it above `FLAKY_WINDOW_DAYS`. Runs on every poll tick and via `uta prune`. |
 | `INGEST_JOB_RETENTION_DAYS` | `30` | Finished (done/error) on-demand ingest jobs are pruned after this many days; `0` keeps all. |
 
@@ -244,14 +244,14 @@ Enforcement is **fail-closed** middleware (a new route is protected by default):
 |---|---|---|
 | `DATA_CHANGE_MAX_LOOKBACK_DAYS` | `30` | Cap on how far **before** a build's start to look for `ut_ref` changes; the window's lower bound is normally the previous build's start, and this cap is also the fallback when there is no previous build (first-ever build / cold start). |
 | `DATA_CHANGE_TOLERANCE_MINUTES` | `5` | Margin (B1) widening both ends of the window for Jenkins↔Oracle clock skew. |
-| `POLL_INTERVAL_SECONDS` | `60` | Cadence of the `uta poll` scheduler. Dropped from `300` (issue #184) for a near-real-time overrunning-build banner; an idle tick stays cheap. Since `POLLER_STALE_AFTER_INTERVALS` counts in intervals, `/health` now flags a stale poller after ~5 minutes rather than ~25. |
+| `POLL_INTERVAL_SECONDS` | `60` (min 1) | Cadence of the `uta poll` scheduler. Dropped from `300` (issue #184) for a near-real-time overrunning-build banner; an idle tick stays cheap. Since `POLLER_STALE_AFTER_INTERVALS` counts in intervals, `/health` now flags a stale poller after ~5 minutes rather than ~25. |
 
 ### Poller resilience
 | Variable | Default | Purpose |
 |---|---|---|
-| `POLL_RETRY_ATTEMPTS` | `3` | In-tick attempts per build for transient errors (network / HTTP 5xx / DB blips). |
+| `POLL_RETRY_ATTEMPTS` | `3` (min 1) | In-tick attempts per build for transient errors (network / HTTP 5xx / DB blips). |
 | `POLL_RETRY_BASE_SECONDS` | `2.0` | Base of the exponential backoff between those attempts (base, 2×base, 4×base, …). |
-| `QUARANTINE_AFTER_ATTEMPTS` | `3` | Failing ticks (one attempt per tick) before a build is **quarantined** — recorded on the control panel, sent as an `ops` alert, and skipped so ingest advances past it. |
+| `QUARANTINE_AFTER_ATTEMPTS` | `3` (min 1) | Failing ticks (one attempt per tick) before a build is **quarantined** — recorded on the control panel, sent as an `ops` alert, and skipped so ingest advances past it. |
 | `POLLER_STALE_AFTER_INTERVALS` | `5` | `/health` reports the poller **stale** (HTTP 503 + one `ops` alert) after this many poll intervals without a successful tick. |
 
 ### Compose-only
