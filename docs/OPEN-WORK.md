@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `auth-callback-error-500` — a stale/replayed OIDC callback is a raw 500
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`authorize_access_token` errors (state mismatch, user cancelled) are uncaught in `web/auth.py`.
-
-**Acceptance:** callback errors redirect to login instead of 500.
-
----
-
 ## `nan-tunable-accepted` — `nan` passes tunable bounds checks
 
 `area: dashboard` · found by the 2026-11 bug hunt

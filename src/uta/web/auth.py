@@ -12,8 +12,10 @@ protected by default and only the explicit allowlist below is public.
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlencode
 
+from authlib.common.errors import AuthlibBaseError
 from authlib.integrations.starlette_client import OAuth
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -25,6 +27,11 @@ from uta.config import Settings
 SESSION_USER_KEY = "user"
 SESSION_ID_TOKEN_KEY = "id_token"  # kept for RP-initiated logout's id_token_hint
 SESSION_RETURN_TO_KEY = "return_to"
+# Set when a failed callback bounced the user back to /login, so a second failure in a row shows
+# an error page instead of looping /login → Keycloak → /auth/callback → /login forever.
+SESSION_RETRY_KEY = "auth_retry"
+
+log = logging.getLogger(__name__)
 
 # Public surface when auth is on: health for monitors, the auth endpoints themselves, and the
 # vendored static assets (no data behind them; keeps asset fetches out of the return-to stash).
@@ -73,18 +80,42 @@ def _safe_return_target(target: object) -> str:
     return "/"
 
 
+def _login_failed() -> PlainTextResponse:
+    return PlainTextResponse(
+        "Login failed: the identity provider could not complete the sign-in. "
+        "Close this tab and open the dashboard again; contact an administrator if it persists.",
+        status_code=400,
+    )
+
+
 def register_auth_routes(app: FastAPI, oauth: OAuth, settings: Settings) -> None:
     @app.get("/login")
     async def login(request: Request):
         # url_for honors X-Forwarded-* (uvicorn --proxy-headers), so behind Traefik this is the
         # externally-registered https callback, not the container-internal address.
         redirect_uri = str(request.url_for("auth_callback"))
-        return await oauth.keycloak.authorize_redirect(request, redirect_uri)
+        try:
+            return await oauth.keycloak.authorize_redirect(request, redirect_uri)
+        except AuthlibBaseError as exc:
+            log.warning("OIDC login could not start: %s", exc)
+            return _login_failed()
 
     @app.get("/auth/callback", name="auth_callback")
     async def auth_callback(request: Request):
         # Exchanges the code AND validates the ID token (issuer/audience/signature/expiry).
-        token = await oauth.keycloak.authorize_access_token(request)
+        try:
+            token = await oauth.keycloak.authorize_access_token(request)
+        except AuthlibBaseError as exc:
+            # A stale/replayed callback (MismatchingStateError: the state isn't in this session,
+            # e.g. the back button or a second tab), a user who cancelled at Keycloak, an expired
+            # code or a rejected ID token. One fresh login usually fixes it; a second failure in a
+            # row means it won't, so stop there instead of looping.
+            log.warning("OIDC callback failed: %s", exc)
+            if request.session.pop(SESSION_RETRY_KEY, None):
+                return _login_failed()
+            request.session[SESSION_RETRY_KEY] = True
+            return RedirectResponse("/login", status_code=303)
+        request.session.pop(SESSION_RETRY_KEY, None)
         claims = token.get("userinfo") or {}
         username = str(claims.get("preferred_username") or "").strip()
         if not username:

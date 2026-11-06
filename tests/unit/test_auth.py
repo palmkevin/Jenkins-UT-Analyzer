@@ -268,3 +268,48 @@ def test_identity_route_not_registered_when_auth_on(client):
     resp = client.post("/identity", data={"actor": "impostor"}, follow_redirects=False)
     assert resp.status_code in (404, 405)
     assert "uta_actor" not in client.cookies
+
+
+# ── Flag on: callback errors (auth-callback-error-500) ──────────────────────────
+
+
+def _failing_token(monkeypatch, exc: Exception) -> None:
+    async def fake_authorize_access_token(self, request, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(StarletteOAuth2App, "authorize_access_token", fake_authorize_access_token)
+
+
+def test_stale_callback_redirects_to_login_then_stops(client, monkeypatch):
+    from authlib.integrations.base_client.errors import MismatchingStateError
+
+    _failing_token(monkeypatch, MismatchingStateError())
+    first = client.get("/auth/callback?code=c&state=stale", follow_redirects=False)
+    assert first.status_code == 303
+    assert first.headers["location"] == "/login"
+    # The retry fails the same way: an error page, not another bounce (no redirect loop).
+    second = client.get("/auth/callback?code=c&state=stale", follow_redirects=False)
+    assert second.status_code == 400
+    assert "Login failed" in second.text
+    # …and the retry marker is consumed, so a later stale callback gets one fresh try again.
+    third = client.get("/auth/callback?code=c&state=stale", follow_redirects=False)
+    assert third.status_code == 303
+
+
+def test_cancelled_login_callback_is_not_a_500(client, monkeypatch):
+    from authlib.integrations.starlette_client import OAuthError
+
+    _failing_token(monkeypatch, OAuthError(error="access_denied"))
+    resp = client.get("/auth/callback?error=access_denied&state=s", follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"] == "/login"
+
+
+def test_login_that_cannot_start_shows_an_error_page(client, monkeypatch):
+    from authlib.integrations.starlette_client import OAuthError
+
+    async def broken_redirect(self, request, redirect_uri=None, **kwargs):
+        raise OAuthError(error="invalid_request")
+
+    monkeypatch.setattr(StarletteOAuth2App, "authorize_redirect", broken_redirect)
+    resp = client.get("/login", follow_redirects=False)
+    assert resp.status_code == 400 and "Login failed" in resp.text
