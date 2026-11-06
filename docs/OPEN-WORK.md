@@ -513,16 +513,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `env-example-defaults-diverge` — `.env.example` disagrees with config defaults
-
-`area: docs` · found by the 2026-11 bug hunt
-
-`JENKINS_JOB_PATH` (extra `view/Build/`) and `WEB_PORT=8088` differ from `config.py`/README/compose.
-
-**Acceptance:** values aligned or the difference explained.
-
----
-
 ## `readme-config-table-missing-settings` — 16 settings have no README Configuration row
 
 `area: docs` · found by the 2026-11 bug hunt
