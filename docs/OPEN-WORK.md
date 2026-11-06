@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `migration-drift-nullable-timestamps` — migrations leave model-NOT-NULL timestamps nullable
-
-`area: infra` · found by the 2026-11 bug hunt
-
-`created_at`/`updated_at` on `setting_overrides`, `ingest_jobs`, `poller_heartbeats`, `build_quarantines`, `build_incidents` are nullable in Postgres but NOT NULL in the models → autogenerate isn't empty.
-
-**Acceptance:** a migration tightens them; autogenerate against the upgraded schema is empty.
-
----
-
 ## `health-stale-during-long-tick` — /health reports stale while a long tick is working
 
 `area: infra` · found by the 2026-11 bug hunt

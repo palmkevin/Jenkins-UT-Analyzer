@@ -120,3 +120,31 @@ def test_downgrade_is_clean_and_guard_detects_missing_extension(pg_engine):
     # With the extension gone, the startup guard must fail loudly.
     with pytest.raises(MissingExtensionError):
         assert_pg_trgm(pg_engine)
+
+
+def test_upgraded_schema_has_no_nullability_drift(pg_engine):
+    """Autogenerate against head reports no nullable mismatch (migration-drift-nullable-timestamps).
+
+    Filtered to ``modify_nullable``: other diff kinds (e.g. the renamed-table constraint names)
+    are tracked separately.
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    import uta.models  # noqa: F401 — register every table on Base.metadata
+    from uta.db import Base
+
+    command.upgrade(_alembic_cfg(), "head")
+    with pg_engine.connect() as conn:
+        diffs = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    flat = [d for diff in diffs for d in (diff if isinstance(diff, list) else [diff])]
+    nullable = [d for d in flat if d[0] == "modify_nullable"]
+    assert nullable == []
+
+
+def test_migrations_have_a_single_head():
+    """Offline: the revision chain stays linear (a second head would block `alembic upgrade`)."""
+    from alembic.script import ScriptDirectory
+
+    heads = ScriptDirectory.from_config(_alembic_cfg()).get_heads()
+    assert len(heads) == 1, heads
