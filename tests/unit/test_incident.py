@@ -561,3 +561,46 @@ def test_confirm_incident_keeps_human_reason_when_ai_has_no_hypothesis(session_f
         assert attr.causing_person == "dev-dana"
         assert attr.reason_text == "disk full on agent"
         assert attr.reason_provenance == Provenance.HUMAN_ENTERED
+
+
+def test_incident_pages_use_effective_kb_tunables(monkeypatch):
+    """incident-kb-ignores-tunables: the incident similar-cases list must honour the control-panel
+    kb_top_k / pgtrgm_similarity_cutoff overrides, not hardcoded k=5 / cutoff=0.3."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from uta.control.tunables import set_override
+    from uta.db import Base, make_session_factory
+    from uta.web import views
+    from uta.web.app import create_app
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    sf = make_session_factory(engine)
+    with session_scope(sf) as s:
+        b = make_build(s, 1, {})
+        inc = apply_build_incident(
+            s, b, "FAILURE", failing_stage="Compile", failing_stage_log=_LOG
+        ).incident
+        s.flush()
+        inc_id, build_number = inc.id, b.build_number
+        set_override(s, "kb_top_k", "2", actor="kev")
+        set_override(s, "pgtrgm_similarity_cutoff", "0.75", actor="kev")
+
+    seen: list[tuple[int, float]] = []
+
+    def spy(session, text, *, k, cutoff, **kwargs):
+        seen.append((k, cutoff))
+        return []
+
+    monkeypatch.setattr(views, "similar_cases", spy)
+    client = TestClient(create_app(session_factory=sf))
+    assert client.get(f"/incidents/{inc_id}").status_code == 200
+    assert client.get(f"/builds/{build_number}").status_code == 200
+    assert seen == [(2, 0.75), (2, 0.75)]

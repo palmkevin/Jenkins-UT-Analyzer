@@ -1134,8 +1134,14 @@ def incidents_queue(session: Session) -> dict:
     }
 
 
-def _incident_dict(session: Session, incident: BuildIncident) -> dict:
-    """The full detail projection for one Build Incident (detail page + per-build inline card)."""
+def _incident_dict(
+    session: Session, incident: BuildIncident, *, kb_top_k: int = 5, kb_cutoff: float = 0.3
+) -> dict:
+    """The full detail projection for one Build Incident (detail page + per-build inline card).
+
+    ``kb_top_k`` / ``kb_cutoff`` size the similar-cases list — callers pass the *effective*
+    ``kb_top_k`` / ``pgtrgm_similarity_cutoff`` so control-panel overrides apply here too.
+    """
     classification = _incident_latest_classification(session, incident.id)
     attribution = session.scalar(select(Attribution).where(Attribution.incident_id == incident.id))
     evidence = None
@@ -1156,8 +1162,8 @@ def _incident_dict(session: Session, incident: BuildIncident) -> dict:
             for c in similar_cases(
                 session,
                 signature.normalized_text,
-                k=5,
-                cutoff=0.3,
+                k=kb_top_k,
+                cutoff=kb_cutoff,
                 exclude_signature_id=signature.id,
                 kind=SignatureKind.INCIDENT,
             )
@@ -1232,15 +1238,19 @@ def _incident_dict(session: Session, incident: BuildIncident) -> dict:
     }
 
 
-def incident_detail(session: Session, incident_id: int) -> dict | None:
+def incident_detail(
+    session: Session, incident_id: int, *, kb_top_k: int = 5, kb_cutoff: float = 0.3
+) -> dict | None:
     """The per-incident detail view: streak span, signature, classification, hypothesis + form."""
     incident = session.get(BuildIncident, incident_id)
     if incident is None:
         return None
-    return _incident_dict(session, incident)
+    return _incident_dict(session, incident, kb_top_k=kb_top_k, kb_cutoff=kb_cutoff)
 
 
-def incident_for_build(session: Session, build_id: int) -> dict | None:
+def incident_for_build(
+    session: Session, build_id: int, *, kb_top_k: int = 5, kb_cutoff: float = 0.3
+) -> dict | None:
     """The incident this build opened or belongs to (for the per-build inline card), or ``None``.
 
     A build belongs to an incident when it opened it, is the incident's most-recent non-green
@@ -1258,7 +1268,7 @@ def incident_for_build(session: Session, build_id: int) -> dict | None:
     )
     if incident is None:
         return None
-    return _incident_dict(session, incident)
+    return _incident_dict(session, incident, kb_top_k=kb_top_k, kb_cutoff=kb_cutoff)
 
 
 def flaky_leaderboard(

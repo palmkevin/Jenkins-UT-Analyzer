@@ -579,7 +579,12 @@ def create_app(
             incident = None
             build_row = s.scalar(select(Build.id).where(Build.build_number == number))
             if build_row is not None:
-                incident = views.incident_for_build(s, build_row)
+                incident = views.incident_for_build(
+                    s,
+                    build_row,
+                    kb_top_k=cfg.kb_top_k,
+                    kb_cutoff=cfg.pgtrgm_similarity_cutoff,
+                )
         return render(
             request,
             "build.html",
@@ -608,7 +613,9 @@ def create_app(
     def incident_view(request: Request, incident_id: DbId):
         with session_scope(session_factory) as s:
             cfg = effective(s)
-            incident = views.incident_detail(s, incident_id)
+            incident = views.incident_detail(
+                s, incident_id, kb_top_k=cfg.kb_top_k, kb_cutoff=cfg.pgtrgm_similarity_cutoff
+            )
         return render(
             request,
             "incident.html",

@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `incident-kb-ignores-tunables` — incident similar-cases ignore the KB tunables
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`views._incident_dict` hardcodes `k=5, cutoff=0.3` instead of the effective `kb_top_k`/`pgtrgm_similarity_cutoff`.
-
-**Acceptance:** control-panel overrides apply to incident pages too.
-
----
-
 ## `incident-tickets-not-linked` — incident tickets aren't rendered as Jira links
 
 `area: dashboard` · found by the 2026-11 bug hunt
