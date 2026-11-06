@@ -259,8 +259,8 @@ def seed_demo() -> None:
     """Populate the configured ``DATABASE_URL`` with the synthetic demo dataset (no externals).
 
     Brings the schema to head, then seeds a full synthetic build history via the real ingest
-    pipeline. Use this for a persistent (e.g. Postgres) demo instance; the ephemeral in-memory web
-    app seeds itself on startup (``uta demo`` / ``uvicorn uta.demo.app:app``).
+    pipeline. Use this for a persistent (e.g. Postgres) demo instance; the ephemeral temp-file
+    SQLite web app seeds itself on startup (``uta demo`` / ``uvicorn uta.demo.app:app``).
     """
     from uta.demo.seed import seed_demo_data
 
@@ -276,18 +276,19 @@ def seed_demo() -> None:
 
 @app.command("demo")
 def demo(host: str = "0.0.0.0", port: int = 8000) -> None:  # noqa: S104 - demo binds all ifaces
-    """Run the self-contained demo app: an ephemeral in-memory store, seeded, served (no externals).
+    """Run the self-contained demo app: an ephemeral SQLite store, seeded, served (no externals).
 
-    This is the online-hosting entrypoint. It needs no Jenkins/Oracle/Postgres — a fresh SQLite
-    store is created and seeded with the synthetic dataset in-process, then served with uvicorn.
+    This is the online-hosting entrypoint. It needs no Jenkins/Oracle/Postgres — a fresh temp-file
+    SQLite store is created and seeded once with the synthetic dataset in-process (the same
+    per-process app ``uvicorn uta.demo.app:app`` serves), then served with uvicorn.
     """
     import uvicorn
 
-    from uta.demo.app import create_demo_app
+    from uta.demo.app import get_demo_app
 
     _configure_logging()
     typer.echo(f"serving demo on http://{host}:{port} (ephemeral synthetic dataset)")
-    uvicorn.run(create_demo_app(), host=host, port=port)
+    uvicorn.run(get_demo_app(), host=host, port=port)
 
 
 if __name__ == "__main__":

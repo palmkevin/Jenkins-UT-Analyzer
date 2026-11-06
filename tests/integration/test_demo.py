@@ -562,3 +562,48 @@ def test_demo_app_test_record_route():
     resp = client.get(f"/tests/{ident_id}")
     assert resp.status_code == 200
     assert "timezone" in resp.text.lower()
+
+
+# ── demo-import-side-effect: one seed per process, temp store cleaned up ─────────────────────────
+
+
+def test_importing_demo_module_seeds_nothing_and_app_is_built_once(monkeypatch):
+    """Importing ``uta.demo.app`` must not seed; ``app`` (uvicorn's target) is built on first access
+    and reused — ``uta demo`` and ``uvicorn uta.demo.app:app`` share that one per-process app."""
+    import importlib
+
+    import uta.demo.app as demo_module
+
+    calls: list[int] = []
+    monkeypatch.setattr(
+        "uta.demo.seed.seed_demo_data", lambda *a, **k: calls.append(1) or 0, raising=True
+    )
+    importlib.reload(demo_module)  # re-run the module body with the seed stubbed out
+    assert calls == []  # import alone seeds nothing
+    assert "app" not in vars(demo_module)
+
+    first = demo_module.app
+    assert demo_module.app is first
+    assert demo_module.get_demo_app() is first
+    assert len(calls) == 1  # seeded exactly once
+    monkeypatch.undo()
+    importlib.reload(demo_module)  # leave a clean, un-built module for other tests
+
+
+def test_demo_temp_store_is_removed_at_exit(monkeypatch):
+    from pathlib import Path
+
+    import uta.demo.app as demo_module
+
+    registered: list[tuple] = []
+    monkeypatch.setattr(demo_module, "seed_demo_data", lambda factory: 0)
+    monkeypatch.setattr(
+        demo_module.atexit, "register", lambda fn, *args: registered.append((fn, args))
+    )
+    factory = demo_module.build_demo_session_factory()
+    db_path = Path(factory.kw["bind"].url.database)
+    assert db_path.exists()
+
+    ((fn, args),) = registered
+    fn(*args)  # what the interpreter runs at exit
+    assert not db_path.parent.exists()

@@ -4,22 +4,30 @@ Builds a throwaway SQLite database, creates the schema, seeds it with the synthe
 (:func:`uta.demo.seed.seed_demo_data`), and wires it into the real FastAPI app. No Postgres, no
 ``pg_trgm`` (the KB falls back to ``difflib``), no Jenkins/Oracle/SMTP/LLM — nothing external.
 
-The store is a **fresh temp file per process**, re-seeded on startup, so the deployment is stateless
-and reproducible: a restart wipes any demo edits and rebuilds the same dataset. Build it with::
+The store is a **fresh temp-file SQLite per process** (not in-memory: the threaded server needs a
+file every connection can open), seeded once on first use, so the deployment is stateless and
+reproducible: a restart wipes any demo edits and rebuilds the same dataset. The temp directory is
+removed at interpreter exit. Build it with::
 
     uvicorn uta.demo.app:app --host 0.0.0.0 --port 8000   # (Render supplies $PORT)
 
-Tests build their own in-memory store and call :func:`create_demo_app` with that factory instead.
+``app`` is resolved **lazily** (a module ``__getattr__``), so merely importing this module — as the
+tests and ``uta demo`` do — seeds nothing; the first access to ``uta.demo.app.app`` (or
+:func:`get_demo_app`) builds and seeds the one per-process app. Tests build their own in-memory
+store and call :func:`create_demo_app` with that factory instead.
 """
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import tempfile
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import Request
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -33,12 +41,14 @@ def build_demo_session_factory(database_url: str | None = None) -> sessionmaker[
     """A session factory over a freshly-created, seeded store.
 
     With no ``database_url`` a temp-file SQLite is used (thread-safe under the threaded server, and
-    ephemeral — gone when the container is reclaimed). Pass ``"sqlite+pysqlite:///:memory:"`` for an
-    in-process store (tests): that needs a shared single connection, wired here automatically.
+    ephemeral — its directory is removed at interpreter exit). Pass
+    ``"sqlite+pysqlite:///:memory:"`` for an in-process store (tests): that needs a shared single
+    connection, wired here automatically.
     """
+    temp_dir: str | None = None
     if database_url is None:
-        db_path = Path(tempfile.mkdtemp(prefix="uta-demo-")) / "demo.db"
-        database_url = f"sqlite+pysqlite:///{db_path}"
+        temp_dir = tempfile.mkdtemp(prefix="uta-demo-")
+        database_url = f"sqlite+pysqlite:///{Path(temp_dir) / 'demo.db'}"
 
     if ":memory:" in database_url:
         engine = create_engine(
@@ -49,11 +59,19 @@ def build_demo_session_factory(database_url: str | None = None) -> sessionmaker[
         )
     else:
         engine = create_engine(database_url, connect_args={"check_same_thread": False}, future=True)
+    if temp_dir is not None:
+        atexit.register(_remove_temp_store, engine, temp_dir)
 
     Base.metadata.create_all(engine)
     session_factory = make_session_factory(engine)
     seed_demo_data(session_factory)
     return session_factory
+
+
+def _remove_temp_store(engine: Engine, temp_dir: str) -> None:
+    """Close the engine's connections and delete the throwaway store's temp directory."""
+    engine.dispose()
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _freshen_heartbeat(session_factory: sessionmaker[Session]) -> None:
@@ -100,4 +118,22 @@ def create_demo_app(
     return app
 
 
-app = create_demo_app()
+_app = None
+_app_lock = threading.Lock()
+
+
+def get_demo_app():
+    """The process's one demo app — built and seeded on first call, reused after (thread-safe)."""
+    global _app
+    with _app_lock:
+        if _app is None:
+            _app = create_demo_app()
+        return _app
+
+
+def __getattr__(name: str):
+    # ``uvicorn uta.demo.app:app`` (render.yaml) resolves ``app`` by attribute access, which lands
+    # here: the seed happens on that first access, not at import time.
+    if name == "app":
+        return get_demo_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

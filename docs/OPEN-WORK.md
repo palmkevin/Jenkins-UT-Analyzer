@@ -513,16 +513,6 @@ The `runs → builds` renames left `runs_pkey`, `test_results_run_id_fkey`, `run
 
 ---
 
-## `demo-import-side-effect` — importing `uta.demo.app` seeds a demo and leaks a temp dir
-
-`area: demo` · found by the 2026-11 bug hunt
-
-Module-level `app = create_demo_app()` seeds into a fresh `mkdtemp` on every import (never cleaned); `uta demo` seeds twice. Docs call it in-memory.
-
-**Acceptance:** one seed per process, temp storage cleaned up, docs accurate; `uvicorn uta.demo.app:app` still works.
-
----
-
 ## `seed-demo-prints-db-password` — `uta seed-demo` prints DATABASE_URL with its password
 
 `area: infra` · found by the 2026-11 bug hunt
