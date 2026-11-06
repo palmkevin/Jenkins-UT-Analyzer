@@ -245,6 +245,17 @@ def _referer_path(request: Request) -> str | None:
     return _same_origin_path(rel)
 
 
+_TRIAGE_STATUSES = frozenset(s.value for s in TriageStatus)
+
+
+def _triage_status_error(value: str | None) -> str | None:
+    """Why a submitted triage status is unacceptable, or ``None`` if it's blank or a valid
+    :class:`TriageStatus` — the attribute routes write it straight into a ``String(16)`` column."""
+    if value and value not in _TRIAGE_STATUSES:
+        return f"Unknown triage status {value[:32]!r} — nothing saved"
+    return None
+
+
 _TRIAGE_FILTER_KEYS = ("owner", "track", "cause", "triage_status", "failure", "flaky")
 
 
@@ -349,6 +360,14 @@ def create_app(
         if anchor and _ANCHOR_RE.fullmatch(anchor):
             target = f"{target}#{anchor}"
         return RedirectResponse(target, status_code=303)
+
+    def rejected(
+        request: Request, message: str, fallback: str = "/", *, anchor: str = ""
+    ) -> RedirectResponse:
+        """Bounce back without writing anything, carrying an error flash (invalid form input)."""
+        resp = back(request, fallback=fallback, anchor=anchor)
+        set_flash(resp, message, "error")
+        return resp
 
     @app.get("/health")
     def health() -> JSONResponse:
@@ -538,6 +557,8 @@ def create_app(
         resolution_ticket: str = Form(""),
         anchor: str = Form(""),
     ):
+        if error := _triage_status_error(triage_status):
+            return rejected(request, error, f"/incidents/{incident_id}", anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             incident = actions.set_incident_attribution(
@@ -770,6 +791,8 @@ def create_app(
         assignee: str = Form(""),
         anchor: str = Form(""),
     ):
+        if error := _triage_status_error(triage_status):
+            return rejected(request, error, anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             count = actions.attribute_by_signature(
@@ -810,6 +833,8 @@ def create_app(
         causing_person = str(form.get("causing_person", ""))
         reason_text = str(form.get("reason_text", ""))
         triage_status = str(form.get("triage_status", "")) or None
+        if error := _triage_status_error(triage_status):
+            return rejected(request, error, anchor=str(form.get("anchor", "")))
         with session_scope(session_factory) as s:
             count = actions.bulk_set_attribution(
                 s,
@@ -861,6 +886,8 @@ def create_app(
         assignee: str = Form(""),
         anchor: str = Form(""),
     ):
+        if error := _triage_status_error(triage_status):
+            return rejected(request, error, anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
             attr = actions.set_attribution(

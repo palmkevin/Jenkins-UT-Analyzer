@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `triage-status-unvalidated` — triage status accepted as an arbitrary string
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-The attribute routes write `triage_status` unvalidated into a `String(16)` column: garbage is saved on SQLite, >16 chars is a 500 on Postgres.
-
-**Acceptance:** invalid values are rejected with a flash error.
-
----
-
 ## `unbounded-form-input` — form inputs longer than their columns 500 on Postgres
 
 `area: dashboard` · found by the 2026-11 bug hunt
