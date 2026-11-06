@@ -179,11 +179,38 @@ def _provenance(submitted: str, ai_value: str | None) -> str:
     return Provenance.HUMAN_ENTERED
 
 
+def _apply_confirm(
+    attr: Attribution, ai_cause: str | None, ai_reason: str | None, actor: str
+) -> bool:
+    """Accept the AI's suggestion onto ``attr`` — only for the fields the AI actually suggested.
+
+    A field the AI left empty keeps whatever a human already entered (and its provenance): Confirm
+    must never erase a human conclusion or stamp ``AI_CONFIRMED`` on a null. Returns whether
+    anything was confirmed; the validation stamp is only set when something was.
+    """
+    confirmed = False
+    if ai_cause is not None:
+        attr.causing_person = ai_cause
+        attr.cause_provenance = Provenance.AI_CONFIRMED
+        attr.original_ai_cause = ai_cause
+        confirmed = True
+    if ai_reason is not None:
+        attr.reason_text = ai_reason
+        attr.reason_provenance = Provenance.AI_CONFIRMED
+        attr.original_ai_reason = ai_reason
+        confirmed = True
+    if confirmed:
+        attr.validated_by = actor
+        attr.validated_at = _now()
+    return confirmed
+
+
 def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None:
     """One-click **Confirm** of the AI suggestion for an episode (cheap → high label volume).
 
     Accepts the AI's suggested contact + hypothesis as the conclusion, tier ``AI_CONFIRMED``,
-    retaining the original AI values for audit. Returns None if the episode doesn't exist.
+    retaining the original AI values for audit. Only fields the AI actually suggested are written
+    (see :func:`_apply_confirm`). Returns None if the episode doesn't exist.
     """
     episode = session.get(FailureEpisode, episode_id)
     if episode is None:
@@ -193,15 +220,8 @@ def confirm(session: Session, episode_id: int, actor: str) -> Attribution | None
     ai_reason = classification.llm_hypothesis if classification else None
 
     attr = _get_or_create_attribution(session, episode_id)
-    attr.causing_person = ai_cause
-    attr.reason_text = ai_reason
-    attr.cause_provenance = Provenance.AI_CONFIRMED
-    attr.reason_provenance = Provenance.AI_CONFIRMED
-    attr.original_ai_cause = ai_cause
-    attr.original_ai_reason = ai_reason
-    attr.validated_by = actor
-    attr.validated_at = _now()
-    attr.signature_id = _episode_signature_id(session, episode)
+    if _apply_confirm(attr, ai_cause, ai_reason, actor):
+        attr.signature_id = _episode_signature_id(session, episode)
     return attr
 
 
@@ -413,15 +433,8 @@ def confirm_incident(session: Session, incident_id: int, actor: str) -> Attribut
     ai_reason = classification.llm_hypothesis if classification else None
 
     attr = _get_or_create_incident_attribution(session, incident_id)
-    attr.causing_person = ai_cause
-    attr.reason_text = ai_reason
-    attr.cause_provenance = Provenance.AI_CONFIRMED
-    attr.reason_provenance = Provenance.AI_CONFIRMED
-    attr.original_ai_cause = ai_cause
-    attr.original_ai_reason = ai_reason
-    attr.validated_by = actor
-    attr.validated_at = _now()
-    attr.signature_id = incident.signature_id
+    if _apply_confirm(attr, ai_cause, ai_reason, actor):
+        attr.signature_id = incident.signature_id
     return attr
 
 

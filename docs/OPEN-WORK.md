@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `confirm-clobbers-human-reason` — Confirm erases a human-entered reason
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`web/actions.py` `confirm` / `confirm_incident` always overwrite both `causing_person` and `reason_text` from the AI, even when the AI value is `None`, and stamp AI_CONFIRMED on a null reason.
-
-**Acceptance:** Confirm only overwrites (and stamps) fields the AI actually suggested.
-
----
-
 ## `save-restamps-provenance` — saving any field re-derives attribution provenance
 
 `area: dashboard` · found by the 2026-11 bug hunt

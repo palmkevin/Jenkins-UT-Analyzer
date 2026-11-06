@@ -536,3 +536,28 @@ def test_normalize_still_test_namespaced_by_default():
     sig = normalize("boom", "AssertionError: x")
     assert sig is not None
     assert compute_hash("id", sig.text) == compute_hash("id", sig.text, SignatureKind.TEST)
+
+
+def test_confirm_incident_keeps_human_reason_when_ai_has_no_hypothesis(session_factory):
+    """confirm-clobbers-human-reason, build-level twin."""
+    with session_scope(session_factory) as s:
+        b = make_build(s, 1, {})
+        b.code_changes.append(
+            CodeChangeCandidate(
+                commit_id="r1",
+                revision="r1",
+                author="dev-dana",
+                message="x",
+                committed_at=datetime(2026, 6, 1, tzinfo=UTC),
+            )
+        )
+        s.flush()
+        inc = apply_build_incident(
+            s, b, "FAILURE", failing_stage="Compile", failing_stage_log=_LOG
+        ).incident
+        s.flush()
+        actions.set_incident_attribution(s, inc.id, "kev", reason_text="disk full on agent")
+        attr = actions.confirm_incident(s, inc.id, "ann")
+        assert attr.causing_person == "dev-dana"
+        assert attr.reason_text == "disk full on agent"
+        assert attr.reason_provenance == Provenance.HUMAN_ENTERED

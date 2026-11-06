@@ -1484,3 +1484,40 @@ def test_attribute_by_signature_empty_jira_leaves_tickets_untouched(session_fact
 def test_attribute_by_signature_unknown_signature_is_a_noop(session_factory):
     with session_scope(session_factory) as s:
         assert actions.attribute_by_signature(s, 424242, "erin", causing_person="frank") == 0
+
+
+def test_confirm_keeps_human_reason_when_ai_suggested_none(session_factory):
+    """confirm-clobbers-human-reason: Confirm writes only the fields the AI actually suggested."""
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"t": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        ep_id = _episode_id(s, "t")
+        actions.set_attribution(s, ep_id, "bob", reason_text="ut_ref row deleted")
+        # A classification with a contact but no LLM hypothesis.
+        s.add(
+            Classification(
+                episode_id=ep_id,
+                predicted_cause=PredictedCause.CODE_CHANGE,
+                suggested_contact="dev-dave",
+                llm_hypothesis=None,
+            )
+        )
+        s.flush()
+        attr = actions.confirm(s, ep_id, "alice")
+        assert attr.causing_person == "dev-dave"
+        assert attr.cause_provenance == Provenance.AI_CONFIRMED
+        assert attr.reason_text == "ut_ref row deleted"
+        assert attr.reason_provenance == Provenance.HUMAN_ENTERED
+        assert attr.original_ai_reason is None
+
+
+def test_confirm_with_no_ai_suggestion_changes_nothing(session_factory):
+    with session_scope(session_factory) as s:
+        r1 = make_build(s, 1, {"t": "FAILED"})
+        apply_build(s, r1, baseline=None)
+        ep_id = _episode_id(s, "t")
+        actions.set_attribution(s, ep_id, "bob", causing_person="carol", reason_text="fixture")
+        attr = actions.confirm(s, ep_id, "alice")
+        assert attr.causing_person == "carol" and attr.reason_text == "fixture"
+        assert attr.cause_provenance == Provenance.HUMAN_ENTERED
+        assert attr.validated_by == "bob"
