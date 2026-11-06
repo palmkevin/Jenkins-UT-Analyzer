@@ -209,16 +209,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `error-type-5xx-false-infra` — numbers like `12.504 ` are typed as HTTP 5xx infra errors
-
-`area: analysis` · found by the 2026-11 bug hunt
-
-`error_type.py` `\b503 |\b502 |\b504 ` matches inside decimals and lists; INFRA outranks code/data in `classify_episode`, so a numeric assertion regression is labelled INFRASTRUCTURE at 0.9.
-
-**Acceptance:** `Decimal('12.504 ')` is not INFRA; `HTTP Error 502: Bad Gateway` still is.
-
----
-
 ## `error-type-timeout-in-path` — `timeout` in a file path types the failure as TIMEOUT
 
 `area: analysis` · found by the 2026-11 bug hunt

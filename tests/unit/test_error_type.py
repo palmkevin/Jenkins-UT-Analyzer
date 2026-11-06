@@ -63,6 +63,33 @@ def test_embedded_http_status_digits_are_not_infra():
     assert derive_error_type("FAILED", "expected 1503 rows, got 7", None) == ErrorType.UNKNOWN
 
 
+@pytest.mark.parametrize(
+    "details",
+    [
+        "AssertionError: Decimal('12.504 ') != Decimal('12.50')",
+        "AssertionError: 1.503 != 1.5 within 7 places",
+        "AssertionError: Lists differ: [1, 504 , 3] != [1, 2, 3]",
+    ],
+)
+def test_numeric_5xx_lookalikes_are_not_infra(details):
+    assert derive_error_type("FAILED", "test failure", details) == ErrorType.ASSERTION
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        "urllib.error.HTTPError: HTTP Error 502: Bad Gateway",
+        "HTTP Error 502 : Bad Gateway",
+        "HTTP/1.1 503 ",
+        "requests.exceptions.HTTPError: 504 Server Error: Gateway Time-out for url: x",
+        "unexpected status code 504",
+        "curl: (22) The requested URL returned error: 502",
+    ],
+)
+def test_http_5xx_is_infra(details):
+    assert derive_error_type("FAILED", details, None) == ErrorType.INFRA
+
+
 def test_timeout():
     assert derive_error_type("FAILED", "Operation timed out after 30s", None) == ErrorType.TIMEOUT
 

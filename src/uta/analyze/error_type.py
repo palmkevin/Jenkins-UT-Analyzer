@@ -23,11 +23,23 @@ _FAILED = frozenset({"FAILED", "REGRESSION"})
 # as INFRA — unanchored, "oerror" hid inside IOError/ProtoError and "socket." inside websocket.*
 # (issue #86). The generic TIMEOUT/ASSERTION patterns below stay unanchored on purpose: their
 # substring hits (ReadTimeoutError, MyAssertionError) are still timeouts/assertions.
+#
+# A bare 502/503/504 is only an HTTP gateway/availability error in HTTP context — "HTTP Error 502",
+# "HTTP/1.1 503", "status code 504", curl's "returned error: 503", or followed by its reason
+# phrase. A bare "504 " also occurs in ordinary numeric assertions (``Decimal('12.504 ')``,
+# ``[1, 504 , 3]``), which must stay code/data failures, not INFRA.
+_5XX = r"50[234]\b(?!\.\d)"
+_HTTP_5XX = (
+    r"\bhttp(?:/\d(?:\.\d)?)?(?:\s+error)?\s*:?\s*" + _5XX + "|"
+    r"\bstatus(?:[ _]code)?\s*[:=]?\s*" + _5XX + "|"
+    r"\breturned error:?\s*" + _5XX + "|"
+    r"\b50[234]\s*:?\s*(?:bad gateway|service unavailable|gateway time-?out|server error)\b"
+)
 _INFRA_RE = re.compile(
     r"connection refused|connection reset|could not connect|"
     r"\boperationalerror\b|\boracleerror\b|\boracledb\.|\bora-\d{4,5}\b|\btns:|"
     r"(?<![\w.])socket\.|\beconnrefused\b|network is unreachable|no route to host|"
-    r"database is locked|\bdeadlock|service unavailable|\b503 |\b502 |\b504 ",
+    r"database is locked|\bdeadlock|service unavailable|" + _HTTP_5XX,
     re.IGNORECASE,
 )
 _TIMEOUT_RE = re.compile(r"timeout|timed out|timeouterror|deadline exceeded", re.IGNORECASE)
