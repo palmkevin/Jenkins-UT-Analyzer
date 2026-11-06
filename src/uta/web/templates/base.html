@@ -174,7 +174,7 @@
     {% else %}
     <form class="d-flex align-items-center gap-2" method="post" action="/identity">
       <span class="navbar-text small">acting as</span>
-      <input class="form-control form-control-sm" style="width: 10rem" type="text" name="actor"
+      <input class="form-control form-control-sm" style="width: 10rem" type="text" name="actor" maxlength="{{ max_len.actor }}"
              value="{{ actor }}" aria-label="acting user">
       <button class="btn btn-sm btn-outline-light" type="submit">set</button>
     </form>

@@ -139,15 +139,15 @@
     <form class="mt-3" style="max-width: 34rem" method="post" action="/episodes/{{ ep.id }}/attribute">
       <input type="hidden" name="anchor" value="episode-{{ ep.episode_number }}">
       <label class="form-label mb-1">Causing person</label>
-      <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ ep.causing_person or '' }}">
+      <input class="form-control form-control-sm mb-2" type="text" name="causing_person" maxlength="{{ max_len.causing_person }}" value="{{ ep.causing_person or '' }}">
       <label class="form-label mb-1">Reason for failure</label>
       <textarea class="form-control form-control-sm mb-2" name="reason_text" rows="2">{{ ep.reason_text or '' }}</textarea>
       <label class="form-label mb-1">Assignee <span class="meta">(the person handling the fix — distinct from the causing person above)</span></label>
-      <input class="form-control form-control-sm mb-2" type="text" name="assignee" value="{{ ep.assignee or '' }}">
+      <input class="form-control form-control-sm mb-2" type="text" name="assignee" maxlength="{{ max_len.assignee }}" value="{{ ep.assignee or '' }}">
       <label class="form-label mb-1">Cause ticket</label>
-      <input class="form-control form-control-sm mb-2" type="text" name="cause_ticket" value="{{ ep.cause_ticket or '' }}" placeholder="e.g. ABC-123">
+      <input class="form-control form-control-sm mb-2" type="text" name="cause_ticket" maxlength="{{ ticket_input_max_len }}" value="{{ ep.cause_ticket or '' }}" placeholder="e.g. ABC-123">
       <label class="form-label mb-1">Resolution ticket <span class="meta">(the ticket the assignee is working on to resolve this — not a claim that it is resolved)</span></label>
-      <input class="form-control form-control-sm mb-2" type="text" name="resolution_ticket" value="{{ ep.resolution_ticket or '' }}" placeholder="e.g. ABC-124">
+      <input class="form-control form-control-sm mb-2" type="text" name="resolution_ticket" maxlength="{{ ticket_input_max_len }}" value="{{ ep.resolution_ticket or '' }}" placeholder="e.g. ABC-124">
       <label class="form-label mb-1">Triage status</label>
       <select class="form-select form-select-sm mb-3" name="triage_status">
         {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}

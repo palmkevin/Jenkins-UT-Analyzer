@@ -38,15 +38,15 @@
   <label class="form-label mb-1">Problem / reason</label>
   <textarea class="form-control form-control-sm mb-2" name="problem_text" rows="2" placeholder="{{ 'Why was the build aborted?' if inc.kind == 'ABORTED' else 'What broke the pipeline?' }}">{{ inc.problem_text or '' }}</textarea>
   <label class="form-label mb-1">Causing person</label>
-  <input class="form-control form-control-sm mb-2" type="text" name="causing_person" value="{{ inc.causing_person or '' }}">
+  <input class="form-control form-control-sm mb-2" type="text" name="causing_person" maxlength="{{ max_len.causing_person }}" value="{{ inc.causing_person or '' }}">
   <label class="form-label mb-1">Reason for failure</label>
   <textarea class="form-control form-control-sm mb-2" name="reason_text" rows="2">{{ inc.reason_text or '' }}</textarea>
   <label class="form-label mb-1">Assignee <span class="meta">(the person handling the fix)</span></label>
-  <input class="form-control form-control-sm mb-2" type="text" name="assignee" value="{{ inc.assignee or '' }}">
+  <input class="form-control form-control-sm mb-2" type="text" name="assignee" maxlength="{{ max_len.assignee }}" value="{{ inc.assignee or '' }}">
   <label class="form-label mb-1">Cause ticket</label>
-  <input class="form-control form-control-sm mb-2" type="text" name="cause_ticket" value="{{ inc.cause_ticket or '' }}" placeholder="e.g. ABC-123">
+  <input class="form-control form-control-sm mb-2" type="text" name="cause_ticket" maxlength="{{ ticket_input_max_len }}" value="{{ inc.cause_ticket or '' }}" placeholder="e.g. ABC-123">
   <label class="form-label mb-1">Resolution ticket <span class="meta">(the ticket the assignee is working on to resolve this — not a claim that it is resolved)</span></label>
-  <input class="form-control form-control-sm mb-2" type="text" name="resolution_ticket" value="{{ inc.resolution_ticket or '' }}" placeholder="e.g. ABC-124">
+  <input class="form-control form-control-sm mb-2" type="text" name="resolution_ticket" maxlength="{{ ticket_input_max_len }}" value="{{ inc.resolution_ticket or '' }}" placeholder="e.g. ABC-124">
   <label class="form-label mb-1">Triage status</label>
   <select class="form-select form-select-sm mb-3" name="triage_status">
     {% for s in ["UNTRIAGED", "INVESTIGATING", "ROOT_CAUSED", "RESOLVED"] %}

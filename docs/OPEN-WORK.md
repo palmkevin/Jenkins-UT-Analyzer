@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `unbounded-form-input` — form inputs longer than their columns 500 on Postgres
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-Tickets are `String(32)`, assignee/person/actor `String(128)`; no `maxlength` and no server check. A pasted Jira URL as cause ticket → 500 on Postgres and a broken link on SQLite.
-
-**Acceptance:** over-long input is rejected (or a ticket key extracted from a pasted URL) with a flash; inputs carry `maxlength`.
-
----
-
 ## `format-ts-mislabels-non-utc` — timestamps are labelled UTC without being converted
 
 `area: dashboard` · found by the 2026-11 bug hunt

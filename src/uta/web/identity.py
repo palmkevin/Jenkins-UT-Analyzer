@@ -17,9 +17,12 @@ from __future__ import annotations
 from fastapi import Request
 
 from uta.config import get_settings
+from uta.models import Attribution
 from uta.web.auth import SESSION_USER_KEY
 
 ACTOR_COOKIE = "uta_actor"
+# The actor is stamped into String(128) *_by columns; a hand-edited cookie must not overflow them.
+_ACTOR_MAX_LEN: int = Attribution.__table__.c.validated_by.type.length
 
 
 def current_actor(request: Request) -> str:
@@ -31,4 +34,4 @@ def current_actor(request: Request) -> str:
         if name:
             return name
     raw = request.cookies.get(ACTOR_COOKIE)
-    return (raw or "").strip() or settings.app_default_actor
+    return (raw or "").strip()[:_ACTOR_MAX_LEN].strip() or settings.app_default_actor

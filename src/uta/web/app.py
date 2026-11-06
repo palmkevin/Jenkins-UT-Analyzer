@@ -41,7 +41,7 @@ from uta.control.tunables import (
 )
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
 from uta.delivery.alert import AlertChannel
-from uta.models import Build
+from uta.models import Attribution, Build, FailureEpisode
 from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
 from uta.web.auth import (
@@ -253,6 +253,52 @@ def _triage_status_error(value: str | None) -> str | None:
     :class:`TriageStatus` — the attribute routes write it straight into a ``String(16)`` column."""
     if value and value not in _TRIAGE_STATUSES:
         return f"Unknown triage status {value[:32]!r} — nothing saved"
+    return None
+
+
+# Server-side length limits for free-text form fields, read off the columns they land in so the
+# check and the schema can't drift (the episode and incident columns share these widths). Postgres
+# rejects an over-long value with a 500; SQLite silently stores it. Templates get the same numbers
+# as ``maxlength`` via the ``max_len`` global.
+FIELD_MAX_LEN: dict[str, int] = {
+    "causing_person": Attribution.__table__.c.causing_person.type.length,
+    "assignee": FailureEpisode.__table__.c.assignee.type.length,
+    "cause_ticket": FailureEpisode.__table__.c.cause_ticket.type.length,
+    "resolution_ticket": FailureEpisode.__table__.c.resolution_ticket.type.length,
+    # The acting user is stamped into *_by columns (acknowledged_by / validated_by / entered_by).
+    "actor": Attribution.__table__.c.validated_by.type.length,
+}
+# Ticket inputs accept a pasted Jira URL (the key is extracted server-side), so their client-side
+# maxlength must leave room for the URL — the stored key is still checked against the column.
+TICKET_INPUT_MAX_LEN = 512
+_TEMPLATES.env.globals["max_len"] = FIELD_MAX_LEN
+_TEMPLATES.env.globals["ticket_input_max_len"] = TICKET_INPUT_MAX_LEN
+
+_FIELD_LABELS = {
+    "causing_person": "Causing person",
+    "assignee": "Assignee",
+    "cause_ticket": "Cause ticket",
+    "resolution_ticket": "Resolution ticket",
+    "actor": "Acting user",
+}
+# A pasted Jira issue URL (``https://jira.example/browse/LX-123?focusedId=…``) → its key.
+_JIRA_BROWSE_RE = re.compile(r"^https?://\S*?/browse/([A-Za-z][A-Za-z0-9_]*-\d+)(?:[/?#]\S*)?$")
+
+
+def normalize_ticket(raw: str) -> str:
+    """Trim a submitted ticket; a pasted Jira ``…/browse/KEY`` URL is reduced to ``KEY``."""
+    value = raw.strip()
+    match = _JIRA_BROWSE_RE.match(value)
+    return match.group(1) if match else value
+
+
+def _length_error(**fields: str | None) -> str | None:
+    """Why a submitted field is too long for its column, or ``None`` when all fit."""
+    for name, value in fields.items():
+        limit = FIELD_MAX_LEN[name]
+        if value is not None and len(value.strip()) > limit:
+            label = _FIELD_LABELS[name]
+            return f"{label} is too long (max {limit} characters) — nothing saved"
     return None
 
 
@@ -557,7 +603,15 @@ def create_app(
         resolution_ticket: str = Form(""),
         anchor: str = Form(""),
     ):
-        if error := _triage_status_error(triage_status):
+        cause_ticket = normalize_ticket(cause_ticket)
+        resolution_ticket = normalize_ticket(resolution_ticket)
+        error = _triage_status_error(triage_status) or _length_error(
+            causing_person=causing_person,
+            assignee=assignee,
+            cause_ticket=cause_ticket,
+            resolution_ticket=resolution_ticket,
+        )
+        if error:
             return rejected(request, error, f"/incidents/{incident_id}", anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
@@ -728,6 +782,8 @@ def create_app(
     # ── Actions (Post/Redirect/Get) ──────────────────────────────────────────
     @app.post("/identity")
     def set_identity(request: Request, actor: str = Form("")):
+        if error := _length_error(actor=actor):
+            return rejected(request, error.replace(" — nothing saved", ""))
         resp = back(request)
         name = actor.strip()
         if name:
@@ -791,7 +847,15 @@ def create_app(
         assignee: str = Form(""),
         anchor: str = Form(""),
     ):
-        if error := _triage_status_error(triage_status):
+        cause_ticket = normalize_ticket(cause_ticket)
+        resolution_ticket = normalize_ticket(resolution_ticket)
+        error = _triage_status_error(triage_status) or _length_error(
+            causing_person=causing_person,
+            assignee=assignee,
+            cause_ticket=cause_ticket,
+            resolution_ticket=resolution_ticket,
+        )
+        if error:
             return rejected(request, error, anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
@@ -833,7 +897,8 @@ def create_app(
         causing_person = str(form.get("causing_person", ""))
         reason_text = str(form.get("reason_text", ""))
         triage_status = str(form.get("triage_status", "")) or None
-        if error := _triage_status_error(triage_status):
+        error = _triage_status_error(triage_status) or _length_error(causing_person=causing_person)
+        if error:
             return rejected(request, error, anchor=str(form.get("anchor", "")))
         with session_scope(session_factory) as s:
             count = actions.bulk_set_attribution(
@@ -886,7 +951,15 @@ def create_app(
         assignee: str = Form(""),
         anchor: str = Form(""),
     ):
-        if error := _triage_status_error(triage_status):
+        cause_ticket = normalize_ticket(cause_ticket)
+        resolution_ticket = normalize_ticket(resolution_ticket)
+        error = _triage_status_error(triage_status) or _length_error(
+            causing_person=causing_person,
+            assignee=assignee,
+            cause_ticket=cause_ticket,
+            resolution_ticket=resolution_ticket,
+        )
+        if error:
             return rejected(request, error, anchor=anchor)
         actor = current_actor(request)
         with session_scope(session_factory) as s:
