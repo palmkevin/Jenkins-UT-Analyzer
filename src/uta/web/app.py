@@ -45,6 +45,7 @@ from uta.control.tunables import (
 )
 from uta.db import assert_pg_trgm, make_engine, make_session_factory, session_scope
 from uta.delivery.alert import AlertChannel
+from uta.logs import quiet_http_client_loggers
 from uta.models import Attribution, Build, FailureEpisode
 from uta.models.enums import PredictedCause, TriageStatus
 from uta.web import actions, control, views
@@ -355,6 +356,9 @@ def _triage_filters(request: Request) -> dict[str, str]:
 def create_app(
     session_factory=None, *, channels: list[AlertChannel] | None = None, demo_mode: bool = False
 ) -> FastAPI:
+    # The web app dispatches ops alerts (Teams included) too; whatever configures logging around it
+    # (``uta web``/``uta demo``, a uvicorn ``--log-config``), never let httpx log the webhook URL.
+    quiet_http_client_loggers()
     startup_engine = None
     if session_factory is None:
         settings = get_settings()

@@ -155,6 +155,62 @@ def test_failed_send_never_logs_the_webhook_sig_token(fail, caplog):
     assert "example.webhook.office.com" not in logged
 
 
+@pytest.fixture
+def _restore_logger_levels():
+    import logging
+
+    names = ("", "uta", "httpx", "httpcore")
+    saved = {n: logging.getLogger(n).level for n in names}
+    yield
+    for n, level in saved.items():
+        logging.getLogger(n).setLevel(level)
+
+
+def _successful_send_log_text(caplog) -> str:
+    transport, _ = _capture_transport()
+    channel = TeamsAlertChannel(
+        WEBHOOK, subscriptions={AlertKind.incident}, client=httpx.Client(transport=transport)
+    )
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        channel.send(_incident_alert())
+    return caplog.text
+
+
+@pytest.mark.usefixtures("_restore_logger_levels")
+def test_successful_send_at_info_never_logs_the_webhook_sig_token(caplog):
+    # httpx logs "HTTP Request: POST <full URL>" at INFO on every request, and `uta poll` /
+    # `uta web` put the root logger at INFO — so the sig= token leaked on every alert until the
+    # CLI's logging setup pinned httpx/httpcore to WARNING (teams-webhook-secret-logged).
+    import logging
+
+    from uta.cli import _configure_logging
+
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    assert "sig=secret" in _successful_send_log_text(caplog)  # the leak this guards against
+
+    _configure_logging()
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
+    logged = _successful_send_log_text(caplog)
+    assert "secret" not in logged
+    assert "example.webhook.office.com" not in logged
+
+
+@pytest.mark.usefixtures("_restore_logger_levels")
+def test_web_app_factory_also_quiets_the_http_client_loggers():
+    import logging
+
+    from sqlalchemy import create_engine
+
+    from uta.db import make_session_factory
+    from uta.web.app import create_app
+
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    create_app(make_session_factory(create_engine("sqlite://")), channels=[])
+    assert logging.getLogger("httpx").level == logging.WARNING
+
+
 # ── build_channels(): enablement + subscriptions ─────────────────────────────────────────────
 
 

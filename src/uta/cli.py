@@ -14,6 +14,7 @@ from uta.clients import build_hypothesis_provider as _build_hypothesis_provider
 from uta.clients import build_svn_blame_client as _build_svn_blame_client
 from uta.config import get_settings
 from uta.db import assert_pg_trgm, make_engine, make_session_factory
+from uta.logs import quiet_http_client_loggers
 
 app = typer.Typer(help="Jenkins UT Analyzer CLI")
 
@@ -33,6 +34,8 @@ def _configure_logging() -> None:
         )
     root.setLevel(logging.INFO)
     logging.getLogger("uta").setLevel(logging.INFO)
+    # httpx logs every request's full URL at INFO — the Teams webhook's ``sig=`` token included.
+    quiet_http_client_loggers()
     # Re-enable any uta.* logger a prior fileConfig may have disabled (defensive; the alembic env
     # now passes disable_existing_loggers=False, but this keeps the timing logs robust regardless).
     for name, lg in logging.root.manager.loggerDict.items():
