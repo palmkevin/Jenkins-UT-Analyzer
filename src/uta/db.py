@@ -38,6 +38,23 @@ def assert_pg_trgm(engine: Engine) -> None:
         )
 
 
+# Arbitrary, stable key for the ingest advisory lock ("uta" + "i"ngest as bytes).
+INGEST_LOCK_KEY = 0x75746169
+
+
+def acquire_ingest_lock(session: Session) -> None:
+    """Serialise build ingests across processes: a Postgres transaction-scoped advisory lock.
+
+    The poller and control-panel ingest jobs (another process) both write the same lifecycle /
+    episode rows; without this two concurrent ingests lose updates or hit unique violations. The
+    lock is released automatically when the session's transaction commits or rolls back. A no-op
+    on other dialects (SQLite tests are single-process and serialise writes anyway).
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": INGEST_LOCK_KEY})
+
+
 def make_session_factory(engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)
 

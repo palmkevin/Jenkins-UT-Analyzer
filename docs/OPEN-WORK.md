@@ -377,16 +377,6 @@ Unlike the bulk route (GH#150), the signature route counts every matched episode
 
 ---
 
-## `job-poller-no-mutual-exclusion` — control-panel ingest jobs and the poller can ingest concurrently
-
-`area: infra` · found by the 2026-11 bug hunt
-
-Nothing serialises `run_ingest_job` and `poll_once`; both can `apply_build` against the same lifecycle/episode rows → lost updates or unique violations.
-
-**Acceptance:** ingests are serialised (Postgres advisory lock); SQLite unaffected.
-
----
-
 ## `backfill-paths-drop-incidents` — back-fill paths skip Build Incidents, SVN blame and DB overrides
 
 `area: infra` · found by the 2026-11 bug hunt

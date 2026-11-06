@@ -552,3 +552,58 @@ def test_non_meta_404_is_not_treated_as_rotation(session_factory):
         poll_once(client, session_factory, quarantine_attempts=3, sleep=_SleepRecorder())
     row = _quarantine_row(session_factory, 1)
     assert row is not None and row.quarantined_at is None and row.attempts == 1
+
+
+# ── Ingest mutual exclusion (job-poller-no-mutual-exclusion) ─────────────────
+
+
+def test_ingest_lock_is_a_postgres_advisory_xact_lock():
+    from uta.db import INGEST_LOCK_KEY, acquire_ingest_lock
+
+    executed: list[tuple[str, dict]] = []
+
+    class _Dialect:
+        name = "postgresql"
+
+    class _Bind:
+        dialect = _Dialect()
+
+    class _Session:
+        def get_bind(self):
+            return _Bind()
+
+        def execute(self, stmt, params):
+            executed.append((str(stmt), params))
+
+    acquire_ingest_lock(_Session())
+    assert executed == [("SELECT pg_advisory_xact_lock(:key)", {"key": INGEST_LOCK_KEY})]
+
+
+def test_ingest_lock_is_a_noop_on_sqlite(session_factory):
+    from uta.db import acquire_ingest_lock
+
+    with session_scope(session_factory) as s:
+        acquire_ingest_lock(s)  # must not emit Postgres-only SQL
+
+
+def test_every_ingest_takes_the_lock(session_factory, monkeypatch):
+    """Poller and control-panel jobs both funnel through ingest_build — the single choke point.
+
+    The lock is taken on the ingest session as its first statement, so it autobegins (and is held
+    for) the very transaction that persists and analyses the build.
+    """
+    import uta.ingest.pipeline as pipeline
+
+    locked: list[bool] = []
+    monkeypatch.setattr(
+        pipeline, "acquire_ingest_lock", lambda sess: locked.append(not sess.new and not sess.dirty)
+    )
+    poll_once(_MultiBuildFake(1), session_factory)
+    with session_scope(session_factory) as s:
+        job = create_ingest_job(s, 1, 1)
+        s.flush()
+        job_id = job.id
+    run_ingest_job(
+        session_factory, job_id, settings=Settings(), client=_MultiBuildFake(1), feed=None
+    )
+    assert locked == [True, True]

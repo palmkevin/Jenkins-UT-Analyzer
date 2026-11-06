@@ -27,7 +27,7 @@ from uta.analyze.hypothesize import hypothesize_build
 from uta.analyze.incident import IncidentKind, apply_build_incident
 from uta.analyze.lifecycle import apply_build
 from uta.analyze.ownership import resolve_for_cases
-from uta.db import session_scope
+from uta.db import acquire_ingest_lock, session_scope
 from uta.delivery.alert import Alert, AlertChannel, AlertKind, dispatch, wants
 from uta.delivery.email import build_incident_alert, build_regression_report
 from uta.ingest.jenkins import JenkinsClient
@@ -275,6 +275,8 @@ def ingest_build(
     pending_alert: Alert | None = None
     pending_incident_alert: Alert | None = None
     with session_scope(session_factory) as session:
+        # One ingest transaction at a time across poller + control-panel jobs (Postgres only).
+        acquire_ingest_lock(session)
         t = time.perf_counter()
         build = session.scalar(select(Build).where(Build.build_number == number))
         stale_signature_ids: set[int] = set()
