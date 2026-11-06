@@ -72,6 +72,14 @@ def test_float_tunable_coerces_and_bounds():
         t.coerce("nope")
 
 
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", float("nan")])
+def test_float_tunable_rejects_non_finite(raw):
+    """nan-tunable-accepted: NaN fails every comparison, so it slipped past the bounds check."""
+    t = TUNABLES_BY_KEY["flaky_transition_threshold"]
+    with pytest.raises(ValueError, match="finite"):
+        t.coerce(raw)
+
+
 # ── Override CRUD + effective settings ───────────────────────────────────────
 
 

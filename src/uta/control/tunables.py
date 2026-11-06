@@ -13,6 +13,7 @@ untouched, so callers keep using the same ``Settings`` object and its properties
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
@@ -46,6 +47,10 @@ class Tunable:
         except (TypeError, ValueError) as exc:
             noun = "an integer" if self.kind == "int" else "a number"
             raise ValueError(f"{self.label} must be {noun}") from exc
+        # NaN compares False against everything, so it would sail through the bounds check below
+        # and silently disable whatever the threshold gates; ±inf is no meaningful setting either.
+        if not math.isfinite(value):
+            raise ValueError(f"{self.label} must be a finite number")
         if value < self.minimum or value > self.maximum:
             lo, hi = self._fmt(self.minimum), self._fmt(self.maximum)
             raise ValueError(f"{self.label} must be between {lo} and {hi}")

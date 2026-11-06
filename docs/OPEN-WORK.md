@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `nan-tunable-accepted` — `nan` passes tunable bounds checks
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-`control/tunables.coerce`: `float("nan")` passes `min <= v <= max` (all NaN comparisons are False), silently disabling flaky/KB/overrun detection.
-
-**Acceptance:** non-finite values are rejected.
-
----
-
 ## `bulk-ids-int-parse-500` — non-numeric ids in bulk forms are a 500
 
 `area: dashboard` · found by the 2026-11 bug hunt
