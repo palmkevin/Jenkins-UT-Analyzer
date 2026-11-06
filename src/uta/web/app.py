@@ -952,6 +952,18 @@ def create_app(
             if parts:
                 message += " — " + ", ".join(parts)
             set_flash(resp, message)
+        elif not (
+            actions.has_attribution_input(causing_person, reason_text, triage_status)
+            or cause_ticket.strip()
+            or resolution_ticket.strip()
+            or assignee.strip()
+        ):
+            # A blank submit writes nothing — say so rather than blame the signature.
+            set_flash(
+                resp,
+                "Nothing to apply — fill in a status, person, reason, ticket or assignee",
+                "error",
+            )
         else:
             set_flash(resp, "No open failing tests share this signature", "error")
         return resp

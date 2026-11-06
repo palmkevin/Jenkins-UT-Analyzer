@@ -384,11 +384,17 @@ def attribute_by_signature(
     signature row for KB recurrence retrieval. One deviation from the single-episode form: an
     empty ticket / assignee field leaves those **untouched** rather than clearing them —
     mass-clearing unrelated documentation from a shared-outage form would be a foot-gun. Returns the
-    number of episodes attributed (0 if the signature is unknown or nothing matches).
+    number of episodes attributed: 0 if the signature is unknown, nothing matches, or every field
+    is blank — the last writes nothing (not even an empty Attribution row), so it must not be
+    counted as an update (the bulk route's issue #150 rule).
     """
     ct = cause_ticket.strip() if cause_ticket and cause_ticket.strip() else None
     rt = resolution_ticket.strip() if resolution_ticket and resolution_ticket.strip() else None
     asg = assignee.strip() if assignee and assignee.strip() else None
+    if not has_attribution_input(causing_person, reason_text, triage_status) and not (
+        ct or rt or asg
+    ):
+        return 0
     count = 0
     for _lc, ep in open_episodes_for_signature(session, signature_id):
         set_attribution(

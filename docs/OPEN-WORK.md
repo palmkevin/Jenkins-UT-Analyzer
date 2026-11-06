@@ -237,16 +237,6 @@ Episode hypotheses send raw `error_details`/`error_stack_trace` (and commit mess
 
 ---
 
-## `attribute-by-signature-blank-claims-update` — signature-wide attribute reports updates when nothing changed
-
-`area: dashboard` · found by the 2026-11 bug hunt
-
-Unlike the bulk route (GH#150), the signature route counts every matched episode and creates empty `Attribution` rows on a blank submit.
-
-**Acceptance:** a blank submit changes nothing and says so.
-
----
-
 ## `search-like-wildcards` — `_` and `%` in search act as wildcards
 
 `area: dashboard` · found by the 2026-11 bug hunt

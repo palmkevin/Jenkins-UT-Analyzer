@@ -284,3 +284,38 @@ def test_in_range_path_id_still_resolves(client, seeded):
 def test_non_path_validation_errors_keep_the_422(client):
     # /control/ingest's build_start is a required form field — still FastAPI's default 422.
     assert client.post("/control/ingest", data={}).status_code == 422
+
+
+# ── attribute-by-signature-blank-claims-update ─────────────────────────────────
+
+
+def test_attribute_by_signature_blank_submit_changes_nothing(client, seeded):
+    sig_id = _signature_id(seeded, "alpha")
+    resp = client.post(
+        f"/signatures/{sig_id}/attribute",
+        data={
+            "causing_person": "  ",
+            "reason_text": "",
+            "triage_status": "",
+            "cause_ticket": " ",
+            "resolution_ticket": "",
+            "assignee": "",
+        },
+        headers={"referer": "/"},
+    )
+    assert resp.status_code == 303
+    page = _flash_page(client)
+    assert "Nothing to apply" in page and "alert-danger" in page
+    assert "Updated" not in page
+    with session_scope(seeded) as s:
+        assert s.scalar(select(Attribution)) is None  # no empty rows created
+        assert actions.attribute_by_signature(s, sig_id, "bob") == 0
+
+
+def test_attribute_by_signature_ticket_only_still_applies(client, seeded):
+    sig_id = _signature_id(seeded, "alpha")
+    client.post(
+        f"/signatures/{sig_id}/attribute", data={"cause_ticket": "LX-7"}, headers={"referer": "/"}
+    )
+    assert "Updated 2 tests sharing this failure signature" in _flash_page(client)
+    assert _episode(seeded, "beta").cause_ticket == "LX-7"
