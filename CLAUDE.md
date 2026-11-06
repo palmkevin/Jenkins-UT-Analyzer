@@ -33,7 +33,7 @@ git.
 
 ## Live demo (public, synthetic)
 A public, fully-synthetic **demo** is hosted on Render: **<https://jenkins-ut-analyzer-demo.onrender.com>**.
-It runs the `uta.demo.app:app` entrypoint — an **ephemeral in-memory SQLite** store seeded on startup
+It runs the `uta.demo.app:app` entrypoint — an **ephemeral temp-file SQLite** store (fresh per process, deleted at exit) seeded on first use
 from `src/uta/demo/` (fake Jenkins + `ut_ref` payloads fed through the *real* `ingest_build`
 pipeline), with **no** connection to Jenkins/Oracle/FishEye/Jira/SMTP/LLM and **no** real data
 (never LIMS/patient/`MODDATA`/real names — same discipline as the fixtures). Deploy is via
