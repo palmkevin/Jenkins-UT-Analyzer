@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from uta.db import session_scope
-from uta.models import BuildQuarantine
+from uta.models import Build, BuildQuarantine
 
 _MAX_ERROR = 2000
 
@@ -60,6 +60,23 @@ def clear_failure(session_factory: sessionmaker[Session], build: int) -> None:
     """Drop the failure/quarantine record after ``build`` ingested successfully. No-op if none."""
     with session_scope(session_factory) as session:
         session.execute(delete(BuildQuarantine).where(BuildQuarantine.build_number == build))
+
+
+def clear_stale_attempts(session_factory: sessionmaker[Session]) -> int:
+    """Drop un-quarantined attempt rows whose build is already in the store. Returns the count.
+
+    The self-healing half of :func:`clear_failure`: if that post-commit delete fails (a DB blip
+    right after the build committed), the attempt row would otherwise linger forever, since the
+    build is never selected again. Quarantined rows are left alone — they are the explicit record.
+    """
+    with session_scope(session_factory) as session:
+        result = session.execute(
+            delete(BuildQuarantine)
+            .where(BuildQuarantine.quarantined_at.is_(None))
+            .where(BuildQuarantine.build_number.in_(select(Build.build_number)))
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount or 0
 
 
 def quarantined_build_numbers(session: Session) -> set[int]:

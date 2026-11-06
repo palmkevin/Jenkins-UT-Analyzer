@@ -32,6 +32,7 @@ from uta.control.heartbeat import record_heartbeat, record_liveness
 from uta.control.overrunning import observe_overrunning
 from uta.control.quarantine import (
     clear_failure,
+    clear_stale_attempts,
     quarantine_immediately,
     quarantined_build_numbers,
     record_failure,
@@ -199,6 +200,7 @@ def poll_once(
     past it. A 404 whose build's own ``build_meta`` also 404s (build rotated out of Jenkins
     retention) quarantines immediately; any other 404 takes the ordinary path.
     """
+    _safe_clear_stale_attempts(session_factory)
     builds = _with_retries(
         lambda: builds_to_ingest(client, session_factory, backfill_depth=backfill_depth),
         what="build selection",
@@ -292,6 +294,20 @@ def poll_once(
             )
         _stamp_liveness(session_factory)
     return processed
+
+
+def _safe_clear_stale_attempts(session_factory: sessionmaker[Session]) -> None:
+    """Self-heal attempt rows a failed post-commit :func:`clear_failure` left behind.
+
+    Best-effort: a failure here is logged and simply retried next tick.
+    """
+    try:
+        cleared = clear_stale_attempts(session_factory)
+    except Exception:  # noqa: BLE001 — housekeeping must not fail the tick
+        logger.warning("could not clear stale attempt rows — retrying next tick", exc_info=True)
+        return
+    if cleared:
+        logger.info("cleared %d stale attempt row(s) for already-ingested builds", cleared)
 
 
 def _stamp_liveness(session_factory: sessionmaker[Session]) -> None:

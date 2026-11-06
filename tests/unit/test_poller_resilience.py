@@ -654,6 +654,37 @@ def test_clear_failure_error_after_commit_keeps_the_tick_progress(session_factor
         assert hb.last_processed == "1,2" and hb.last_error is None
 
 
+def test_stale_attempt_row_for_an_ingested_build_self_heals_next_tick(session_factory, monkeypatch):
+    # A failed clear_failure after commit leaves the attempt row behind; the next tick drops it
+    # because the build is already stored — quarantined rows and rows of unstored builds survive.
+    import uta.poller as poller
+    from uta.control.quarantine import record_failure
+
+    record_failure(session_factory, 1, "earlier blip", quarantine_after=3)
+    real_clear = poller.clear_failure
+    monkeypatch.setattr(poller, "clear_failure", lambda factory, build: None)  # silently failed
+    assert poll_once(_MultiBuildFake(2), session_factory) == [1, 2]
+    assert _quarantine_row(session_factory, 1) is not None  # the stale row lingers…
+
+    record_failure(session_factory, 2, "rotated", quarantine_after=1)  # quarantined, stored
+    record_failure(session_factory, 9, "pending", quarantine_after=3)  # attempt, not stored
+    monkeypatch.setattr(poller, "clear_failure", real_clear)
+    assert poll_once(_MultiBuildFake(2), session_factory) == []
+    assert _quarantine_row(session_factory, 1) is None  # …until the next tick heals it
+    assert _quarantine_row(session_factory, 2).quarantined_at is not None
+    assert _quarantine_row(session_factory, 9).attempts == 1
+
+
+def test_stale_attempt_cleanup_failure_does_not_fail_the_tick(session_factory, monkeypatch):
+    import uta.poller as poller
+
+    def _boom(factory):
+        raise RuntimeError("db blip")
+
+    monkeypatch.setattr(poller, "clear_stale_attempts", _boom)
+    assert poll_once(_MultiBuildFake(1), session_factory) == [1]
+
+
 def test_prune_error_does_not_erase_the_tick(session_factory, monkeypatch):
     import uta.poller as poller
 
