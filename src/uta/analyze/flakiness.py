@@ -11,9 +11,10 @@ they
   are simply not in the sequence, so a never-reporting track is never miscounted as a ``fail→pass``.
 - **Score = state transitions ÷ builds** over the window. A clean regression is *one* transition
   (then stays failing); a clean fix is *one* (then stays passing). Many transitions = flaky.
-- A test is **FLAKY** when it oscillates: ``score ≥ threshold`` **and** its fail-rate is strictly
-  between 0 and 1 (≥1 back-and-forth flip). A solidly-failing test (fail-rate ≈ 1, no flips) is a
-  regression, not flaky.
+- A test is **FLAKY** when it oscillates: ``score ≥ threshold``, its fail-rate is strictly
+  between 0 and 1, **and** it has at least two transitions (≥1 back-and-forth flip). A
+  solidly-failing test (fail-rate ≈ 1, no flips) is a regression, not flaky; a single pass→fail
+  (or fail→pass) change on a short history is a clean regression (or fix), not flaky either.
 
 The candidate code/data change signals are still attached for triage but do **not** gate the flag.
 """
@@ -137,7 +138,9 @@ def compute_stats(
     score = transitions / builds_in_window if builds_in_window else 0.0
     fail_rate = fails_in_window / builds_in_window if builds_in_window else 0.0
 
-    flaky = 0.0 < fail_rate < 1.0 and score >= threshold
+    # ≥2 transitions: a single flip (P,P,F or F,P) is a clean regression/fix, which on a short
+    # history can still clear the score threshold.
+    flaky = 0.0 < fail_rate < 1.0 and score >= threshold and transitions >= 2
 
     # Track-correlated: among the failing builds, do the failures cluster in ONE track while the
     # other

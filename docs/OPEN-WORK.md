@@ -189,16 +189,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `flaky-single-transition` — a single pass↔fail change is flagged flaky
-
-`area: flakiness` · found by the 2026-11 bug hunt
-
-`flakiness.py` ~l.126: `flaky = 0 < fail_rate < 1 and score >= threshold` flags P,P,F (score 0.33) and a clean fix F,P (0.5) as flaky on short histories — contradicting CONTEXT.md ("a clean regression is not flaky").
-
-**Acceptance:** flaky additionally requires ≥ 2 transitions; P,P,F and F,P are not flaky.
-
----
-
 ## `incident-reingest-double-extend` — re-ingesting the newest build extends its own Build Incident
 
 `area: analysis` · found by the 2026-11 bug hunt

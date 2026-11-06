@@ -65,6 +65,23 @@ def test_solidly_failing_is_not_flaky(session_factory):
     assert st.pattern == "stable"
 
 
+def test_single_transition_on_short_history_is_not_flaky(session_factory):
+    """P,P,F (score 0.33) and a clean fix F,P (0.5) clear the threshold but flip only once."""
+    fixed = "ut_pkg.mod.test_fixed"
+    with session_factory() as s:
+        for b, st in enumerate(["PASSED", "PASSED", "FAILED"], start=1):
+            make_build(s, b, {T: st})
+        for b, st in enumerate(["FAILED", "PASSED"], start=4):
+            make_build(s, b, {fixed: st})
+        s.commit()
+        regression = _stats(s)
+        fix = _stats(s, fixed)
+    assert regression.transitions == 1 and regression.score >= 0.3
+    assert regression.flaky is False
+    assert fix.transitions == 1 and fix.score >= 0.3
+    assert fix.flaky is False
+
+
 def test_gaps_are_not_transitions(session_factory):
     """A build where the test is absent is a hole, not a fail→pass flip."""
     with session_factory() as s:
