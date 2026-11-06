@@ -20,6 +20,11 @@ from uta.llm import Hypothesis
 _log = logging.getLogger(__name__)
 
 _MAX_TOKENS = 512
+# Bounded per-request timeout (seconds) and retry count. The SDK defaults (600 s, 2 retries) could
+# stall the poller for half an hour per hypothesis with the ingest transaction held open; a
+# hypothesis is best-effort, so fail fast and skip it instead.
+_TIMEOUT_S = 30.0
+_MAX_RETRIES = 1
 
 
 class OpenAIHypothesisProvider:
@@ -28,7 +33,7 @@ class OpenAIHypothesisProvider:
     def __init__(self, api_key: str, model: str = "gpt-4o") -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, timeout=_TIMEOUT_S, max_retries=_MAX_RETRIES)
         self._model = model
 
     def hypothesize(self, *, system: str, user: str) -> Hypothesis | None:

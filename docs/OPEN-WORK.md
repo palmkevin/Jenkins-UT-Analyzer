@@ -189,16 +189,6 @@ Any selected console-log stage reported NOT_EXECUTED marks the build incomplete;
 
 ---
 
-## `llm-call-timeout` — LLM calls use SDK defaults (600 s, 2 retries) inside the ingest transaction
-
-`area: llm` · found by the 2026-11 bug hunt
-
-`llm/claude.py` / `openai_provider.py` build clients with default timeouts; a slow API stalls the poller with the ingest transaction open.
-
-**Acceptance:** LLM clients use a bounded timeout and retry count.
-
----
-
 ## `llm-hypotheses-per-build-cap` — no cap on LLM hypotheses per build
 
 `area: llm` · found by the 2026-11 bug hunt · **needs owner input**

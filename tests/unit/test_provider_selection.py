@@ -41,3 +41,14 @@ def test_explicit_provider_overrides_autoselect():
 
 def test_explicit_provider_without_key_is_noop():
     assert _name(llm_provider="openai") == "NoopHypothesisProvider"
+
+
+def test_llm_clients_use_a_bounded_timeout_and_retry_count():
+    """SDK defaults (600 s, 2 retries) would hold the ingest transaction open far too long."""
+    from uta.llm.claude import AnthropicHypothesisProvider
+    from uta.llm.openai_provider import OpenAIHypothesisProvider
+
+    for provider in (AnthropicHypothesisProvider("sk-a"), OpenAIHypothesisProvider("sk-o")):
+        client = provider._client
+        assert client.timeout == 30.0
+        assert client.max_retries == 1
