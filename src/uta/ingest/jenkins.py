@@ -70,7 +70,19 @@ class HttpJenkinsClient:
         )
 
     def test_report(self, build: int) -> dict:
-        return self._get_json(f"{build}/testReport/api/json")
+        """The build's JUnit report; an empty report (no suites) when the run published none.
+
+        Jenkins answers 404 on ``testReport`` when a run has no ``TestResultAction`` — typically a
+        FAILURE/ABORTED build that died before devUTs. That is "no tests", not "build gone": the
+        build must still be stored (incomplete) and get its Build Incident, so the 404 is mapped
+        here rather than left to the poller's rotated-build handling.
+        """
+        try:
+            return self._get_json(f"{build}/testReport/api/json")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return {"suites": []}
+            raise
 
     def change_sets(self, build: int) -> dict:
         return self._get_json(f"{build}/api/json", {"tree": _CHANGESETS_TREE})

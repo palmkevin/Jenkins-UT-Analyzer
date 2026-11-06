@@ -81,6 +81,23 @@ def _is_transient(exc: BaseException) -> bool:
     return isinstance(exc, sa_exc.OperationalError | sa_exc.InterfaceError)
 
 
+def _is_404(exc: BaseException) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+
+
+def _build_is_gone(client: JenkinsClient, build: int) -> bool:
+    """Whether the build itself rotated out of retention: its ``build_meta`` endpoint 404s.
+
+    A 404 from some *other* endpoint (a missing report or stage log on a build that still exists)
+    is not rotation — it goes through the ordinary retry/quarantine path instead.
+    """
+    try:
+        client.build_meta(build)
+    except Exception as exc:
+        return _is_404(exc)
+    return False
+
+
 def _with_retries[T](
     fn: Callable[[], T],
     *,
@@ -179,7 +196,8 @@ def poll_once(
     ``retry_base_seconds`` backoff); a build that still fails records one attempt and raises
     :class:`BuildIngestError`, ending the tick so it is retried next tick — until
     ``quarantine_attempts``, when it is quarantined (recorded + ops-alerted) and the tick continues
-    past it. A 404 detail endpoint (build rotated out of Jenkins retention) quarantines immediately.
+    past it. A 404 whose build's own ``build_meta`` also 404s (build rotated out of Jenkins
+    retention) quarantines immediately; any other 404 takes the ordinary path.
     """
     builds = _with_retries(
         lambda: builds_to_ingest(client, session_factory, backfill_depth=backfill_depth),
@@ -218,7 +236,7 @@ def poll_once(
                 sleep=sleep,
             )
         except Exception as exc:
-            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
+            if _is_404(exc) and _build_is_gone(client, build):
                 # A build's pointer can outlive its detail endpoint: Jenkins rotates old builds
                 # out of retention while ``lastCompletedBuild`` still names them, so a detail
                 # fetch 404s. Gone for good — quarantine immediately (the explicit, surfaced form

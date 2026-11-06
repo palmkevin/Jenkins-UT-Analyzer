@@ -93,16 +93,6 @@ move to Jenkins. Whichever, update the *Testing contract* in `CLAUDE.md`.
 
 <!-- Bug-hunt 2026-11: one entry per finding. Entries without **Needs owner input** are being fixed on the same branch; each fix commit deletes its entry. -->
 
-## `testreport-404-quarantines-failed-builds` — a missing JUnit report quarantines the build as "rotated"
-
-`area: ingest` · found by the 2026-11 bug hunt
-
-Jenkins answers 404 on `/<n>/testReport/api/json` when a run published no JUnit results (a FAILURE/ABORTED build that died before devUTs). `HttpJenkinsClient` raises, and the poller (`poller.py` ~l.221) treats *any* 404 as "rotated out of retention" and quarantines immediately — so exactly the builds Build Incidents (GH#171) exist for leave no Build row, no incident, and a misleading ops alert.
-
-**Acceptance:** a build whose testReport 404s is stored (incomplete, zero results) and gets its Build Incident; only a `build_meta` 404 counts as rotation.
-
----
-
 ## `complete-without-junit-tracks` — a build missing a JUnit track is still marked complete
 
 `area: ingest` · found by the 2026-11 bug hunt

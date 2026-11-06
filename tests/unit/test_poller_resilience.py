@@ -473,3 +473,60 @@ def test_web_startup_recovers_orphaned_jobs():
 
     with session_scope(sf) as s:
         assert s.get(IngestJob, running).status == IngestJobStatus.ERROR
+
+
+# ── A missing JUnit report is not rotation (testreport-404-quarantines-failed-builds) ────────
+
+
+class _NoReportFake(_MultiBuildFake):
+    """A FAILURE build that died before devUTs: Jenkins has no testReport for it.
+
+    ``report_404`` raises the raw 404 (a client that doesn't map it); otherwise the report is the
+    empty one :class:`~uta.ingest.jenkins.HttpJenkinsClient` maps the 404 to.
+    """
+
+    def __init__(self, last_completed: int, *, failing: int, report_404: bool) -> None:
+        super().__init__(last_completed=last_completed)
+        self._failing = failing
+        self._report_404 = report_404
+
+    def build_meta(self, build: int) -> dict:
+        meta = dict(super().build_meta(build))
+        if build == self._failing:
+            meta["result"] = "FAILURE"
+        return meta
+
+    def test_report(self, build: int) -> dict:
+        if build != self._failing:
+            return super().test_report(build)
+        if self._report_404:
+            request = httpx.Request("GET", f"http://jenkins/{build}/testReport/api/json")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Not Found", request=request, response=response)
+        return {"suites": []}
+
+
+def test_build_without_test_report_is_stored_with_its_incident(session_factory):
+    from uta.models import BuildIncident
+
+    client = _NoReportFake(last_completed=1, failing=1, report_404=False)
+    processed = poll_once(
+        client, session_factory, ingest_build_incidents=True, sleep=_SleepRecorder()
+    )
+    assert processed == [1]
+    assert _quarantine_row(session_factory, 1) is None
+    with session_scope(session_factory) as s:
+        build = s.scalar(select(Build).where(Build.build_number == 1))
+        assert build.status == "FAILURE"
+        assert build.total_passed == build.total_failed == 0
+        assert s.scalar(select(func.count()).select_from(BuildIncident)) == 1
+
+
+def test_non_meta_404_is_not_treated_as_rotation(session_factory):
+    """Only a ``build_meta`` 404 means the build is gone; another endpoint's 404 is an ordinary
+    failure — retried next tick, not quarantined on the spot."""
+    client = _NoReportFake(last_completed=1, failing=1, report_404=True)
+    with pytest.raises(BuildIngestError):
+        poll_once(client, session_factory, quarantine_attempts=3, sleep=_SleepRecorder())
+    row = _quarantine_row(session_factory, 1)
+    assert row is not None and row.quarantined_at is None and row.attempts == 1
