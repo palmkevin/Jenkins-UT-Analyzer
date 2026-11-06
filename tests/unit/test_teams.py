@@ -63,24 +63,32 @@ def test_card_is_workflows_attachments_envelope_with_facts_and_open_url():
 
     factset = next(b for b in card["body"] if b["type"] == "FactSet")
     assert {"title": "Failing stage", "value": "Compile"} in factset["facts"]
-    assert {"title": "Predicted cause", "value": "CODE\\_CHANGE"} in factset["facts"]
+    assert {"title": "Predicted cause", "value": "CODE_CHANGE"} in factset["facts"]
 
     open_url = next(a for a in card["actions"] if a["title"] == "Open in dashboard")
     assert open_url["type"] == "Action.OpenUrl"
     assert open_url["url"] == "http://uta.example/builds/1702"
 
 
-def test_card_text_escapes_markdown_so_values_render_literally():
-    hypothesis = "Likely [this commit](https://evil.example) broke **it**\n- see `x_y`"
+def test_card_text_neutralises_links_and_leaves_other_text_alone():
+    # Adaptive Cards don't honour backslash escapes, so only link syntax is broken (a zero-width
+    # space between "]" and "("); everything else reaches the card verbatim (teams-card-markdown-
+    # injection).
+    hypothesis = "Likely [this commit](https://evil.example) broke **it**\n- see `x_y` (maybe)"
     card = build_card_message(
         Alert(kind=AlertKind.incident, title="t", body="b", facts=(("Hypothesis", hypothesis),))
     )["attachments"][0]["content"]
     (fact,) = next(b for b in card["body"] if b["type"] == "FactSet")["facts"]
     assert fact["value"] == (
-        "Likely \\[this commit\\]\\(https://evil.example\\) broke \\*\\*it\\*\\*\n"
-        "\\- see \\`x\\_y\\`"
+        "Likely [this commit]\u200b(https://evil.example) broke **it**\n- see `x_y` (maybe)"
     )
-    assert "](" not in fact["value"]  # no live link survives
+    assert "\\" not in fact["value"]  # no backslash escapes leak into the rendered text
+
+
+def test_card_text_click_link_cannot_form_a_link():
+    out = card_text("[click](https://evil)")
+    assert "](" not in out  # no live link survives
+    assert out.replace("\u200b", "") == "[click](https://evil)"  # …yet it displays the same
 
 
 def test_card_text_truncates_long_values():
@@ -88,7 +96,8 @@ def test_card_text_truncates_long_values():
     assert len(out) == MAX_CARD_VALUE_CHARS
     assert out.endswith("…")
     assert card_text("short") == "short"
-    assert card_text("1. first") == "1\\. first"
+    assert card_text("1. first") == "1. first"
+    assert card_text("CODE_CHANGE (x)") == "CODE_CHANGE (x)"
 
 
 def test_card_omits_actions_and_factset_when_absent():

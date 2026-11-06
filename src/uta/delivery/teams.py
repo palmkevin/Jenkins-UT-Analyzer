@@ -3,7 +3,7 @@
 Teams is the second Alert Channel (ADR-0007). It renders a channel-neutral
 :class:`~uta.delivery.alert.Alert` as an **Adaptive Card** — title, a FactSet of the alert's
 structured facts, and an ``Action.OpenUrl`` "Open in dashboard" button; every text value
-Markdown-escaped and capped at :data:`MAX_CARD_VALUE_CHARS` — and POSTs it to a single configured
+link-neutralised and capped at :data:`MAX_CARD_VALUE_CHARS` — and POSTs it to a single configured
 webhook URL via the already-present ``httpx`` with a short, fail-fast timeout. The card
 is wrapped in the Power Automate **Workflows** ``attachments`` envelope (contentType
 ``application/vnd.microsoft.card.adaptive``), the successor to the retiring Office 365 connector.
@@ -15,7 +15,6 @@ auth token — it is a secret, held for the POST only and never logged.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -40,25 +39,24 @@ _SEVERITY_COLOR = {
 #: payload over ~28 KB — so a single runaway value must not sink the whole card.
 MAX_CARD_VALUE_CHARS = 1000
 
-#: Inline Markdown that Adaptive Card TextBlocks / FactSet values render: emphasis, code, links.
-_MD_INLINE = re.compile(r"([\\`*_~\[\]()<>])")
-#: Line-leading block markers (lists, quotes, headings) that would restructure the text.
-_MD_LINE_START = re.compile(r"^(\s*)([-+#>])", re.MULTILINE)
-_MD_ORDERED_ITEM = re.compile(r"^(\s*\d+)\.", re.MULTILINE)
+#: A Markdown inline link's ``](`` hinge. Adaptive Cards render ``[text](url)`` as a live link, so
+#: free text (an LLM hypothesis) could smuggle one in; a zero-width space between ``]`` and ``(``
+#: breaks the syntax while displaying identically.
+_LINK_HINGE = "]("
+_BROKEN_LINK_HINGE = "]\u200b("
 
 
 def card_text(value: str) -> str:
-    """``value`` made safe as Adaptive Card text: truncated, then Markdown-escaped.
+    """``value`` made safe as Adaptive Card text: truncated, with link syntax neutralised.
 
-    Alert facts carry free text from the classifier / LLM (a hypothesis can hold a
-    ``[click](https://…)`` link) and test names full of ``_``; both are rendered as Markdown by
-    Teams, so every metacharacter is backslash-escaped to display literally.
+    Alert facts carry free text from the classifier / LLM, and a hypothesis can hold a
+    ``[click](https://…)`` link that Teams would render live. Only that link syntax is broken (a
+    zero-width space between ``]`` and ``(``); nothing else is escaped, because Adaptive Cards do
+    not honour backslash escapes — escaping ``_`` / ``(`` would show ``CODE\\_CHANGE`` literally.
     """
     if len(value) > MAX_CARD_VALUE_CHARS:
         value = value[: MAX_CARD_VALUE_CHARS - 1] + "…"
-    value = _MD_INLINE.sub(r"\\\1", value)
-    value = _MD_LINE_START.sub(r"\1\\\2", value)
-    return _MD_ORDERED_ITEM.sub(r"\1\\.", value)
+    return value.replace(_LINK_HINGE, _BROKEN_LINK_HINGE)
 
 
 def build_card_message(alert: Alert) -> dict:
